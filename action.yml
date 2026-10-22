@@ -1,0 +1,49 @@
+name: Advisory triage
+description: First-pass LLM triage of new GitHub security advisories, posted as an advisory comment.
+author: Alexandre Daubois
+branding:
+  icon: shield
+  color: orange
+
+inputs:
+  since:
+    description: Only advisories created after this date (2026-10-22 or RFC 3339) are triaged. Required unless `advisory` is set.
+    required: false
+  advisory:
+    description: Triage this GHSA only, whatever its state and creation date.
+    required: false
+  engine:
+    description: LLM provider, `claude` or `openai`.
+    default: claude
+  model:
+    description: Model id, defaults to claude-opus-5-5 or gpt-5.5 depending on the engine.
+    required: false
+  api-key:
+    description: API key of the LLM provider.
+    required: true
+  github-token:
+    description: Token able to read and comment the repository advisories.
+    required: true
+  repository:
+    description: Repository owning the advisories.
+    default: ${{ github.repository }}
+  path:
+    description: Path of the repository checkout, relative to the workspace.
+    default: .
+  dry-run:
+    description: Write the comments to the job summary instead of posting them.
+    default: "false"
+
+runs:
+  using: docker
+  image: Dockerfile
+  env:
+    SINCE: ${{ inputs.since }}
+    ADVISORY: ${{ inputs.advisory }}
+    ENGINE: ${{ inputs.engine }}
+    MODEL: ${{ inputs.model }}
+    LLM_API_KEY: ${{ inputs.api-key }}
+    GH_TOKEN: ${{ inputs.github-token }}
+    REPOSITORY: ${{ inputs.repository }}
+    REPO_PATH: ${{ inputs.path }}
+    DRY_RUN: ${{ inputs.dry-run }}
