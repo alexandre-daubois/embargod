@@ -1,4 +1,4 @@
 {
-  "claude": "ghcr.io/alexandre-daubois/embargod-agent@sha256:fb741e2e8d99e01d76861063debf5e4607f92f79f1484640ba33dd450922402c",
-  "codex": "ghcr.io/alexandre-daubois/embargod-agent@sha256:50a72751c6fc600ec63cc56d4bfd966cb7a40cca4397b61da714073f26d0c605"
+  "claude": "ghcr.io/alexandre-daubois/embargod-agent@sha256:1d20497292ce7ba530626059c3b03a2ffa68298505bd43f65297123e7cffdd59",
+  "codex": "ghcr.io/alexandre-daubois/embargod-agent@sha256:590bb1453555002b1b8c8bfbf68339ae8e833f831ebc6e37e10f11cc5bb61059"
 }
