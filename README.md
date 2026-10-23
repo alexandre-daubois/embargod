@@ -1,31 +1,27 @@
 # embargod
 
-A GitHub Action that gives every new private vulnerability report a first, evidence-based read with an LLM, and posts it as a comment on the advisory.
+[![CI](https://github.com/alexandre-daubois/embargod/actions/workflows/ci.yml/badge.svg)](https://github.com/alexandre-daubois/embargod/actions/workflows/ci.yml)
 
-For each new report it:
+First-pass triage of private vulnerability reports on GitHub. When a new security advisory comes in, embargod has an LLM agent investigate it against the repository and posts its findings as a comment on the advisory.
 
-- looks for duplicates among the other advisories of the repository,
-- looks for public issues and pull requests already fixing or hardening the same code,
-- checks that the files and functions the report cites exist in the repository,
-- reads the security policy (`SECURITY.md`, `AGENTS.md`, `CLAUDE.md`) and points out what may exclude the report,
+For each report, embargod:
+
+- lists duplicates among the repository's other advisories,
+- finds public issues and pull requests already fixing or hardening the same code,
+- checks that the files and functions the report cites exist,
+- reads the security policy and flags what may exclude the report,
 - suggests a CWE and a CVSS 4.0 base vector.
 
-It does not decide anything, it helps maintainers sort the flow.
+It informs the maintainers' decision and never makes it.
 
-## Usage
+## Quick start
 
-Create a GitHub App for your organisation by opening this address, with `YOUR-ORG` replaced by the organisation name. The form comes pre-filled and only asks for the "Repository security advisories" permission.
-
-```text
-https://github.com/organizations/YOUR-ORG/settings/apps/new?name=YOUR-ORG-embargod&description=First-pass%20triage%20of%20new%20security%20advisories&url=https://github.com/alexandre-daubois/embargod&public=false&webhook_active=false&repository_advisories=write
-```
-
-Then generate a private key in its settings, install it on the project repository only, and store its client ID in an `EMBARGOD_CLIENT_ID` variable and its key in an `EMBARGOD_PRIVATE_KEY` secret.
-
-Run the workflow from a private repository that targets the public one, so its logs, inputs and secrets stay private.
+1. Create a GitHub App for your organisation with the "Repository security advisories" permission in read and write, and install it on the project repository only.
+2. In a private repository, store the App's client ID and private key, and an Anthropic or OpenAI API key.
+3. Add this workflow to the private repository:
 
 ```yaml
-name: Embargod
+name: embargod
 
 on:
   schedule:
@@ -63,33 +59,24 @@ jobs:
           repository: your-org/your-project
           since: "2026-10-22"
           advisory: ${{ inputs.advisory }}
-          engine: claude
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           github-token: ${{ steps.app.outputs.token }}
           bot-login: your-app-slug[bot]
 ```
 
-GitHub Actions has no trigger for security advisories, hence the schedule. Set `since` to the day you install the action so the existing backlog is left alone.
+Set `since` to the installation date so existing advisories are left alone. The [setup guide](docs/setup.md) covers each step in detail.
 
-| Input | Default | Description |
-|---|---|---|
-| `since` | | Only advisories created after this date (`2026-10-22` or RFC 3339) are triaged. Required unless `advisory` is set. |
-| `advisory` | | Triage this GHSA only, whatever its state and creation date. |
-| `engine` | `claude` | `claude` or `openai`. |
-| `model` | `claude-opus-5-5` / `gpt-5.5` | Model id. |
-| `api-key` | | API key of the LLM provider. |
-| `github-token` | | Token able to read and comment the advisories. Best is a GitHub App installed on the repository only, with the "Repository security advisories" permission in read and write, so comments are posted as the App. A personal access token of a security manager works too. |
-| `bot-login` | owner of the token | Login the comments are posted as, used to recognise them. Required with a GitHub App token, which cannot look it up: `your-app-slug[bot]`. |
-| `repository` | current repository | Repository owning the advisories. |
-| `path` | `.` | Path of the repository checkout. |
-| `daybreak` | `false` | Turn on OpenAI's Daybreak cyber access program in Codex, with `engine: openai` only. The API key's org must be approved for it. |
-| `runner-image` | `ghcr.io/alexandre-daubois/embargod-agent:claude` or `:codex` | Image the agent runs in, built from `docker/agent`. It needs the agent CLI, git, curl and `harness-proxy`. |
+## Documentation
 
-Add a `.github/embargod.md` file to the project to tell the model what is specific to it: scope, CVSS conventions, realistic configurations.
+- [Setup](docs/setup.md): GitHub App, private repository, secrets and first run.
+- [Configuration](docs/configuration.md): inputs, project guidance and engines.
+- [How it works](docs/how-it-works.md): the triage pipeline and the comment it posts.
+- [Security](docs/security.md): threat model, isolation and known limits.
+- [Development](docs/development.md): building, testing and running locally.
 
-The report is read by Claude Code or Codex in a throwaway container: the source is mounted read-only, the only reachable hosts are the model API and the public GitHub API, and the model key stays on the runner behind a proxy, the container only holding a token revoked after the run. The runner needs Docker, which GitHub-hosted Ubuntu runners have. Duplicates among the other advisories are searched by a separate model that never sees the report.
+## Before installing
 
-Before installing it, know that the reporter sees the comment, since GitHub does not let the API post confidential comments yet, and that reports are sent to the LLM provider you pick.
+The reporter can read the comment, since the GitHub API cannot post confidential comments yet, and the report is sent to the model provider you choose. Make sure your disclosure policy allows both.
 
 ## License
 
