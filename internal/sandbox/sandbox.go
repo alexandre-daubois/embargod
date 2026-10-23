@@ -102,8 +102,7 @@ func New(name, model, apiKey, image string) (*Reader, error) {
 	go func() { _ = server.Serve(ln) }()
 	modelPort := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 
-	// The egress proxy forwards inspected HTTP to the model proxy, the only host service the agent may reach.
-	ep := &egress.Proxy{Allow: allow, Token: egress.NewToken(), APIPort: modelPort}
+	ep := hostProxy(modelPort)
 	egressPort, err := egress.Start(ep)
 	if err != nil {
 		_ = server.Close()
@@ -121,6 +120,12 @@ func New(name, model, apiKey, image string) (*Reader, error) {
 		proxyURL:  egress.ProxyURL(ep.Token, egress.HostGatewayAlias, egressPort),
 		server:    server,
 	}, nil
+}
+
+// hostProxy is the egress proxy of runtimes without a sidecar. It forwards inspected HTTP to the model proxy, the
+// only host service the agent may reach, and checks the allowlist before that, so the host gateway must be on it.
+func hostProxy(modelPort string) *egress.Proxy {
+	return &egress.Proxy{Allow: append([]string{egress.HostGatewayAlias}, allow...), Token: egress.NewToken(), APIPort: modelPort}
 }
 
 func (r *Reader) Close() error {

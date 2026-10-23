@@ -591,6 +591,32 @@ func TestRunWithBotLoginSkipsTheTokenOwnerLookup(t *testing.T) {
 	}
 }
 
+func TestRunMatchesTheBotLoginWhateverItsCase(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	app := github.Comment{Body: report.Marker}
+	app.User.Login = "embargod[bot]"
+	gh.comments["GHSA-done"] = []github.Comment{app}
+
+	if err := run(t, Config{Since: since, BotLogin: "Embargod[bot]"}, gh, eng); err != nil {
+		t.Fatal(err)
+	}
+
+	if gh.posted["GHSA-done"] != "" || gh.posted["GHSA-new"] == "" {
+		t.Fatalf("the App's own comment must mark GHSA-done as triaged: %v", gh.posted)
+	}
+}
+
+func TestStrictDecode(t *testing.T) {
+	if err := strictDecode[report.Report](json.RawMessage("{\"summary\":\"s\"}\n")); err != nil {
+		t.Errorf("a valid report was rejected: %v", err)
+	}
+	for _, bad := range []string{`{"summary":"s"} {"summary":"t"}`, `{"summary":"s"}}`, `{"summary":"s"} trailing`, `{"summary":"s","notes":"x"}`, ``} {
+		if err := strictDecode[report.Report](json.RawMessage(bad)); err == nil {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
+}
+
 func TestRunOnlyListsCodeTheReportCites(t *testing.T) {
 	gh := newFixture()
 	eng := &fakeEngine{reader: `{"summary":"s","code_references":[{"path":"ext/foo/foo.c","symbol":"foo"},{"path":"ext/foo/foo.c","symbol":"php_found_by_the_reader"}]}`}

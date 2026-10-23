@@ -30,8 +30,9 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("github: HTTP %d", e.Status)
 }
 
+// Unwrap also treats 410 as not found: GitHub answers it for an issue deleted from a repository the token can read.
 func (e *HTTPError) Unwrap() error {
-	if e.Status == http.StatusNotFound {
+	if e.Status == http.StatusNotFound || e.Status == http.StatusGone {
 		return ErrNotFound
 	}
 

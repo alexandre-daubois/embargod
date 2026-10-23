@@ -25,11 +25,16 @@ func NewClaude(apiKey, model string, opts ...option.RequestOption) *Claude {
 func (c *Claude) Run(ctx context.Context, system, prompt string, ts []tools.Tool) (json.RawMessage, error) {
 	defs := make([]anthropic.BetaToolUnionParam, 0, len(ts))
 	for _, t := range ts {
+		// A nil map would be sent as "properties": null.
+		properties := t.Properties
+		if properties == nil {
+			properties = map[string]any{}
+		}
 		defs = append(defs, anthropic.BetaToolUnionParam{OfTool: &anthropic.BetaToolParam{
 			Name:        t.Name,
 			Description: anthropic.String(t.Description),
 			InputSchema: anthropic.BetaToolInputSchemaParam{
-				Properties:  t.Properties,
+				Properties:  properties,
 				Required:    t.Required,
 				ExtraFields: map[string]any{"additionalProperties": false},
 			},
@@ -43,6 +48,8 @@ func (c *Claude) Run(ctx context.Context, system, prompt string, ts []tools.Tool
 		Messages:     []anthropic.BetaMessageParam{anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(prompt))},
 		Tools:        defs,
 		OutputConfig: anthropic.BetaOutputConfigParam{Effort: anthropic.BetaOutputConfigEffortHigh},
+		// Every turn resends the whole conversation, the cache keeps the earlier turns from being billed in full again.
+		CacheControl: anthropic.NewBetaCacheControlEphemeralParam(),
 		// Security reports can trip the cyber classifier, the server-side fallback re-serves refused requests.
 		Fallbacks: anthropic.BetaFallbacksParamOfDefault(),
 		Betas:     []anthropic.AnthropicBeta{anthropic.AnthropicBetaServerSideFallback2026_07_01},

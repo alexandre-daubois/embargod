@@ -149,8 +149,8 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestHTTPErrorUnwrapsOnlyNotFound(t *testing.T) {
-	if !errors.Is(&HTTPError{Status: 404}, ErrNotFound) || errors.Is(&HTTPError{Status: 403}, ErrNotFound) || errors.Is(&HTTPError{}, ErrNotFound) {
-		t.Fatal("only a 404 is ErrNotFound")
+func TestHTTPErrorUnwrapsOnlyNotFoundAndGone(t *testing.T) {
+	if !errors.Is(&HTTPError{Status: 404}, ErrNotFound) || !errors.Is(&HTTPError{Status: 410}, ErrNotFound) || errors.Is(&HTTPError{Status: 403}, ErrNotFound) || errors.Is(&HTTPError{}, ErrNotFound) {
+		t.Fatal("only a 404 or a 410 is ErrNotFound")
 	}
 }

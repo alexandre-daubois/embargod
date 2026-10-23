@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path"
@@ -50,12 +51,12 @@ type Config struct {
 	BotLogin string
 }
 
-// Run never logs report content, GHSA identifiers nor raw errors: logs of public repositories are public.
 // Reader runs the model that sees the untrusted report, sandbox.Reader in production.
 type Reader interface {
 	Read(ctx context.Context, req sandbox.Request) (json.RawMessage, error)
 }
 
+// Run never logs report content, GHSA identifiers nor raw errors: logs of public repositories are public.
 func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, log *slog.Logger) error {
 	login := cfg.BotLogin
 	if login == "" {
@@ -141,9 +142,10 @@ func selected(cfg Config, a github.Advisory) bool {
 }
 
 // commented only trusts the marker in comments of the token owner, a reporter could post it to skip the triage.
+// GitHub logins are case-insensitive, and BotLogin is typed by hand.
 func commented(comments []github.Comment, login string) bool {
 	for _, c := range comments {
-		if c.User.Login == login && strings.Contains(c.Body, report.Marker) {
+		if strings.EqualFold(c.User.Login, login) && strings.Contains(c.Body, report.Marker) {
 			return true
 		}
 	}
@@ -151,10 +153,6 @@ func commented(comments []github.Comment, login string) bool {
 	return false
 }
 
-// triage runs two models so that no context holds both the untrusted report and the embargoed
-// advisories: the reader sees the report with public tools only, the comparator sees the other
-// advisories but only gets validated code locations from the reader and can only answer with
-// GHSA identifiers and enums.
 // triage runs two models so that no context holds both the untrusted report and the embargoed
 // advisories. The reader sees the report in a sandboxed agent with public data only. The comparator
 // sees the other advisories but only gets validated code locations from the reader, and can only
@@ -296,12 +294,19 @@ When you are done, write your findings as JSON to /work/report.json, following t
 }
 
 // strictDecode checks that raw decodes into a T without unknown fields, so a misnamed field goes back to the agent.
+// Data after the value is refused too: json.Unmarshal rejects it later, when the agent can no longer fix it.
 func strictDecode[T any](raw json.RawMessage) error {
 	var v T
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
+	if err := dec.Decode(&v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return errors.New("unexpected data after the JSON object")
+	}
 
-	return dec.Decode(&v)
+	return nil
 }
 
 func comparatorPrompt(c report.Comparison) string {

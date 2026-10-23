@@ -123,8 +123,8 @@ func ReaderProperties() (map[string]any, []string) {
 	return map[string]any{
 		"summary": str("One short sentence, 20 words at most: what the report claims and how credible it looks. Code identifiers in backticks."),
 		"location": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"path", "symbol", "line"}, "description": "The faulty statement this report is about, after reading the code, used to look for duplicates. Not the same pattern found elsewhere.", "properties": map[string]any{
-			"path":   str("File path relative to the repository root, empty when the bug could not be located"),
-			"symbol": str("C function or macro holding the faulty statement, empty when unknown"),
+			"path":   str("File path relative to the repository root, without backticks, empty when the bug could not be located"),
+			"symbol": str("Bare name of the C function or macro holding the faulty statement, without backticks nor parentheses, empty when unknown"),
 			"line":   map[string]any{"type": "integer", "description": "Line of the faulty statement in the current code, 0 when unknown"},
 		}},
 		"entry_points": map[string]any{"type": "array", "description": "PHP functions or methods the report goes through to reach the bug, e.g. http_build_query or SplFixedArray::offsetSet. At most 10.", "items": map[string]any{"type": "string"}},

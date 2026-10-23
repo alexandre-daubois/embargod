@@ -2,12 +2,18 @@ package sandbox
 
 import (
 	"errors"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/alpha-omega-security/harness/container"
+	"github.com/alpha-omega-security/harness/egress"
 )
 
 func TestSourceMountsHideGitConfig(t *testing.T) {
@@ -57,6 +63,44 @@ func TestErrorHidesTheAgentOutput(t *testing.T) {
 
 	if err.Error() != "the agent run failed" || !strings.Contains(errors.Unwrap(err).Error(), "SECRET-PAYLOAD") {
 		t.Fatalf("got %q", err.Error())
+	}
+}
+
+// The host proxy lets the agent reach the model proxy port on the host gateway, and nothing else on the host or off the allowlist.
+func TestHostProxyReachesTheModelProxyOnly(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "model") })}
+	go func() { _ = model.Serve(ln) }()
+	t.Cleanup(func() { _ = model.Close() })
+	modelPort := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+
+	ep := hostProxy(modelPort)
+	port, err := egress.Start(ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyURL, err := url.Parse(egress.ProxyURL(ep.Token, "127.0.0.1", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+
+	for target, want := range map[string]int{
+		"http://" + egress.HostGatewayAlias + ":" + modelPort + "/model-proxy/v1/messages": http.StatusOK,
+		"http://" + egress.HostGatewayAlias + ":1/":                                        http.StatusForbidden,
+		"http://evil.example/": http.StatusForbidden,
+	} {
+		resp, err := client.Get(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("%s: status %d, want %d", target, resp.StatusCode, want)
+		}
 	}
 }
 
