@@ -47,13 +47,14 @@ func TestRunValidatesConfiguration(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		"since required":   {map[string]string{"REPOSITORY": "o/r", "GH_TOKEN": "t", "LLM_API_KEY": "k"}, "SINCE is required"},
-		"invalid dry run":  {map[string]string{"DRY_RUN": "maybe"}, "DRY_RUN"},
-		"token required":   {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "LLM_API_KEY": "k"}, "GH_TOKEN is required"},
-		"api key required": {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t"}, "LLM_API_KEY is required"},
+		"since required":                     {map[string]string{"REPOSITORY": "o/r", "GH_TOKEN": "t", "LLM_API_KEY": "k"}, "SINCE is required"},
+		"invalid dry run":                    {map[string]string{"DRY_RUN": "maybe"}, "DRY_RUN"},
+		"token required":                     {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "LLM_API_KEY": "k"}, "GH_TOKEN is required"},
+		"api key required":                   {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t"}, "LLM_API_KEY is required"},
+		"dry run without summary in Actions": {map[string]string{"DRY_RUN": "true", "GITHUB_ACTIONS": "true"}, "DRY_RUN needs GITHUB_STEP_SUMMARY"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			for _, k := range []string{"REPOSITORY", "GITHUB_REPOSITORY", "ADVISORY", "REPO_PATH", "DRY_RUN", "SINCE", "GH_TOKEN", "ENGINE", "MODEL", "LLM_API_KEY", "GITHUB_STEP_SUMMARY"} {
+			for _, k := range []string{"REPOSITORY", "GITHUB_REPOSITORY", "ADVISORY", "REPO_PATH", "DRY_RUN", "SINCE", "GH_TOKEN", "ENGINE", "MODEL", "LLM_API_KEY", "GITHUB_STEP_SUMMARY", "GITHUB_ACTIONS"} {
 				t.Setenv(k, tc.env[k])
 			}
 

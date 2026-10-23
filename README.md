@@ -14,6 +14,8 @@ It does not decide anything. It helps maintainers sort the flow, with a confiden
 
 ## Usage
 
+Run the workflow from a private repository that targets the public one, for example `your-org/securibot-runner` for `your-org/your-project`. See [Run it from a private repository](#run-it-from-a-private-repository) for why.
+
 ```yaml
 name: Securibot
 
@@ -33,9 +35,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: your-org/your-project
           fetch-depth: 0
       - uses: alexandre-daubois/securibot@v1
         with:
+          repository: your-org/your-project
           since: "2026-10-22"
           advisory: ${{ inputs.advisory }}
           engine: claude
@@ -55,7 +59,11 @@ GitHub Actions has no trigger for security advisories, hence the schedule. Each 
 | `github-token` | | Token able to read and comment the repository advisories. |
 | `repository` | current repository | Repository owning the advisories. |
 | `path` | `.` | Path of the repository checkout. |
-| `dry-run` | `false` | Write the comments to the job summary instead of posting them. Nothing marks an advisory as done in this mode, so pair it with `advisory` in a manual run rather than with the schedule, which would pay for the same triage every 15 minutes. |
+| `dry-run` | `false` | Write the comments to the job summary instead of posting them, never to the run log. Nothing marks an advisory as done in this mode, so pair it with `advisory` in a manual run rather than with the schedule, which would pay for the same triage every 15 minutes. |
+
+### Run it from a private repository
+
+Run logs, job summaries and artifacts of a public repository are public, and securibot handles embargoed reports. The run log only ever gets counters and status codes: no report content, no comment, no GHSA identifier, no error message from GitHub or the LLM provider, and a panic is logged as "internal error" without its value. GitHub itself prints the step inputs at the top of the step log, so a GHSA passed through `advisory` shows there, and a dry run writes full comments to the job summary, which is public too. Running the workflow from a private repository keeps the summaries, the timing of the runs and the secrets away from the public project.
 
 ### The token
 

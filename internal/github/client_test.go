@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -94,13 +95,27 @@ func TestErrors(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		http.Error(w, "boom", http.StatusInternalServerError)
+		http.Error(w, `{"message":"SECRET-PAYLOAD"}`, http.StatusUnprocessableEntity)
 	})
 
 	if _, err := c.GetIssue(context.Background(), "o/r", 404); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
-	if _, err := c.GetIssue(context.Background(), "o/r", 1); err == nil || errors.Is(err, ErrNotFound) {
-		t.Fatalf("want a server error, got %v", err)
+	err := c.PostComment(context.Background(), "o/r", "GHSA-secret-id", "SECRET-PAYLOAD")
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.Status != http.StatusUnprocessableEntity || errors.Is(err, ErrNotFound) {
+		t.Fatalf("want an HTTP 422, got %v", err)
+	}
+	if strings.Contains(err.Error(), "SECRET-PAYLOAD") || strings.Contains(err.Error(), "GHSA-secret-id") {
+		t.Fatalf("the body or the advisory leaked: %v", err)
+	}
+}
+
+func TestNetworkErrorsDoNotLeakTheURL(t *testing.T) {
+	c := &Client{BaseURL: "http://127.0.0.1:1", Token: "tok", HTTP: http.DefaultClient}
+
+	_, err := c.GetAdvisory(context.Background(), "o/r", "GHSA-secret-id")
+	if err == nil || strings.Contains(err.Error(), "GHSA-secret-id") {
+		t.Fatalf("want an error without the advisory, got %v", err)
 	}
 }

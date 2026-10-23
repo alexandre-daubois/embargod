@@ -3,7 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -51,10 +51,14 @@ func (c *Claude) Run(ctx context.Context, system, prompt string, ts []tools.Tool
 	for range maxTurns {
 		resp, err := c.client.Beta.Messages.New(ctx, params)
 		if err != nil {
-			return nil, err
+			apiErr := &APIError{Provider: "anthropic"}
+			if sdkErr := (*anthropic.Error)(nil); errors.As(err, &sdkErr) {
+				apiErr.Status = sdkErr.StatusCode
+			}
+			return nil, apiErr
 		}
 		if resp.StopReason == anthropic.BetaStopReasonRefusal {
-			return nil, fmt.Errorf("the model refused: %s %s", resp.StopDetails.Category, resp.StopDetails.Explanation)
+			return nil, &RefusalError{Category: string(resp.StopDetails.Category)}
 		}
 		params.Messages = append(params.Messages, resp.ToParam())
 

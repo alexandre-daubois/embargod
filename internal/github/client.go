@@ -16,6 +16,27 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+// HTTPError keeps only the status code: paths name advisories and bodies may echo content.
+type HTTPError struct {
+	Status int
+}
+
+func (e *HTTPError) Error() string {
+	if e.Status == 0 {
+		return "github: request failed"
+	}
+
+	return fmt.Sprintf("github: HTTP %d", e.Status)
+}
+
+func (e *HTTPError) Unwrap() error {
+	if e.Status == http.StatusNotFound {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
 var nextLink = regexp.MustCompile(`<([^>]+)>;\s*rel="next"`)
 
 type Advisory struct {
@@ -140,20 +161,19 @@ func (c *Client) do(ctx context.Context, method, u string, body, out any) (*http
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, &HTTPError{}
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return resp, fmt.Errorf("%s %s: %w", method, req.URL.Path, ErrNotFound)
-	}
 	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return resp, fmt.Errorf("%s %s: %s: %s", method, req.URL.Path, resp.Status, msg)
+		return resp, &HTTPError{Status: resp.StatusCode}
 	}
 	if out == nil {
 		return resp, nil
 	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return resp, errors.New("github: invalid response")
+	}
 
-	return resp, json.NewDecoder(resp.Body).Decode(out)
+	return resp, nil
 }

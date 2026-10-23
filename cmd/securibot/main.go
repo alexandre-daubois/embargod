@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -18,6 +17,15 @@ import (
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	// A panic value may hold report content, and logs of public repositories are public.
+	// The triage runs on this goroutine only, so this recover sees every panic of ours.
+	defer func() {
+		if recover() != nil {
+			log.Error("internal error")
+			os.Exit(2)
+		}
+	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -49,13 +57,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		cfg.DryRun = dry
 	}
-	if path := os.Getenv("GITHUB_STEP_SUMMARY"); cfg.DryRun && path != "" {
+	path := os.Getenv("GITHUB_STEP_SUMMARY")
+	if cfg.DryRun && path == "" && os.Getenv("GITHUB_ACTIONS") == "true" {
+		return errors.New("DRY_RUN needs GITHUB_STEP_SUMMARY, comments are never written to the run log")
+	}
+	if cfg.DryRun && path != "" {
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
 		if err != nil {
 			return err
 		}
 		defer f.Close()
-		cfg.Output = io.MultiWriter(os.Stdout, f)
+		// Never the run log, see "Run it from a private repository" in the README.
+		cfg.Output = f
 	}
 
 	since, err := parseSince(os.Getenv("SINCE"))

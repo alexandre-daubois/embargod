@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -51,14 +50,18 @@ func (o *OpenAI) Run(ctx context.Context, system, prompt string, ts []tools.Tool
 	for range maxTurns {
 		resp, err := o.client.Chat.Completions.New(ctx, params)
 		if err != nil {
-			return nil, err
+			apiErr := &APIError{Provider: "openai"}
+			if sdkErr := (*openai.Error)(nil); errors.As(err, &sdkErr) {
+				apiErr.Status = sdkErr.StatusCode
+			}
+			return nil, apiErr
 		}
 		if len(resp.Choices) == 0 {
 			return nil, errors.New("empty completion")
 		}
 		msg := resp.Choices[0].Message
 		if msg.Refusal != "" {
-			return nil, fmt.Errorf("the model refused: %s", msg.Refusal)
+			return nil, &RefusalError{}
 		}
 		params.Messages = append(params.Messages, msg.ToParam())
 

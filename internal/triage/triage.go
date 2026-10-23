@@ -24,6 +24,8 @@ import (
 // ProfilePath holds project-specific guidance, relative to the repository root.
 const ProfilePath = ".github/securibot.md"
 
+var errInvalidReport = errors.New("the model submitted an invalid report")
+
 type GitHub interface {
 	tools.GitHub
 	report.IssueGetter
@@ -44,13 +46,14 @@ type Config struct {
 	Output io.Writer
 }
 
+// Run never logs report content, GHSA identifiers nor raw errors: logs of public repositories are public.
 func Run(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, log *slog.Logger) error {
 	all, err := gh.ListAdvisories(ctx, cfg.Repo, "")
 	if err != nil {
-		return err
+		return errors.New("listing advisories: " + describe(err))
 	}
 
-	var failed int
+	var triaged, skipped, failed int
 	for _, a := range all {
 		if !selected(cfg, a) {
 			continue
@@ -58,27 +61,54 @@ func Run(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, log *slo
 
 		comments, err := gh.ListComments(ctx, cfg.Repo, a.GHSAID)
 		if err != nil {
-			log.Error("listing comments", "advisory", a.GHSAID, "error", err)
+			log.Error("listing comments failed", "reason", describe(err))
 			failed++
 			continue
 		}
 		if commented(comments) {
-			log.Info("already triaged", "advisory", a.GHSAID)
+			skipped++
 			continue
 		}
 
-		log.Info("triaging", "advisory", a.GHSAID)
 		if err := triage(ctx, cfg, gh, eng, a, all); err != nil {
-			log.Error("triage failed", "advisory", a.GHSAID, "error", err)
+			log.Error("triage failed", "reason", describe(err))
 			failed++
+			continue
 		}
+		triaged++
 	}
 
+	log.Info("done", "triaged", triaged, "already_triaged", skipped, "failed", failed)
 	if failed > 0 {
 		return fmt.Errorf("%d advisory(ies) failed", failed)
 	}
 
 	return nil
+}
+
+// describe turns an error into text that is safe to log, keeping only status codes and known reasons.
+func describe(err error) string {
+	var (
+		gh      *github.HTTPError
+		api     *engine.APIError
+		refusal *engine.RefusalError
+	)
+	switch {
+	case errors.As(err, &gh):
+		return gh.Error()
+	case errors.As(err, &api):
+		return api.Error()
+	case errors.As(err, &refusal):
+		return refusal.Error()
+	case errors.Is(err, engine.ErrNoReport):
+		return engine.ErrNoReport.Error()
+	case errors.Is(err, errInvalidReport):
+		return errInvalidReport.Error()
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "canceled"
+	default:
+		return "unexpected error"
+	}
 }
 
 func selected(cfg Config, a github.Advisory) bool {
@@ -132,7 +162,7 @@ func triage(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, a git
 
 	r := report.Report{Policy: policy}
 	if err := json.Unmarshal(raw, &r); err != nil {
-		return fmt.Errorf("decoding the report: %w", err)
+		return errInvalidReport
 	}
 
 	checker := report.Checker{Repo: cfg.Repo, Issues: gh, Code: code, Advisories: byID}

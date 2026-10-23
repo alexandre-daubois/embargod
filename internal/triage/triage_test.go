@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alexandre-daubois/securibot/internal/engine"
 	"github.com/alexandre-daubois/securibot/internal/github"
 	"github.com/alexandre-daubois/securibot/internal/report"
 	"github.com/alexandre-daubois/securibot/internal/tools"
@@ -22,9 +24,10 @@ import (
 var since = time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
 
 type fakeGitHub struct {
-	advisories []github.Advisory
-	comments   map[string][]github.Comment
-	posted     map[string]string
+	advisories  []github.Advisory
+	comments    map[string][]github.Comment
+	posted      map[string]string
+	commentsErr error
 }
 
 func (f *fakeGitHub) ListAdvisories(context.Context, string, string) ([]github.Advisory, error) {
@@ -44,6 +47,10 @@ func (f *fakeGitHub) GetIssue(context.Context, string, int) (github.Issue, error
 }
 
 func (f *fakeGitHub) ListComments(_ context.Context, _, ghsa string) ([]github.Comment, error) {
+	if ghsa == "GHSA-other" && f.commentsErr != nil {
+		return nil, f.commentsErr
+	}
+
 	return f.comments[ghsa], nil
 }
 
@@ -66,7 +73,7 @@ func (e *fakeEngine) Run(_ context.Context, system, prompt string, ts []tools.To
 		return nil, errors.New("submit tool missing")
 	}
 	if e.fail != "" && strings.Contains(prompt, e.fail) {
-		return nil, errors.New("model unavailable")
+		return nil, errors.New("model unavailable while reading SECRET-PAYLOAD from " + prompt)
 	}
 
 	return json.RawMessage(`{"summary":"Looks like a heap overflow.","duplicates":[{"ghsa_id":"GHSA-old","confidence":"high","exact":true}],"policy_exclusions":[{"point":"Malicious unserialize() inputs","reason":"The PoC calls unserialize()."}],"cwe":[{"id":"CWE-787","reason":"write"}]}`), nil
@@ -87,12 +94,18 @@ func newFixture() *fakeGitHub {
 
 func run(t *testing.T, cfg Config, gh *fakeGitHub, eng *fakeEngine) error {
 	t.Helper()
+
+	return runLogged(t, cfg, gh, eng, io.Discard)
+}
+
+func runLogged(t *testing.T, cfg Config, gh *fakeGitHub, eng *fakeEngine, logs io.Writer) error {
+	t.Helper()
 	cfg.Repo = "o/r"
 	if cfg.RepoPath == "" {
 		cfg.RepoPath = t.TempDir()
 	}
 
-	return Run(context.Background(), cfg, gh, eng, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return Run(context.Background(), cfg, gh, eng, slog.New(slog.NewTextHandler(logs, nil)))
 }
 
 func TestRunOnlyPostsOnNewUntriagedAdvisories(t *testing.T) {
@@ -210,5 +223,51 @@ func TestRunAppendsProjectProfile(t *testing.T) {
 
 	if !strings.Contains(eng.system, "# Advisory triage") || !strings.Contains(eng.system, "Score CVSS for php-fpm deployments.") {
 		t.Fatalf("system prompt = %s", eng.system)
+	}
+}
+
+func TestRunLogsNothingAboutTheAdvisories(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "GHSA-new"}
+	gh.advisories = append(gh.advisories,
+		github.Advisory{GHSAID: "GHSA-other", State: "triage", CreatedAt: since.Add(2 * time.Hour)},
+		github.Advisory{GHSAID: "GHSA-third", State: "triage", CreatedAt: since.Add(3 * time.Hour)},
+	)
+	gh.commentsErr = fmt.Errorf("listing GHSA-other: %w", &github.HTTPError{Status: 403})
+	var logs bytes.Buffer
+
+	err := runLogged(t, Config{Since: since}, gh, eng, &logs)
+
+	if err == nil || strings.Contains(err.Error(), "GHSA-") || strings.Contains(err.Error(), "SECRET-PAYLOAD") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gh.posted["GHSA-third"] == "" {
+		t.Fatalf("the third advisory should be triaged: %v", gh.posted)
+	}
+	got := logs.String()
+	for _, leak := range []string{"GHSA-", "SECRET-PAYLOAD", "Overflow in foo"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("logs leak %q:\n%s", leak, got)
+		}
+	}
+	for _, want := range []string{"reason=\"unexpected error\"", "reason=\"github: HTTP 403\"", "triaged=1 already_triaged=1 failed=2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("logs miss %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestDescribe(t *testing.T) {
+	for err, want := range map[error]string{
+		fmt.Errorf("x GHSA-1: %w", &github.HTTPError{Status: 404}):             "github: HTTP 404",
+		fmt.Errorf("x: %w", &engine.APIError{Provider: "openai", Status: 429}): "openai: HTTP 429",
+		&engine.RefusalError{Category: "cyber"}:                                `the model refused (category "cyber")`,
+		fmt.Errorf("x: %w", engine.ErrNoReport):                                engine.ErrNoReport.Error(),
+		errInvalidReport:                                                       errInvalidReport.Error(),
+		fmt.Errorf("SECRET: %w", context.Canceled):                             "canceled",
+		errors.New("SECRET-PAYLOAD"):                                           "unexpected error",
+	} {
+		if got := describe(err); got != want {
+			t.Errorf("describe(%v) = %q, want %q", err, got, want)
+		}
 	}
 }
