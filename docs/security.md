@@ -20,7 +20,8 @@ The agent runs through [harness](https://github.com/alpha-omega-security/harness
 - a throwaway container per advisory, with a read-only root filesystem, all capabilities dropped and no new privileges,
 - the repository mounted read-only, with `.git/config` hidden behind an empty file,
 - an internal network whose only route out is an authenticated egress proxy allowing the model proxy and `api.github.com`,
-- an image containing only the agent CLI, git, curl, ripgrep and `harness-proxy`, with every download checked against a pinned checksum.
+- an image containing only the agent CLI, git, curl, ripgrep and `harness-proxy`, with every download checked against a pinned checksum,
+- that image pinned by digest in each release, and checked by the action against its build attestation before use.
 
 ## The model proxy
 

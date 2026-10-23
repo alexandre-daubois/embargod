@@ -14,7 +14,7 @@
 | `engine` | `claude` | `claude` (Claude Code and the Anthropic API) or `openai` (Codex and the OpenAI API). |
 | `model` | `claude-opus-5-5` / `gpt-5.5` | Model used by both the agent and the duplicate search. |
 | `daybreak` | `false` | Turn on OpenAI's Daybreak cyber access program in Codex. `openai` engine only, and the API key's organisation must be approved for it. |
-| `runner-image` | `ghcr.io/alexandre-daubois/embargod-agent:claude` or `:codex` | Image the agent runs in. It must contain the agent CLI, git, curl and `harness-proxy`. |
+| `runner-image` | embargod agent image, pinned by digest | Image the agent runs in. It must contain the agent CLI, git, curl and `harness-proxy`. A custom image skips the attestation check. |
 
 Outside GitHub Actions, the same settings are read from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK` and `RUNNER_IMAGE`.
 
