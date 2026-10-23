@@ -1,5 +1,5 @@
 ---
-name: advisory-triage
+name: securibot
 description: First-pass triage of a security vulnerability report against the repository it targets. Finds duplicate advisories, related issues and pull requests, checks the code the report cites, and estimates the CWE and a CVSS 4.0 vector. Use when a new private vulnerability report or draft security advisory needs a quick, evidence-based first read.
 ---
 

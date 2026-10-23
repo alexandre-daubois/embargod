@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/alexandre-daubois/advisory-triage/internal/tools"
+	"github.com/alexandre-daubois/securibot/internal/tools"
 )
 
 const (

@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/alexandre-daubois/advisory-triage/internal/github"
-	"github.com/alexandre-daubois/advisory-triage/internal/repo"
+	"github.com/alexandre-daubois/securibot/internal/github"
+	"github.com/alexandre-daubois/securibot/internal/repo"
 )
 
 // Submit is the tool the model calls with its final report, which ends the run.

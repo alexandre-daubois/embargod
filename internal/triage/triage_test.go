@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexandre-daubois/advisory-triage/internal/github"
-	"github.com/alexandre-daubois/advisory-triage/internal/report"
-	"github.com/alexandre-daubois/advisory-triage/internal/tools"
+	"github.com/alexandre-daubois/securibot/internal/github"
+	"github.com/alexandre-daubois/securibot/internal/report"
+	"github.com/alexandre-daubois/securibot/internal/tools"
 )
 
 var since = time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)

@@ -13,16 +13,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alexandre-daubois/advisory-triage/internal/engine"
-	"github.com/alexandre-daubois/advisory-triage/internal/github"
-	"github.com/alexandre-daubois/advisory-triage/internal/repo"
-	"github.com/alexandre-daubois/advisory-triage/internal/report"
-	"github.com/alexandre-daubois/advisory-triage/internal/tools"
-	"github.com/alexandre-daubois/advisory-triage/skill"
+	"github.com/alexandre-daubois/securibot/internal/engine"
+	"github.com/alexandre-daubois/securibot/internal/github"
+	"github.com/alexandre-daubois/securibot/internal/repo"
+	"github.com/alexandre-daubois/securibot/internal/report"
+	"github.com/alexandre-daubois/securibot/internal/tools"
+	"github.com/alexandre-daubois/securibot/skill"
 )
 
 // ProfilePath holds project-specific guidance, relative to the repository root.
-const ProfilePath = ".github/advisory-triage.md"
+const ProfilePath = ".github/securibot.md"
 
 type GitHub interface {
 	tools.GitHub

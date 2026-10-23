@@ -1,4 +1,4 @@
-module github.com/alexandre-daubois/advisory-triage
+module github.com/alexandre-daubois/securibot
 
 go 1.26.2
 

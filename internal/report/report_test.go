@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alexandre-daubois/advisory-triage/internal/github"
-	"github.com/alexandre-daubois/advisory-triage/internal/repo"
+	"github.com/alexandre-daubois/securibot/internal/github"
+	"github.com/alexandre-daubois/securibot/internal/repo"
 )
 
 type fakeIssues map[int]github.Issue

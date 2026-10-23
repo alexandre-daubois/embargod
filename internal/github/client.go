@@ -1,4 +1,4 @@
-// Package github is a minimal REST client for the endpoints advisory-triage needs.
+// Package github is a minimal REST client for the endpoints securibot needs.
 package github
 
 import (

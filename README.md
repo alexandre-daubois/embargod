@@ -1,4 +1,4 @@
-# advisory-triage
+# securibot
 
 A GitHub Action that gives every new private vulnerability report a first, evidence-based read with an LLM, and posts it as a comment on the advisory.
 
@@ -14,7 +14,7 @@ It does not decide anything. It helps maintainers sort the flow, and every sugge
 ## Usage
 
 ```yaml
-name: Advisory triage
+name: Securibot
 
 on:
   schedule:
@@ -28,18 +28,18 @@ on:
 jobs:
   triage:
     runs-on: ubuntu-latest
-    environment: advisory-triage
+    environment: securibot
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: alexandre-daubois/advisory-triage@v1
+      - uses: alexandre-daubois/securibot@v1
         with:
           since: "2026-10-22"
           advisory: ${{ inputs.advisory }}
           engine: claude
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github-token: ${{ secrets.ADVISORY_TRIAGE_TOKEN }}
+          github-token: ${{ secrets.SECURIBOT_TOKEN }}
 ```
 
 GitHub Actions has no trigger for security advisories, hence the schedule. Each run lists the advisories in the `triage` state created after `since` and skips the ones it already commented, so set `since` to the day you install the action and the existing backlog is left alone.
@@ -62,7 +62,7 @@ Unpublished advisories are only visible to security managers, administrators and
 
 ### Project guidance
 
-Add a `.github/advisory-triage.md` file to tell the model what is specific to your project: what is in scope, how you score CVSS, which configurations are realistic. It is appended to the triage method.
+Add a `.github/securibot.md` file to tell the model what is specific to your project: what is in scope, how you score CVSS, which configurations are realistic. It is appended to the triage method.
 
 ## What to know before installing it
 

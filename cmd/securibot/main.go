@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/alexandre-daubois/advisory-triage/internal/engine"
-	"github.com/alexandre-daubois/advisory-triage/internal/github"
-	"github.com/alexandre-daubois/advisory-triage/internal/triage"
+	"github.com/alexandre-daubois/securibot/internal/engine"
+	"github.com/alexandre-daubois/securibot/internal/github"
+	"github.com/alexandre-daubois/securibot/internal/triage"
 )
 
 func main() {
