@@ -1,7 +1,7 @@
 // Package tools defines the read-only tools the models can call while triaging.
 //
-// The reader sees the untrusted report and only gets Code and Issues, which expose public data.
-// The comparator never sees the report and is the only one to get Advisories, which expose embargoed data.
+// The comparator, which reads embargoed advisories but never the report, gets Code and Advisories.
+// The reader runs in the sandbox package with its own tools.
 package tools
 
 import (
@@ -23,10 +23,6 @@ type Tool struct {
 	Properties  map[string]any
 	Required    []string
 	Run         func(ctx context.Context, input json.RawMessage) (string, error)
-}
-
-type IssueSearcher interface {
-	SearchIssues(ctx context.Context, repo, query string) ([]github.Issue, error)
 }
 
 type advisoryBrief struct {
@@ -98,30 +94,6 @@ func Code(r repo.Repo) []Tool {
 			},
 		},
 	}
-}
-
-// Issues returns the tool searching the public issues and pull requests of repoName.
-func Issues(gh IssueSearcher, repoName string) []Tool {
-	return []Tool{{
-		Name:        "search_issues",
-		Description: "Search public issues and pull requests of the repository with GitHub search syntax, e.g. `ext/standard overflow is:pr`.",
-		Properties:  map[string]any{"query": str("GitHub search query, the repository qualifier is added automatically")},
-		Required:    []string{"query"},
-		Run: func(ctx context.Context, input json.RawMessage) (string, error) {
-			in, err := decode[struct {
-				Query string `json:"query"`
-			}](input)
-			if err != nil {
-				return "", err
-			}
-			issues, err := gh.SearchIssues(ctx, repoName, in.Query)
-			if err != nil {
-				return "", err
-			}
-
-			return marshal(issues)
-		},
-	}}
 }
 
 // Advisories returns the tools reading the other advisories, served from others only so the

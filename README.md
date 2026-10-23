@@ -82,8 +82,11 @@ GitHub Actions has no trigger for security advisories, hence the schedule. Set `
 | `bot-login` | owner of the token | Login the comments are posted as, used to recognise them. Required with a GitHub App token, which cannot look it up: `your-app-slug[bot]`. |
 | `repository` | current repository | Repository owning the advisories. |
 | `path` | `.` | Path of the repository checkout. |
+| `runner-image` | `ghcr.io/alexandre-daubois/embargod-agent:claude` or `:codex` | Image the agent runs in, built from `docker/agent`. It needs the agent CLI, git, curl and `harness-proxy`. |
 
 Add a `.github/embargod.md` file to the project to tell the model what is specific to it: scope, CVSS conventions, realistic configurations.
+
+The report is read by Claude Code or Codex in a throwaway container: the source is mounted read-only, the only reachable hosts are the model API and the public GitHub API, and the model key stays on the runner behind a proxy, the container only holding a token revoked after the run. The runner needs Docker, which GitHub-hosted Ubuntu runners have. Duplicates among the other advisories are searched by a separate model that never sees the report.
 
 Before installing it, know that the reporter sees the comment, since GitHub does not let the API post confidential comments yet, and that reports are sent to the LLM provider you pick.
 

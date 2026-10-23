@@ -502,3 +502,23 @@ func TestKeepCited(t *testing.T) {
 		t.Fatalf("kept %q", kept)
 	}
 }
+
+func TestVerifySymbolWithoutPath(t *testing.T) {
+	r := Report{CodeReferences: []CodeReference{{Symbol: "real_func"}, {Symbol: "invented_func"}, {}}}
+
+	if err := checker(t).Verify(context.Background(), &r); err != nil {
+		t.Fatal(err)
+	}
+
+	if !r.CodeReferences[0].Found || r.CodeReferences[1].Found || r.CodeReferences[2].Found {
+		t.Fatalf("got %+v", r.CodeReferences)
+	}
+}
+
+func TestRenderReferenceWithoutPath(t *testing.T) {
+	got := Render(Report{CodeReferences: []CodeReference{{Symbol: "urldecode", Found: true}}})
+
+	if !strings.Contains(got, "| `urldecode` | yes |") || strings.Contains(got, "``") {
+		t.Fatalf("got:\n%s", got)
+	}
+}

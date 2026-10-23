@@ -115,17 +115,6 @@ func (c *Client) GetIssue(ctx context.Context, repo string, number int) (Issue, 
 	return i, err
 }
 
-// SearchIssues searches issues and pull requests, always scoped to repo.
-func (c *Client) SearchIssues(ctx context.Context, repo, query string) ([]Issue, error) {
-	q := url.Values{"q": {query + " repo:" + repo}, "per_page": {"20"}}
-	var res struct {
-		Items []Issue `json:"items"`
-	}
-	_, err := c.do(ctx, http.MethodGet, c.BaseURL+"/search/issues?"+q.Encode(), nil, &res)
-
-	return res.Items, err
-}
-
 // list fetches every page by following the Link header.
 func list[T any](ctx context.Context, c *Client, next string) ([]T, error) {
 	var all []T

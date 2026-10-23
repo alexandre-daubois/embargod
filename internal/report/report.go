@@ -255,14 +255,15 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 	r.Related = related
 
 	for i, ref := range r.CodeReferences {
-		found := c.Code.Exists(ref.Path)
+		// A symbol cited without a file is looked up in the whole repository.
+		found := ref.Path == "" || c.Code.Exists(ref.Path)
 		if found && ref.Symbol != "" {
 			var err error
 			if found, err = c.Code.HasSymbol(ref.Path, ref.Symbol); err != nil {
 				return err
 			}
 		}
-		r.CodeReferences[i].Found = found
+		r.CodeReferences[i].Found = found && (ref.Path != "" || ref.Symbol != "")
 	}
 
 	cwes := r.CWE[:0]
@@ -327,10 +328,13 @@ func Render(r Report) string {
 	if len(r.CodeReferences) > 0 {
 		b.WriteString("\n#### Code cited by the report\n\n| Reference | Found in the repository |\n|---|---|\n")
 		for _, ref := range r.CodeReferences {
-			name := code(ref.Path)
-			if ref.Symbol != "" {
-				name += " " + code(ref.Symbol)
+			var parts []string
+			for _, p := range []string{ref.Path, ref.Symbol} {
+				if strings.TrimSpace(p) != "" {
+					parts = append(parts, code(p))
+				}
 			}
+			name := strings.Join(parts, " ")
 			found := "no"
 			if ref.Found {
 				found = "yes"

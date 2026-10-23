@@ -72,23 +72,6 @@ func TestPostComment(t *testing.T) {
 	}
 }
 
-func TestSearchIssuesIsScopedToTheRepository(t *testing.T) {
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("q"); got != "overflow is:pr repo:o/r" {
-			t.Errorf("q = %q", got)
-		}
-		fmt.Fprint(w, `{"items":[{"number":3,"pull_request":{}}]}`)
-	})
-
-	got, err := c.SearchIssues(context.Background(), "o/r", "overflow is:pr")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0].PullRequest == nil {
-		t.Fatalf("got %+v", got)
-	}
-}
-
 func TestErrors(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/repos/o/r/issues/404" {

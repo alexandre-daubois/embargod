@@ -47,17 +47,3 @@ jobs:
           go-version-file: go.mod
       - run: go test ${{ matrix.target.package }} -run '^$' -fuzz '^${{ matrix.target.name }}$' -fuzztime 60s
 
-  docker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: docker build -t embargod:ci .
-      - name: Refuses to start without SINCE
-        run: |
-          set +e
-          out=$(docker run --rm -e REPOSITORY=o/r -e GH_TOKEN=t -e LLM_API_KEY=k embargod:ci 2>&1)
-          status=$?
-          echo "$out"
-          test "$status" -eq 1 && grep -q "SINCE is required" <<<"$out"

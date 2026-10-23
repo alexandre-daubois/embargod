@@ -3,6 +3,7 @@ module github.com/alexandre-daubois/embargod
 go 1.27.3
 
 require (
+	github.com/alpha-omega-security/harness v0.1.16
 	github.com/anthropics/anthropic-sdk-go v1.84.0
 	github.com/git-pkgs/cwe v0.1.1
 	github.com/openai/openai-go/v3 v3.85.1

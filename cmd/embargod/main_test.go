@@ -27,16 +27,19 @@ func TestParseSince(t *testing.T) {
 }
 
 func TestNewEngine(t *testing.T) {
-	for _, name := range []string{"", "claude", "openai"} {
-		if _, err := newEngine(name, "", "key"); err != nil {
-			t.Errorf("%q: %v", name, err)
+	for name, want := range map[string]string{"": "claude", "claude": "claude", "openai": "codex"} {
+		if _, agent, model, err := newEngine(name, "", "key"); err != nil || agent != want || model == "" {
+			t.Errorf("%q: agent %q, model %q, %v", name, agent, model, err)
 		}
 	}
+	if _, _, model, _ := newEngine("claude", "claude-sonnet-5-5", "key"); model != "claude-sonnet-5-5" {
+		t.Errorf("an explicit model should be kept, got %q", model)
+	}
 
-	if _, err := newEngine("gemini", "", "key"); err == nil {
+	if _, _, _, err := newEngine("gemini", "", "key"); err == nil {
 		t.Error("an unknown engine should fail")
 	}
-	if _, err := newEngine("claude", "", ""); err == nil {
+	if _, _, _, err := newEngine("claude", "", ""); err == nil {
 		t.Error("a missing API key should fail")
 	}
 }

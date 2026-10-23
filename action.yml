@@ -33,18 +33,33 @@ inputs:
   path:
     description: Path of the repository checkout, relative to the workspace.
     default: .
+  runner-image:
+    description: Image the agent runs in, defaults to ghcr.io/alexandre-daubois/embargod-agent with the tag of the engine's agent. It needs the agent CLI, git, curl and harness-proxy.
+    required: false
 
 runs:
-  using: docker
-  # Built and pushed by the release workflow, CI builds the Dockerfile itself.
-  image: docker://ghcr.io/alexandre-daubois/embargod:v1
-  env:
-    SINCE: ${{ inputs.since }}
-    ADVISORY: ${{ inputs.advisory }}
-    ENGINE: ${{ inputs.engine }}
-    MODEL: ${{ inputs.model }}
-    LLM_API_KEY: ${{ inputs.api-key }}
-    GH_TOKEN: ${{ inputs.github-token }}
-    BOT_LOGIN: ${{ inputs.bot-login }}
-    REPOSITORY: ${{ inputs.repository }}
-    REPO_PATH: ${{ inputs.path }}
+  # The agent runs in its own hardened container, so embargod itself runs on the runner, next to Docker.
+  using: composite
+  steps:
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: ${{ github.action_path }}/go.mod
+        cache-dependency-path: ${{ github.action_path }}/go.sum
+    - name: Build embargod
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: go build -trimpath -o "$RUNNER_TEMP/embargod" ./cmd/embargod
+    - name: Triage
+      shell: bash
+      run: '"$RUNNER_TEMP/embargod"'
+      env:
+        SINCE: ${{ inputs.since }}
+        ADVISORY: ${{ inputs.advisory }}
+        ENGINE: ${{ inputs.engine }}
+        MODEL: ${{ inputs.model }}
+        LLM_API_KEY: ${{ inputs.api-key }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        BOT_LOGIN: ${{ inputs.bot-login }}
+        REPOSITORY: ${{ inputs.repository }}
+        REPO_PATH: ${{ inputs.path }}
+        RUNNER_IMAGE: ${{ inputs.runner-image }}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/alexandre-daubois/embargod/internal/engine"
 	"github.com/alexandre-daubois/embargod/internal/github"
+	"github.com/alexandre-daubois/embargod/internal/sandbox"
 	"github.com/alexandre-daubois/embargod/internal/triage"
 )
 
@@ -65,12 +66,17 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if token == "" {
 		return errors.New("GH_TOKEN is required")
 	}
-	eng, err := newEngine(os.Getenv("ENGINE"), os.Getenv("MODEL"), os.Getenv("LLM_API_KEY"))
+	eng, agent, model, err := newEngine(os.Getenv("ENGINE"), os.Getenv("MODEL"), os.Getenv("LLM_API_KEY"))
 	if err != nil {
 		return err
 	}
+	reader, err := sandbox.New(agent, model, os.Getenv("LLM_API_KEY"), os.Getenv("RUNNER_IMAGE"))
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
 
-	return triage.Run(ctx, cfg, github.New(token), eng, log)
+	return triage.Run(ctx, cfg, github.New(token), reader, eng, log)
 }
 
 func parseSince(v string) (time.Time, error) {
@@ -88,9 +94,10 @@ func parseSince(v string) (time.Time, error) {
 	return t, nil
 }
 
-func newEngine(name, model, apiKey string) (engine.Engine, error) {
+// newEngine returns the comparator engine, and the sandboxed agent and model the reader runs with.
+func newEngine(name, model, apiKey string) (engine.Engine, string, string, error) {
 	if apiKey == "" {
-		return nil, errors.New("LLM_API_KEY is required")
+		return nil, "", "", errors.New("LLM_API_KEY is required")
 	}
 
 	switch name {
@@ -98,13 +105,13 @@ func newEngine(name, model, apiKey string) (engine.Engine, error) {
 		if model == "" {
 			model = engine.DefaultClaudeModel
 		}
-		return engine.NewClaude(apiKey, model), nil
+		return engine.NewClaude(apiKey, model), "claude", model, nil
 	case "openai":
 		if model == "" {
 			model = engine.DefaultOpenAIModel
 		}
-		return engine.NewOpenAI(apiKey, model), nil
+		return engine.NewOpenAI(apiKey, model), "codex", model, nil
 	default:
-		return nil, fmt.Errorf("unknown ENGINE %q, expected claude or openai", name)
+		return nil, "", "", fmt.Errorf("unknown ENGINE %q, expected claude or openai", name)
 	}
 }
