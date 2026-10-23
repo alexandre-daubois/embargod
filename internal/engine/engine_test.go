@@ -232,3 +232,50 @@ func TestErrorMessages(t *testing.T) {
 		}
 	}
 }
+
+// validatingTools rejects a summary that is not a string, like the real submit tool does.
+func validatingTools() []tools.Tool {
+	ts := testTools(new([]string))
+	ts[1].Run = func(_ context.Context, in json.RawMessage) (string, error) {
+		var v struct {
+			Summary string `json:"summary"`
+		}
+
+		return "", json.Unmarshal(in, &v)
+	}
+
+	return ts
+}
+
+func TestClaudeRetriesAnInvalidSubmission(t *testing.T) {
+	srv, requests := scripted(t,
+		claudeMessage("tool_use", `{"type":"tool_use","id":"tu1","name":"submit","input":{"summary":42}}`),
+		claudeMessage("tool_use", `{"type":"tool_use","id":"tu2","name":"submit","input":{"summary":"ok"}}`),
+	)
+
+	got, err := NewClaude("key", "m", anthropicoption.WithBaseURL(srv.URL), anthropicoption.WithMaxRetries(0)).
+		Run(context.Background(), "s", "p", validatingTools())
+	if err != nil || string(got) != `{"summary":"ok"}` {
+		t.Fatalf("got %s, %v", got, err)
+	}
+	second := (*requests)[1]
+	if !strings.Contains(second, `"tool_use_id":"tu1"`) || !strings.Contains(second, `"is_error":true`) || !strings.Contains(second, "does not match the schema") {
+		t.Errorf("the model should get the validation error: %s", second)
+	}
+}
+
+func TestOpenAIRetriesAnInvalidSubmission(t *testing.T) {
+	srv, requests := scripted(t,
+		openaiCompletion(`{"role":"assistant","content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"submit","arguments":"{\"summary\":42}"}}]}`),
+		openaiCompletion(`{"role":"assistant","content":null,"tool_calls":[{"id":"call2","type":"function","function":{"name":"submit","arguments":"{\"summary\":\"ok\"}"}}]}`),
+	)
+
+	got, err := NewOpenAI("key", "m", openaioption.WithBaseURL(srv.URL), openaioption.WithMaxRetries(0)).
+		Run(context.Background(), "s", "p", validatingTools())
+	if err != nil || string(got) != `{"summary":"ok"}` {
+		t.Fatalf("got %s, %v", got, err)
+	}
+	if second := (*requests)[1]; !strings.Contains(second, `"tool_call_id":"call1"`) || !strings.Contains(second, "does not match the schema") {
+		t.Errorf("the model should get the validation error: %s", second)
+	}
+}

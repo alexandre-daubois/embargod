@@ -168,6 +168,20 @@ func Advisories(others []github.Advisory) []Tool {
 	}
 }
 
+// Validate checks a submission with the Run of the submit tool, when it has one. The error is meant
+// for the model, so it can fix its answer.
+func Validate(ctx context.Context, ts []Tool, input json.RawMessage) error {
+	for _, t := range ts {
+		if t.Name == Submit && t.Run != nil {
+			_, err := t.Run(ctx, input)
+
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Call runs the named tool. Failures are returned as text for the model, with isError set.
 func Call(ctx context.Context, ts []Tool, name string, input json.RawMessage) (string, bool) {
 	for _, t := range ts {

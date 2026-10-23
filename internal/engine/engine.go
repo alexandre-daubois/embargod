@@ -17,6 +17,10 @@ const (
 
 var ErrNoReport = errors.New("the model did not submit a report")
 
+func invalid(err error) string {
+	return "error: the submission does not match the schema, fix it and submit again: " + err.Error()
+}
+
 // APIError keeps only the status code: provider errors embed the response body, which may echo the prompt.
 type APIError struct {
 	Provider string

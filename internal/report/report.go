@@ -31,13 +31,13 @@ var (
 )
 
 const (
-	maxClues = 10
-	maxLine  = 1_000_000
+	maxEntryPoints = 10
+	maxLine        = 1_000_000
 )
 
 type Report struct {
 	Summary          string          `json:"summary"`
-	Affected         []Location      `json:"affected"`
+	Location         Location        `json:"location"`
 	EntryPoints      []string        `json:"entry_points"`
 	Related          []Related       `json:"related"`
 	CodeReferences   []CodeReference `json:"code_references"`
@@ -60,11 +60,12 @@ type Location struct {
 }
 
 // Comparison is everything the comparator learns about the report being triaged: identifiers,
-// numbers and CWEs only, the comparator reads the code at these locations to understand the bug.
+// numbers and CWEs only, the comparator reads the code at the location to understand the bug.
+// It holds a single location, so the same pattern elsewhere cannot pass for the same bug.
 type Comparison struct {
-	Locations   []Location `json:"locations"`
-	EntryPoints []string   `json:"entry_points"`
-	CWE         []string   `json:"cwe"`
+	Location    Location `json:"location"`
+	EntryPoints []string `json:"entry_points"`
+	CWE         []string `json:"cwe"`
 }
 
 type Duplicate struct {
@@ -117,12 +118,12 @@ func list(desc string, props map[string]any) map[string]any {
 // ReaderProperties is the JSON schema of what the reader, which sees the report, submits.
 func ReaderProperties() (map[string]any, []string) {
 	return map[string]any{
-		"summary": str("One short sentence, 20 words at most: what the report claims and how credible it looks."),
-		"affected": list("Where the bug actually lives, after reading the code: at most 10 locations, used to look for duplicates.", map[string]any{
-			"path":   str("File path relative to the repository root"),
-			"symbol": str("C function, macro or variable name, empty when unknown"),
+		"summary": str("One short sentence, 20 words at most: what the report claims and how credible it looks. Code identifiers in backticks."),
+		"location": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"path", "symbol", "line"}, "description": "The faulty statement this report is about, after reading the code, used to look for duplicates. Not the same pattern found elsewhere.", "properties": map[string]any{
+			"path":   str("File path relative to the repository root, empty when the bug could not be located"),
+			"symbol": str("C function or macro holding the faulty statement, empty when unknown"),
 			"line":   map[string]any{"type": "integer", "description": "Line of the faulty statement in the current code, 0 when unknown"},
-		}),
+		}},
 		"entry_points": map[string]any{"type": "array", "description": "PHP functions or methods the report goes through to reach the bug, e.g. http_build_query or SplFixedArray::offsetSet. At most 10.", "items": map[string]any{"type": "string"}},
 		"related": list("Public issues or pull requests of this repository already fixing or hardening the same code. Empty when none.", map[string]any{
 			"number":     map[string]any{"type": "integer", "description": "Issue or pull request number"},
@@ -134,17 +135,17 @@ func ReaderProperties() (map[string]any, []string) {
 		}),
 		"policy_exclusions": list("Points of the repository security policy that may exclude the report from security handling. Empty when none applies or when there is no policy.", map[string]any{
 			"point":  str("The policy point, quoted or closely paraphrased"),
-			"reason": str("One sentence on why it may apply to this report"),
+			"reason": str("Why it may apply to this report, 20 words at most, code identifiers in backticks"),
 		}),
 		"cwe": list("Most specific CWE(s) for the weakness, usually one.", map[string]any{
 			"id":     str("CWE identifier, e.g. CWE-787"),
-			"reason": str("Why this CWE fits"),
+			"reason": str("Why this CWE fits, 15 words at most, code identifiers in backticks"),
 		}),
 		"cvss": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"vector", "reason"}, "properties": map[string]any{
 			"vector": str("CVSS 4.0 base vector, e.g. CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"),
-			"reason": str("Short justification of the metrics that drive the score"),
+			"reason": str("The metrics that drive the score and why, 20 words at most, code identifiers in backticks"),
 		}},
-	}, []string{"summary", "affected", "entry_points", "related", "code_references", "policy_exclusions", "cwe", "cvss"}
+	}, []string{"summary", "location", "entry_points", "related", "code_references", "policy_exclusions", "cwe", "cvss"}
 }
 
 // ComparatorProperties is the JSON schema of what the comparator submits. It holds no free text,
@@ -159,21 +160,15 @@ func ComparatorProperties() (map[string]any, []string) {
 	}, []string{"duplicates"}
 }
 
-// Clues keeps the affected locations, entry points and CWEs made of plain paths, identifiers and
-// numbers, which leaves no room for instructions to travel from the report to the comparator.
+// Clues keeps the location, entry points and CWEs made of plain paths, identifiers and numbers,
+// which leaves no room for instructions to travel from the report to the comparator.
 func Clues(r Report) Comparison {
 	var c Comparison
-	for _, l := range r.Affected {
-		if len(c.Locations) == maxClues {
-			break
-		}
-		if !cluePath.MatchString(l.Path) || (l.Symbol != "" && !clueSymbol.MatchString(l.Symbol)) || l.Line < 0 || l.Line > maxLine || slices.Contains(c.Locations, l) {
-			continue
-		}
-		c.Locations = append(c.Locations, l)
+	if l := r.Location; cluePath.MatchString(l.Path) && (l.Symbol == "" || clueSymbol.MatchString(l.Symbol)) && l.Line >= 0 && l.Line <= maxLine {
+		c.Location = l
 	}
 	for _, e := range r.EntryPoints {
-		if len(c.EntryPoints) == maxClues {
+		if len(c.EntryPoints) == maxEntryPoints {
 			break
 		}
 		if clueEntryPoint.MatchString(e) && !slices.Contains(c.EntryPoints, e) {
@@ -307,7 +302,7 @@ func Render(r Report) string {
 		if rel.PullRequest {
 			kind = "PR"
 		}
-		fmt.Fprintf(&b, "| [%s #%d](%s) | %s | %s |\n", kind, rel.Number, rel.URL, text(rel.Title), label(rel.Confidence))
+		fmt.Fprintf(&b, "| [%s #%d](%s) | %s | %s |\n", kind, rel.Number, rel.URL, cell(rel.Title), label(rel.Confidence))
 	}
 
 	if len(r.CodeReferences) > 0 {
@@ -340,14 +335,16 @@ func Render(r Report) string {
 	}
 
 	b.WriteString("\n#### Weakness and severity\n\n")
-	for _, w := range r.CWE {
-		fmt.Fprintf(&b, "- %s: %s\n", w.ID, text(w.Reason))
-	}
-	if r.CVSS.Vector != "" {
-		fmt.Fprintf(&b, "- [`%s`](https://www.first.org/cvss/calculator/4.0#%s): %s\n", r.CVSS.Vector, r.CVSS.Vector, text(r.CVSS.Reason))
-	}
 	if len(r.CWE) == 0 && r.CVSS.Vector == "" {
 		b.WriteString("No estimate.\n")
+	} else {
+		b.WriteString("| | Estimate | Why |\n|---|---|---|\n")
+	}
+	for _, w := range r.CWE {
+		fmt.Fprintf(&b, "| CWE | [%s](https://cwe.mitre.org/data/definitions/%s.html) | %s |\n", w.ID, strings.TrimPrefix(w.ID, "CWE-"), cell(w.Reason))
+	}
+	if r.CVSS.Vector != "" {
+		fmt.Fprintf(&b, "| CVSS 4.0 | [`%s`](https://www.first.org/cvss/calculator/4.0#%s) | %s |\n", strings.TrimPrefix(r.CVSS.Vector, "CVSS:4.0/"), r.CVSS.Vector, cell(r.CVSS.Reason))
 	}
 
 	if r.Removed > 0 {
@@ -372,9 +369,36 @@ var escaper = strings.NewReplacer(
 	"<", `\<`, ">", `\>`, "!", `\!`, "#", `\#`, "|", `\|`, "~", `\~`, "&", `\&`, "@", "@\u200b",
 )
 
-// text flattens untrusted text on one line and escapes it.
+// text flattens untrusted text on one line and escapes it, except inside its code spans, which
+// GitHub renders verbatim: no link, image, HTML nor mention can live there.
 func text(s string) string {
-	return escaper.Replace(strings.Join(strings.Fields(s), " "))
+	return inline(s, false)
+}
+
+// cell is text for a table cell, where a pipe ends the cell even inside a code span.
+func cell(s string) string {
+	return inline(s, true)
+}
+
+func inline(s string, table bool) string {
+	parts := strings.Split(strings.Join(strings.Fields(s), " "), "`")
+	var b strings.Builder
+	for i, p := range parts {
+		switch {
+		case i%2 == 0:
+			b.WriteString(escaper.Replace(p))
+		case i == len(parts)-1:
+			// An unmatched backtick opens no code span.
+			b.WriteString("\\`" + escaper.Replace(p))
+		case p != "":
+			if table {
+				p = strings.ReplaceAll(p, "|", `\|`)
+			}
+			b.WriteString("`" + p + "`")
+		}
+	}
+
+	return b.String()
 }
 
 // code renders untrusted text inside a code span, which cannot hold a backtick.

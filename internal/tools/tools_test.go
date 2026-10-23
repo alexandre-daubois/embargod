@@ -122,3 +122,23 @@ func TestDecodeEmptyInput(t *testing.T) {
 		t.Fatalf("got %+v, %v", v, err)
 	}
 }
+
+func TestValidate(t *testing.T) {
+	strict := []Tool{{Name: Submit, Run: func(_ context.Context, in json.RawMessage) (string, error) {
+		if string(in) != `{}` {
+			return "", errors.New("bad")
+		}
+
+		return "", nil
+	}}}
+
+	if err := Validate(context.Background(), strict, json.RawMessage(`{}`)); err != nil {
+		t.Errorf("valid input rejected: %v", err)
+	}
+	if err := Validate(context.Background(), strict, json.RawMessage(`[]`)); err == nil {
+		t.Error("invalid input accepted")
+	}
+	if err := Validate(context.Background(), []Tool{{Name: Submit}}, json.RawMessage(`[]`)); err != nil {
+		t.Errorf("a submit tool without Run accepts anything: %v", err)
+	}
+}

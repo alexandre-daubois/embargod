@@ -157,7 +157,7 @@ func triage(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, a git
 		return err
 	}
 	properties, required := report.ReaderProperties()
-	readerTools := append(append(tools.Code(code), tools.Issues(gh, cfg.Repo)...), submit("Submit the triage report", properties, required))
+	readerTools := append(append(tools.Code(code), tools.Issues(gh, cfg.Repo)...), submit[report.Report]("Submit the triage report", properties, required))
 	raw, err := eng.Run(ctx, system, readerPrompt(cfg.Repo, a, policies), readerTools)
 	if err != nil {
 		return err
@@ -167,16 +167,14 @@ func triage(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, a git
 		return errInvalidReport
 	}
 
-	if clues := report.Clues(r); len(others) > 0 && len(clues.Locations) > 0 {
+	if clues := report.Clues(r); len(others) > 0 && clues.Location.Path != "" {
 		properties, required := report.ComparatorProperties()
-		comparatorTools := append(append(tools.Code(code), tools.Advisories(others)...), submit("Submit the duplicates", properties, required))
+		comparatorTools := append(append(tools.Code(code), tools.Advisories(others)...), submit[comparison]("Submit the duplicates", properties, required))
 		raw, err := eng.Run(ctx, skill.Compare, comparatorPrompt(clues), comparatorTools)
 		if err != nil {
 			return err
 		}
-		var c struct {
-			Duplicates []report.Duplicate `json:"duplicates"`
-		}
+		var c comparison
 		if err := json.Unmarshal(raw, &c); err != nil {
 			return errInvalidReport
 		}
@@ -191,12 +189,23 @@ func triage(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, a git
 	return gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Render(r))
 }
 
-func submit(description string, properties map[string]any, required []string) tools.Tool {
+type comparison struct {
+	Duplicates []report.Duplicate `json:"duplicates"`
+}
+
+// submit returns the tool ending a run. Its Run decodes the answer into a T, so a malformed answer
+// goes back to the model instead of failing the triage.
+func submit[T any](description string, properties map[string]any, required []string) tools.Tool {
 	return tools.Tool{
 		Name:        tools.Submit,
 		Description: description + ". Call it exactly once, when the investigation is done.",
 		Properties:  properties,
 		Required:    required,
+		Run: func(_ context.Context, input json.RawMessage) (string, error) {
+			var v T
+
+			return "", json.Unmarshal(input, &v)
+		},
 	}
 }
 
@@ -262,7 +271,7 @@ Title: %s
 func comparatorPrompt(c report.Comparison) string {
 	clues, _ := json.Marshal(c)
 
-	return fmt.Sprintf(`A new security report was filed on this repository. You will not see it. Here is where its bug lives (files, symbols and lines, 0 when unknown), the PHP entry points it goes through and its CWE, as JSON:
+	return fmt.Sprintf(`A new security report was filed on this repository. You will not see it. Here is its faulty statement (file, symbol and line, 0 when unknown), the PHP entry points it goes through and its CWE, as JSON:
 
 %s
 

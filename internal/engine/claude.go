@@ -70,7 +70,12 @@ func (c *Claude) Run(ctx context.Context, system, prompt string, ts []tools.Tool
 			}
 			input := json.RawMessage(use.JSON.Input.Raw())
 			if use.Name == tools.Submit {
-				return input, nil
+				err := tools.Validate(ctx, ts, input)
+				if err == nil {
+					return input, nil
+				}
+				results = append(results, anthropic.NewBetaToolResultBlock(use.ID, invalid(err), true))
+				continue
 			}
 			out, isError := tools.Call(ctx, ts, use.Name, input)
 			results = append(results, anthropic.NewBetaToolResultBlock(use.ID, out, isError))

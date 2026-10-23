@@ -68,7 +68,12 @@ func (o *OpenAI) Run(ctx context.Context, system, prompt string, ts []tools.Tool
 		for _, call := range msg.ToolCalls {
 			input := json.RawMessage(call.Function.Arguments)
 			if call.Function.Name == tools.Submit {
-				return input, nil
+				err := tools.Validate(ctx, ts, input)
+				if err == nil {
+					return input, nil
+				}
+				params.Messages = append(params.Messages, openai.ToolMessage(invalid(err), call.ID))
+				continue
 			}
 			out, _ := tools.Call(ctx, ts, call.Function.Name, input)
 			params.Messages = append(params.Messages, openai.ToolMessage(out, call.ID))
