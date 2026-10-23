@@ -44,7 +44,6 @@ type Duplicate struct {
 	GHSAID     string `json:"ghsa_id"`
 	Confidence string `json:"confidence"`
 	Exact      bool   `json:"exact"`
-	Title      string `json:"-"`
 	URL        string `json:"-"`
 }
 
@@ -138,7 +137,7 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 			r.Removed++
 			continue
 		}
-		d.Title, d.URL = a.Summary, a.HTMLURL
+		d.URL = a.HTMLURL
 		dups = append(dups, d)
 	}
 	r.Duplicates = dups
@@ -202,14 +201,15 @@ func Render(r Report) string {
 	if len(r.Duplicates) == 0 {
 		b.WriteString("None found among the repository advisories.\n")
 	} else {
-		b.WriteString("| Advisory | Title | Confidence |\n|---|---|---|\n")
+		b.WriteString("| Advisory | Confidence |\n|---|---|\n")
 	}
 	for _, d := range r.Duplicates {
 		confidence := label(d.Confidence)
 		if d.Exact {
 			confidence += " • Exact duplicate"
 		}
-		fmt.Fprintf(&b, "| [%s](%s) | %s | %s |\n", d.GHSAID, d.URL, cell(d.Title), confidence)
+		// No title: the reporter reads this comment, and other advisories may still be under embargo.
+		fmt.Fprintf(&b, "| [%s](%s) | %s |\n", d.GHSAID, d.URL, confidence)
 	}
 
 	b.WriteString("\n#### Related issues and pull requests\n\n")

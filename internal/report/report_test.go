@@ -68,7 +68,7 @@ func TestVerifyKeepsWhatExists(t *testing.T) {
 	if r.Removed != 0 || len(r.Duplicates) != 1 || len(r.Related) != 1 || len(r.CWE) != 1 || r.CVSS.Vector == "" {
 		t.Fatalf("nothing should be removed: %+v", r)
 	}
-	if r.Duplicates[0].Title != "Overflow in real_func" || r.Duplicates[0].URL == "" || r.Related[0].Title != "Harden len check" || !r.Related[0].PullRequest {
+	if r.Duplicates[0].URL != "https://github.com/o/r/security/advisories/GHSA-real" || r.Related[0].Title != "Harden len check" || !r.Related[0].PullRequest {
 		t.Fatalf("facts not filled: %+v", r)
 	}
 	if !r.CodeReferences[0].Found || !r.CodeReferences[1].Found {
@@ -116,7 +116,7 @@ func TestVerifyFailsOnGitHubErrors(t *testing.T) {
 func TestRender(t *testing.T) {
 	got := Render(Report{
 		Summary:          "Heap overflow claimed,\ncc @someone",
-		Duplicates:       []Duplicate{{GHSAID: "GHSA-real", Title: "Overflow | in f", URL: "https://x/GHSA-real", Confidence: "high", Exact: true}, {GHSAID: "GHSA-near", Title: "Crash in g", URL: "https://x/GHSA-near", Confidence: "low"}},
+		Duplicates:       []Duplicate{{GHSAID: "GHSA-real", URL: "https://x/GHSA-real", Confidence: "high", Exact: true}, {GHSAID: "GHSA-near", URL: "https://x/GHSA-near", Confidence: "low"}},
 		Related:          []Related{{Number: 12, Title: "Harden", URL: "https://x/12", PullRequest: true, Confidence: "medium"}, {Number: 13, Title: "Crash", URL: "https://x/13", Confidence: "low"}},
 		CodeReferences:   []CodeReference{{Path: "a.c", Symbol: "f", Found: true}, {Path: "b|c.c"}},
 		Policy:           "SECURITY.md",
@@ -130,9 +130,9 @@ func TestRender(t *testing.T) {
 		Marker,
 		"> Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.",
 		"Heap overflow claimed, cc @\u200bsomeone\n",
-		"| Advisory | Title | Confidence |",
-		"| [GHSA-real](https://x/GHSA-real) | Overflow \\| in f | High • Exact duplicate |",
-		"| [GHSA-near](https://x/GHSA-near) | Crash in g | Low |",
+		"| Advisory | Confidence |",
+		"| [GHSA-real](https://x/GHSA-real) | High • Exact duplicate |",
+		"| [GHSA-near](https://x/GHSA-near) | Low |",
 		"| Issue or PR | Title | Confidence |",
 		"| [PR #12](https://x/12) | Harden | Medium |",
 		"| [Issue #13](https://x/13) | Crash | Low |",
