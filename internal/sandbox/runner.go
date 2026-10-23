@@ -1,11 +1,13 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -20,11 +22,12 @@ import (
 )
 
 const (
-	proxyPort  = "3128"
-	workMemory = "2g"
-	workCPUs   = "2"
-	workPIDs   = "256"
-	workFile   = "67108864"
+	proxyPort      = "3128"
+	workMemory     = "2g"
+	workCPUs       = "2"
+	workPIDs       = "256"
+	workFile       = "67108864"
+	maxAgentOutput = 1 << 20
 )
 
 type isolatedRun struct {
@@ -32,6 +35,7 @@ type isolatedRun struct {
 	image   string
 	network string
 	proxy   string
+	agent   string
 	proxyIP string
 	token   string
 	// env is set in the agent container on top of the harness environment.
@@ -50,6 +54,7 @@ func startIsolatedRun(ctx context.Context, runtime container.Runtime, image, mod
 		return nil, err
 	}
 	run.proxy = "embargod-proxy-" + strings.TrimPrefix(run.network, "embargod-")
+	run.agent = "embargod-agent-" + strings.TrimPrefix(run.network, "embargod-")
 	run.token = egress.NewToken()
 
 	if out, err := exec.CommandContext(ctx, runtime.Bin, "network", "create", "--internal", "--opt", "com.docker.network.bridge.gateway_mode_ipv4=isolated", "--", run.network).CombinedOutput(); err != nil {
@@ -72,7 +77,7 @@ func startIsolatedRun(ctx context.Context, runtime container.Runtime, image, mod
 		sidecar.APIPort, sidecar.HostPorts = "", []string{modelPort}
 	}
 	proxyEnv := container.SidecarEnv(sidecar, egress.ListenFirstIface+":"+proxyPort)
-	args := []string{"run", "-d", "--name", run.proxy, "--network", run.network, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m", "--add-host", egress.HostGatewayAlias + ":host-gateway", "-e", container.ProxyTokenEnv}
+	args := []string{"run", "-d", "--name", run.proxy, "--network", run.network, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--memory", "256m", "--cpus", "1", "--pids-limit", "128", "--ulimit", "fsize=16777216:16777216", "--log-driver", "json-file", "--log-opt", "max-size=1m", "--log-opt", "max-file=1", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m", "--add-host", egress.HostGatewayAlias + ":host-gateway", "-e", container.ProxyTokenEnv}
 	for _, entry := range proxyEnv[1:] {
 		args = append(args, "-e", entry)
 	}
@@ -130,7 +135,7 @@ func (r *isolatedRun) waitReady(ctx context.Context) error {
 	}
 }
 
-func (r *isolatedRun) Run(ctx context.Context, h harness.Harness, job harness.Job, workspace, state string, mounts []container.Mount, keyEnv, key string, emit func(harness.Event)) error {
+func (r *isolatedRun) Run(ctx context.Context, h harness.Harness, job harness.Job, workspace, state, keyEnv, key string) error {
 	if err := harness.WriteSystemPrompt(h, job); err != nil {
 		return err
 	}
@@ -139,7 +144,7 @@ func (r *isolatedRun) Run(ctx context.Context, h harness.Harness, job harness.Jo
 		return err
 	}
 	job.Workspace = container.WorkMount
-	args := r.agentArgs(h, job, workspace, state, reportPath, mounts, keyEnv)
+	args := r.agentArgs(h, job, workspace, state, reportPath, keyEnv)
 
 	cmd := exec.CommandContext(ctx, r.runtime.Bin, args...)
 	cmd.Env = withEnv(os.Environ(), keyEnv, key)
@@ -155,17 +160,20 @@ func (r *isolatedRun) Run(ctx context.Context, h harness.Harness, job harness.Jo
 	} {
 		cmd.Env = withEnv(cmd.Env, env.key, env.value)
 	}
-	stderr, err := harness.StreamCmd(cmd, h, emit)
-	if err != nil && strings.TrimSpace(stderr) != "" {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr))
+	var stderr boundedWriter
+	cmd.Stdout = io.Discard
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil && strings.TrimSpace(stderr.String()) != "" {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 
 	return err
 }
 
-func (r *isolatedRun) agentArgs(h harness.Harness, job harness.Job, workspace, state, reportPath string, mounts []container.Mount, keyEnv string) []string {
+func (r *isolatedRun) agentArgs(h harness.Harness, job harness.Job, workspace, state, reportPath, keyEnv string) []string {
 	args := []string{
-		"run", "--rm", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
+		"run", "--rm", "--name", r.agent, "--log-driver", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
 		"--memory", workMemory, "--cpus", workCPUs, "--pids-limit", workPIDs, "--ulimit", "fsize=" + workFile + ":" + workFile,
 		"--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()), "-e", "HOME=/tmp", "--tmpfs", "/tmp:rw,exec,nosuid,size=256m",
 		"--mount", "type=bind,src=" + workspace + ",dst=" + container.WorkMount + ",readonly",
@@ -186,23 +194,30 @@ func (r *isolatedRun) agentArgs(h harness.Harness, job harness.Job, workspace, s
 	}
 	for _, entry := range h.Env(job.BaseURL) {
 		name, _, _ := strings.Cut(entry, "=")
-		if name != keyEnv && name != "CLAUDE_CODE_OAUTH_TOKEN" {
+		if name != keyEnv && name != "CLAUDE_CODE_OAUTH_TOKEN" && name != "CODEX_API_KEY" {
 			args = append(args, "-e", entry)
 		}
 	}
 	args = append(args, "-e", keyEnv, "-e", "HTTPS_PROXY", "-e", "HTTP_PROXY", "-e", "ALL_PROXY", "-e", "NO_PROXY", "-e", "https_proxy", "-e", "http_proxy", "-e", "all_proxy", "-e", "no_proxy")
-	for _, mount := range mounts {
-		spec := mount.Host + ":" + mount.Container
-		if mount.ReadOnly {
-			spec += ":ro"
-		}
-		args = append(args, "-v", spec)
-	}
 	args = append(args, "--", r.image, h.Binary())
 	args = append(args, h.Args(job)...)
 
 	return args
 }
+
+type boundedWriter struct {
+	b bytes.Buffer
+}
+
+func (w *boundedWriter) Write(p []byte) (int, error) {
+	if remaining := maxAgentOutput - w.b.Len(); remaining > 0 {
+		w.b.Write(p[:min(remaining, len(p))])
+	}
+
+	return len(p), nil
+}
+
+func (w *boundedWriter) String() string { return w.b.String() }
 
 func withEnv(env []string, key, value string) []string {
 	prefix := key + "="
@@ -219,6 +234,9 @@ func withEnv(env []string, key, value string) []string {
 func (r *isolatedRun) Close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if r.agent != "" {
+		_ = exec.CommandContext(ctx, r.runtime.Bin, "rm", "-f", "--", r.agent).Run()
+	}
 	if r.proxy != "" {
 		_ = exec.CommandContext(ctx, r.runtime.Bin, "rm", "-f", "--", r.proxy).Run()
 	}

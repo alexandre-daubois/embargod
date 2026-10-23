@@ -48,6 +48,8 @@ type Provider struct {
 	StoreOff     bool
 	UntypedTools bool
 	BetaQuery    bool
+	// PrivateWorkspace redacts ChatGPT identity and managed configuration before they reach Codex.
+	PrivateWorkspace bool
 }
 
 var Anthropic = Provider{
@@ -97,9 +99,10 @@ var ChatGPT = Provider{
 			return false
 		}
 	},
-	TokenPrefix: "at-" + tokenPrefix,
-	SetKey:      func(h http.Header, key string) { h.Set("Authorization", "Bearer "+key) },
-	StoreOff:    true,
+	TokenPrefix:      "at-" + tokenPrefix,
+	SetKey:           func(h http.Header, key string) { h.Set("Authorization", "Bearer "+key) },
+	StoreOff:         true,
+	PrivateWorkspace: true,
 }
 
 type Proxy struct {
@@ -107,9 +110,10 @@ type Proxy struct {
 	key      string
 	proxy    *httputil.ReverseProxy
 
-	mu     sync.RWMutex
-	tokens map[[sha256.Size]byte]int
-	model  string
+	mu        sync.RWMutex
+	tokens    map[[sha256.Size]byte]int
+	model     string
+	accountID string
 }
 
 func New(provider Provider, key, model string) (*Proxy, error) {
@@ -148,10 +152,18 @@ func New(provider Provider, key, model string) (*Proxy, error) {
 			}
 			pr.Out.URL.Scheme, pr.Out.URL.Host, pr.Out.Host = upstream.Scheme, upstream.Host, upstream.Host
 			pr.Out.URL.Path, pr.Out.URL.RawPath = upstream.Path+route, ""
-			for _, h := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Cookie", "OpenAI-Organization", "OpenAI-Project"} {
+			for _, h := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Cookie", "OpenAI-Organization", "OpenAI-Project", "ChatGPT-Account-Id", "Accept-Encoding"} {
 				pr.Out.Header.Del(h)
 			}
 			provider.SetKey(pr.Out.Header, key)
+			if provider.PrivateWorkspace && strings.HasPrefix(pr.In.URL.Path, "/backend-api/") {
+				p.mu.RLock()
+				accountID := p.accountID
+				p.mu.RUnlock()
+				if accountID != "" {
+					pr.Out.Header.Set("ChatGPT-Account-Id", accountID)
+				}
+			}
 		},
 		// Stream server-sent events to the agent as they arrive.
 		FlushInterval: -1,
@@ -159,6 +171,14 @@ func New(provider Provider, key, model string) (*Proxy, error) {
 			resp.Header.Del("Set-Cookie")
 			if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
 				return errUpstreamRedirect
+			}
+			if provider.PrivateWorkspace && resp.StatusCode < http.StatusMultipleChoices {
+				switch {
+				case strings.HasSuffix(resp.Request.URL.Path, "/v1/user-auth-credential/whoami"):
+					return p.redactIdentity(resp)
+				case strings.HasSuffix(resp.Request.URL.Path, "/wham/config/bundle"):
+					return replaceBody(resp, []byte(`{"config_toml":{"enterprise_managed":[]},"requirements_toml":{"enterprise_managed":[]}}`))
+				}
 			}
 
 			return nil
@@ -243,12 +263,50 @@ func (p *Proxy) authorized(r *http.Request) bool {
 	if p.tokens[sum] <= 0 {
 		return false
 	}
-	// Only model calls are POST. The GET routes are the access token checks Codex repeats on every start.
-	if r.Method == http.MethodPost {
-		p.tokens[sum]--
-	}
+	p.tokens[sum]--
 
 	return true
+}
+
+func (p *Proxy) redactIdentity(resp *http.Response) error {
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	if err != nil || len(body) > maxBody {
+		return errors.New("model proxy: invalid identity response")
+	}
+	var identity struct {
+		AccountID string `json:"chatgpt_account_id"`
+		PlanType  string `json:"chatgpt_plan_type"`
+		FedRAMP   bool   `json:"chatgpt_account_is_fedramp"`
+	}
+	if err := json.Unmarshal(body, &identity); err != nil || identity.AccountID == "" || identity.PlanType == "" {
+		return errors.New("model proxy: invalid identity response")
+	}
+	p.mu.Lock()
+	p.accountID = identity.AccountID
+	p.mu.Unlock()
+	redacted, _ := json.Marshal(map[string]any{
+		"email":                      nil,
+		"chatgpt_user_id":            "embargod",
+		"chatgpt_account_id":         "embargod",
+		"chatgpt_plan_type":          identity.PlanType,
+		"chatgpt_account_is_fedramp": identity.FedRAMP,
+	})
+
+	return replaceBody(resp, redacted)
+}
+
+func replaceBody(resp *http.Response, body []byte) error {
+	if resp.Body != nil {
+		resp.Body.Close()
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	resp.Header.Set("Content-Type", "application/json")
+	resp.Header.Del("Content-Encoding")
+	resp.Header.Del("Content-Length")
+
+	return nil
 }
 
 var errRequestTooLarge = errors.New("request too large")

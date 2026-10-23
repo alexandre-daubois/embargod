@@ -499,13 +499,7 @@ func TestRunReportsFailuresAndContinues(t *testing.T) {
 
 func TestRunAppendsProjectProfile(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ProfilePath), []byte("Score CVSS for php-fpm deployments."), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	dir := gitRepo(t, map[string]string{ProfilePath: "Score CVSS for php-fpm deployments."})
 
 	if err := run(t, Config{Since: since, RepoPath: dir}, gh, eng); err != nil {
 		t.Fatal(err)
@@ -513,6 +507,24 @@ func TestRunAppendsProjectProfile(t *testing.T) {
 
 	if system := eng.role("")[0].system; !strings.Contains(system, "# Advisory triage") || !strings.Contains(system, "Score CVSS for php-fpm deployments.") {
 		t.Fatalf("system prompt = %s", system)
+	}
+}
+
+func TestRunIgnoresAnUntrackedProjectProfile(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	dir := gitRepo(t, map[string]string{"tracked.txt": "x"})
+	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ProfilePath), []byte("SECRET-PAYLOAD"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := run(t, Config{Since: since, RepoPath: dir}, gh, eng); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(eng.role("")[0].system, "SECRET-PAYLOAD") {
+		t.Fatal("untracked project guidance reached the model")
 	}
 }
 
@@ -668,12 +680,27 @@ func TestRunWithoutOtherAdvisoriesSkipsTheComparator(t *testing.T) {
 	}
 }
 
-func TestRunFailsOnAnUnreadableProfile(t *testing.T) {
+func TestRunRefusesASymlinkedProfile(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ProfilePath), 0o755); err != nil {
+	dir := gitRepo(t, map[string]string{".github/x": "x"})
+	if err := os.Symlink("../.git/config", filepath.Join(dir, ProfilePath)); err != nil {
 		t.Fatal(err)
 	}
+	if out, err := exec.Command("git", "-C", dir, "add", "--", ProfilePath).CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+
+	if err := run(t, Config{Advisory: "GHSA-new", RepoPath: dir}, gh, eng); err == nil {
+		t.Fatal("a symlinked profile should fail the triage")
+	}
+	if len(eng.calls) != 0 {
+		t.Fatalf("the model should not run: %d calls", len(eng.calls))
+	}
+}
+
+func TestRunFailsOnAnUnreadableProfile(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	dir := gitRepo(t, map[string]string{filepath.Join(ProfilePath, "value"): "x"})
 
 	if err := run(t, Config{Advisory: "GHSA-new", RepoPath: dir}, gh, eng); err == nil {
 		t.Fatal("a profile that cannot be read should fail the triage")

@@ -1,10 +1,13 @@
 package sandbox
 
 import (
+	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,39 +15,73 @@ import (
 	"github.com/alpha-omega-security/harness/container"
 )
 
-func TestSourceMountsHideGitConfig(t *testing.T) {
-	repo, workspace := t.TempDir(), t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+func TestSnapshotSourceCopiesOnlyTrackedContentAndHistory(t *testing.T) {
+	repo := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("tracked"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".git", "config"), []byte("extraheader = AUTHORIZATION: basic SECRET"), 0o644); err != nil {
+	git(t, repo, "add", "--", "tracked.txt")
+	git(t, repo, "commit", "--quiet", "--no-gpg-sign", "-m", "tracked")
+	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("SECRET"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	mounts, err := sourceMounts(repo, workspace)
+	configPath := filepath.Join(repo, ".git", "config")
+	config, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(configPath, append(config, []byte("\n[http]\nextraheader = AUTHORIZATION: basic SECRET\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-	if len(mounts) != 2 {
-		t.Fatalf("mounts = %+v", mounts)
+	target := filepath.Join(t.TempDir(), "src")
+	if err := snapshotSource(t.Context(), repo, target); err != nil {
+		t.Fatal(err)
 	}
-	if want := (container.Mount{Host: repo, Container: "/work/src", ReadOnly: true}); mounts[0] != want {
-		t.Errorf("source mount = %+v, want %+v", mounts[0], want)
+	if got, err := os.ReadFile(filepath.Join(target, "tracked.txt")); err != nil || string(got) != "tracked" {
+		t.Errorf("tracked file = %q, %v", got, err)
 	}
-	mask := mounts[1]
-	if mask.Container != "/work/src/.git/config" || !mask.ReadOnly {
-		t.Errorf("mask mount = %+v", mask)
+	for _, path := range []string{"untracked.txt", filepath.Join(".git", "modules")} {
+		if _, err := os.Stat(filepath.Join(target, path)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("untracked path %q reached the snapshot", path)
+		}
 	}
-	if content, err := os.ReadFile(mask.Host); err != nil || len(content) != 0 {
-		t.Errorf("the mask must be an empty file, got %q, %v", content, err)
+	if config, err := os.ReadFile(filepath.Join(target, ".git", "config")); err != nil || len(config) != 0 {
+		t.Errorf("snapshot config = %q, %v", config, err)
+	}
+	git(t, target, "log", "-1", "--format=%s")
+}
+
+func TestSnapshotSourceRejectsADirectoryWithoutGit(t *testing.T) {
+	if err := snapshotSource(t.Context(), t.TempDir(), filepath.Join(t.TempDir(), "src")); err == nil {
+		t.Fatal("a source without git must be refused")
 	}
 }
 
-func TestSourceMountsWithoutGit(t *testing.T) {
-	mounts, err := sourceMounts(t.TempDir(), t.TempDir())
-	if err != nil || len(mounts) != 1 || !mounts[0].ReadOnly {
-		t.Fatalf("mounts = %+v, %v", mounts, err)
+func TestSnapshotSourceStopsWithItsContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := snapshotSource(ctx, gitRepo(t), filepath.Join(t.TempDir(), "src")); err == nil {
+		t.Fatal("a canceled snapshot must fail")
+	}
+}
+
+func gitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	git(t, dir, "init", "--quiet")
+	git(t, dir, "config", "user.name", "Test")
+	git(t, dir, "config", "user.email", "test@example.com")
+	git(t, dir, "commit", "--quiet", "--allow-empty", "--no-gpg-sign", "-m", "initial")
+
+	return dir
+}
+
+func git(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
 	}
 }
 
@@ -62,21 +99,55 @@ func TestErrorHidesTheAgentOutput(t *testing.T) {
 	}
 }
 
+func TestBoundedWriterRetainsOnlyTheOutputLimit(t *testing.T) {
+	var w boundedWriter
+	want := strings.Repeat("a", maxAgentOutput)
+	if n, err := w.Write([]byte(want)); err != nil || n != len(want) || w.String() != want {
+		t.Fatalf("bounded output: %d, %v, %d bytes", n, err, len(w.String()))
+	}
+}
+
+func TestBoundedWriterDiscardsOutputPastTheLimit(t *testing.T) {
+	var w boundedWriter
+	overflow := strings.Repeat("a", maxAgentOutput+1)
+	if n, err := w.Write([]byte(overflow)); err != nil || n != len(overflow) || len(w.String()) != maxAgentOutput {
+		t.Fatalf("bounded output: %d, %v, %d bytes", n, err, len(w.String()))
+	}
+}
+
 func TestAgentContainerUsesOnlyThePrivateProxyAndLimitsResources(t *testing.T) {
 	h, err := harness.ByName("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := &isolatedRun{runtime: container.Runtime{Bin: "docker"}, image: "agent", network: "private", proxyIP: "172.20.0.2"}
-	args := run.agentArgs(h, harness.Job{Workspace: container.WorkMount}, "/host/work", "/host/state", "/host/work/report.json", nil, "ANTHROPIC_API_KEY")
+	run := &isolatedRun{runtime: container.Runtime{Bin: "docker"}, image: "agent", network: "private", proxyIP: "172.20.0.2", agent: "work"}
+	args := run.agentArgs(h, harness.Job{Workspace: container.WorkMount}, "/host/work", "/host/state", "/host/work/report.json", "ANTHROPIC_API_KEY")
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"host.docker.internal:172.20.0.2", "--network private", "--pids-limit 256", "--memory 2g", "--cpus 2", "src=/host/work,dst=/work,readonly"} {
+	for _, want := range []string{"host.docker.internal:172.20.0.2", "--network private", "--pids-limit 256", "--memory 2g", "--cpus 2", "src=/host/work,dst=/work,readonly", "--name work", "--log-driver none"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("container args miss %q: %s", want, joined)
 		}
 	}
 	if strings.Contains(joined, "host.docker.internal:host-gateway") {
 		t.Fatalf("the hostile container can reach the host gateway: %s", joined)
+	}
+}
+
+func TestAccessTokenContainerGetsNoAmbientAPIKey(t *testing.T) {
+	t.Setenv("CODEX_API_KEY", "ambient-secret")
+	h, err := harness.ByName("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &isolatedRun{image: "agent", network: "private", proxyIP: "172.20.0.2", agent: "work"}
+	args := run.agentArgs(h, harness.Job{Workspace: container.WorkMount}, "/host/work", "/host/state", "/host/work/report.json", "CODEX_ACCESS_TOKEN")
+	for i, arg := range args {
+		if arg == "CODEX_API_KEY" || strings.HasPrefix(arg, "CODEX_API_KEY=") {
+			t.Fatalf("ambient API key reached argument %d: %s", i, arg)
+		}
+	}
+	if !slices.Contains(args, "CODEX_ACCESS_TOKEN") {
+		t.Fatal("access token key was not injected")
 	}
 }
 

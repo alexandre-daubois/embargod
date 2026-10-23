@@ -10,7 +10,7 @@ import (
 )
 
 type upstreamCall struct {
-	method, path, apiKey, auth, cookie, body string
+	method, path, apiKey, auth, cookie, accountID, body string
 }
 
 // setup returns a proxy for p, pointed at a fake upstream that records each call.
@@ -19,13 +19,20 @@ func setup(t *testing.T, p Provider, status int) (*httptest.Server, *[]upstreamC
 	var calls []upstreamCall
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		calls = append(calls, upstreamCall{r.Method, r.URL.Path, r.Header.Get("X-Api-Key"), r.Header.Get("Authorization"), r.Header.Get("Cookie"), string(body)})
+		calls = append(calls, upstreamCall{r.Method, r.URL.Path, r.Header.Get("X-Api-Key"), r.Header.Get("Authorization"), r.Header.Get("Cookie"), r.Header.Get("ChatGPT-Account-Id"), string(body)})
 		if status == http.StatusFound {
 			w.Header().Set("Location", "https://evil.example/")
 		}
 		w.Header().Set("Set-Cookie", "session=1")
 		w.WriteHeader(status)
-		io.WriteString(w, `{"ok":true}`)
+		response := `{"ok":true}`
+		if strings.HasSuffix(r.URL.Path, "/v1/user-auth-credential/whoami") {
+			response = `{"email":"security@example.com","chatgpt_user_id":"user-secret","chatgpt_account_id":"account-secret","chatgpt_plan_type":"enterprise","chatgpt_account_is_fedramp":false}`
+		}
+		if strings.HasSuffix(r.URL.Path, "/wham/config/bundle") {
+			response = `{"config_toml":{"enterprise_managed":[{"id":"secret","name":"secret","contents":"additional_developer_instructions = \\"internal\\""}]}}`
+		}
+		io.WriteString(w, response)
 	}))
 	t.Cleanup(up.Close)
 	p.Upstream = up.URL
@@ -116,18 +123,53 @@ func TestChatGPTSwapsTheAccessTokenOnBothUpstreams(t *testing.T) {
 	}
 
 	whoami := call(t, srv, http.MethodGet, PathPrefix+"/auth/v1/user-auth-credential/whoami", withKey("Authorization", "Bearer "+token))
-	responses := call(t, srv, http.MethodPost, PathPrefix+"/backend-api/codex/responses", withKey("Authorization", "Bearer "+token))
+	identity, _ := io.ReadAll(whoami.Body)
+	backendKey := withKey("Authorization", "Bearer "+token)
+	backendKey.Set("ChatGPT-Account-Id", "attacker-controlled")
+	bundle := call(t, srv, http.MethodGet, PathPrefix+"/backend-api/wham/config/bundle", backendKey)
+	managed, _ := io.ReadAll(bundle.Body)
+	responses := call(t, srv, http.MethodPost, PathPrefix+"/backend-api/codex/responses", backendKey)
 
-	if whoami.StatusCode != http.StatusOK || responses.StatusCode != http.StatusOK || len(*calls) != 2 {
-		t.Fatalf("statuses %d and %d, calls %+v", whoami.StatusCode, responses.StatusCode, *calls)
+	if whoami.StatusCode != http.StatusOK || bundle.StatusCode != http.StatusOK || responses.StatusCode != http.StatusOK || len(*calls) != 3 {
+		t.Fatalf("statuses %d, %d and %d, calls %+v", whoami.StatusCode, bundle.StatusCode, responses.StatusCode, *calls)
 	}
-	for i, want := range []string{"/api/accounts/v1/user-auth-credential/whoami", "/backend-api/codex/responses"} {
+	for i, want := range []string{"/api/accounts/v1/user-auth-credential/whoami", "/backend-api/wham/config/bundle", "/backend-api/codex/responses"} {
 		if got := (*calls)[i]; got.path != want || got.auth != "Bearer real-key" || got.cookie != "" {
 			t.Errorf("upstream got %+v, want path %s", got, want)
 		}
 	}
-	if body := (*calls)[1].body; !strings.Contains(body, `"store":false`) || strings.Contains(body, "background") || strings.Contains(body, "max_output_tokens") {
+	if (*calls)[0].accountID != "" || (*calls)[1].accountID != "account-secret" || (*calls)[2].accountID != "account-secret" {
+		t.Errorf("workspace identity was not applied server-side only: %+v", *calls)
+	}
+	if strings.Contains(string(identity), "secret") || strings.Contains(string(identity), "security@example.com") || !strings.Contains(string(identity), `"chatgpt_account_id":"embargod"`) || strings.Contains(string(managed), "internal") || !strings.Contains(string(managed), `"enterprise_managed":[]`) {
+		t.Errorf("private workspace response reached the agent: identity %s, bundle %s", identity, managed)
+	}
+	if body := (*calls)[2].body; !strings.Contains(body, `"store":false`) || strings.Contains(body, "background") || strings.Contains(body, "max_output_tokens") {
 		t.Errorf("the ChatGPT backend only accepts store set to false: %s", body)
+	}
+}
+
+func TestChatGPTRefusesAnIdentityWithoutAccount(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"email":"security@example.com","chatgpt_plan_type":"enterprise"}`)
+	}))
+	t.Cleanup(up.Close)
+	p := ChatGPT
+	p.Upstreams = map[string]string{"/auth": up.URL + "/api/accounts", "/backend-api": up.URL + "/backend-api"}
+	mp, err := New(p, "real-key", "allowed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, revoke := mp.Issue()
+	t.Cleanup(revoke)
+	srv := httptest.NewServer(mp)
+	t.Cleanup(srv.Close)
+
+	resp := call(t, srv, http.MethodGet, PathPrefix+"/auth/v1/user-auth-credential/whoami", withKey("Authorization", "Bearer "+token))
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusBadGateway || strings.Contains(string(body), "security@example.com") {
+		t.Fatalf("status %d, body %s", resp.StatusCode, body)
 	}
 }
 
@@ -248,20 +290,19 @@ func TestProviderTokenLimitIsClamped(t *testing.T) {
 	}
 }
 
-func TestAccessTokenChecksDoNotSpendTheModelQuota(t *testing.T) {
+func TestEveryAccessTokenRequestSpendsTheQuota(t *testing.T) {
 	srv, calls, token := setup(t, ChatGPT, http.StatusOK)
 	whoami := PathPrefix + "/auth/v1/user-auth-credential/whoami"
-	for range maxRequests + 1 {
+	for range maxRequests {
 		call(t, srv, http.MethodGet, whoami, withKey("Authorization", "Bearer "+token))
-		call(t, srv, http.MethodGet, PathPrefix+"/backend-api/codex/models", withKey("Authorization", "Bearer "+token))
 	}
-	if resp := call(t, srv, http.MethodPost, PathPrefix+"/backend-api/codex/responses", withKey("Authorization", "Bearer "+token)); resp.StatusCode != http.StatusOK {
-		t.Fatalf("model call after token checks: status %d", resp.StatusCode)
+	if resp := call(t, srv, http.MethodPost, PathPrefix+"/backend-api/codex/responses", withKey("Authorization", "Bearer "+token)); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("request after token checks: status %d", resp.StatusCode)
 	}
 	if resp := call(t, srv, http.MethodGet, whoami, withKey("Authorization", "Bearer at-embargod-guess")); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("token check with an unknown token: status %d", resp.StatusCode)
 	}
-	if len(*calls) != maxRequests+2 {
+	if len(*calls) != maxRequests {
 		t.Fatalf("upstream calls = %d", len(*calls))
 	}
 }

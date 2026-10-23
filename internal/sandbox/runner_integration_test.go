@@ -68,9 +68,16 @@ func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuff
 		t.Skip("EMBARGOD_TEST_IMAGE must end in " + imageSuffix)
 	}
 	var calls atomic.Int32
-	upstream, port := testServerHandler(t, func(w http.ResponseWriter, _ *http.Request) {
-		calls.Add(1)
-		http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"stop"}}`, http.StatusBadRequest)
+	upstream, port := testServerHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v1/user-auth-credential/whoami"):
+			_, _ = io.WriteString(w, `{"email":"private@example.com","chatgpt_user_id":"private-user","chatgpt_account_id":"private-account","chatgpt_plan_type":"enterprise","chatgpt_account_is_fedramp":false}`)
+		case strings.HasSuffix(r.URL.Path, "/wham/config/bundle"):
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			calls.Add(1)
+			http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"stop"}}`, http.StatusBadRequest)
+		}
 	})
 	t.Cleanup(func() { _ = upstream.Close() })
 	original := backends[name]
@@ -90,7 +97,7 @@ func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuff
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = reader.Close() })
-	_, readErr := reader.Read(t.Context(), Request{RepoPath: t.TempDir(), Prompt: "Answer", System: "System", Report: "Report", Schema: []byte(`{}`), Validate: func(json.RawMessage) error { return nil }})
+	_, readErr := reader.Read(t.Context(), Request{RepoPath: gitRepo(t), Prompt: "Answer", System: "System", Report: "Report", Schema: []byte(`{}`), Validate: func(json.RawMessage) error { return nil }})
 	if calls.Load() == 0 {
 		t.Fatalf("the legitimate %s request was blocked before the model provider: %v", name, errors.Unwrap(readErr))
 	}

@@ -360,10 +360,15 @@ func submit[T any](description string, properties map[string]any, required []str
 }
 
 func systemPrompt(repoPath string) (string, error) {
-	profile, err := os.ReadFile(filepath.Join(repoPath, ProfilePath))
-	if errors.Is(err, os.ErrNotExist) {
+	if !(repo.Repo{Dir: repoPath}).Exists(ProfilePath) {
 		return skill.Text, nil
 	}
+	profilePath := filepath.Join(repoPath, ProfilePath)
+	// A tracked symlink could point inside .git, where actions/checkout may persist a token.
+	if info, err := os.Lstat(profilePath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("the project profile is a symlink")
+	}
+	profile, err := os.ReadFile(profilePath)
 	if err != nil {
 		return "", err
 	}
