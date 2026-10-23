@@ -14,7 +14,13 @@ It does not decide anything, it helps maintainers sort the flow.
 
 ## Usage
 
-Create a GitHub App for your organisation with [this pre-filled form](https://github.com/organizations/YOUR-ORG/settings/apps/new?name=YOUR-ORG-embargod&description=First-pass%20triage%20of%20new%20security%20advisories&url=https://github.com/alexandre-daubois/embargod&public=false&webhook_active=false&repository_advisories=write), after replacing `YOUR-ORG` in its address. It only asks for the "Repository security advisories" permission. Then generate a private key in its settings, install it on the project repository only, and store its client ID in an `EMBARGOD_CLIENT_ID` variable and its key in an `EMBARGOD_PRIVATE_KEY` secret.
+Create a GitHub App for your organisation by opening this address, with `YOUR-ORG` replaced by the organisation name. The form comes pre-filled and only asks for the "Repository security advisories" permission.
+
+```text
+https://github.com/organizations/YOUR-ORG/settings/apps/new?name=YOUR-ORG-embargod&description=First-pass%20triage%20of%20new%20security%20advisories&url=https://github.com/alexandre-daubois/embargod&public=false&webhook_active=false&repository_advisories=write
+```
+
+Then generate a private key in its settings, install it on the project repository only, and store its client ID in an `EMBARGOD_CLIENT_ID` variable and its key in an `EMBARGOD_PRIVATE_KEY` secret.
 
 Run the workflow from a private repository that targets the public one, so its logs, inputs and secrets stay private.
 
