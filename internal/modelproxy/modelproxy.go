@@ -329,10 +329,10 @@ func (p *Proxy) safeBody(body io.Reader) ([]byte, error) {
 		return nil, errors.New("invalid provider request")
 	}
 	model, ok := v["model"].(string)
-	if !ok || model != p.model || unsafeProviderValue(v) || unsafeToolsField(v["tools"], p.provider.UntypedTools) {
+	if !ok || model != p.model || unsafeProviderValue(v) || unsafeInputReference(v["input"]) || unsafeToolsField(v["tools"], p.provider.UntypedTools) {
 		return nil, errors.New("provider request not permitted")
 	}
-	for _, key := range []string{"previous_response_id", "conversation", "prompt"} {
+	for _, key := range []string{"previous_response_id", "conversation", "prompt", "fallbacks", "multi_agent"} {
 		if _, ok := v[key]; ok {
 			return nil, errors.New("provider request not permitted")
 		}
@@ -366,6 +366,26 @@ func (p *Proxy) safeBody(body io.Reader) ([]byte, error) {
 	return json.Marshal(v)
 }
 
+func unsafeInputReference(v any) bool {
+	items, ok := v.([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range items {
+		value, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, hasID := value["id"].(string); hasID {
+			if kind, typed := value["type"].(string); !typed || kind == "" {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 func unsafeProviderValue(v any) bool {
 	switch value := v.(type) {
 	case []any:
@@ -381,7 +401,7 @@ func unsafeProviderValue(v any) bool {
 				return true
 			case "type":
 				if kind, ok := item.(string); ok {
-					for _, forbidden := range []string{"mcp", "web", "computer", "code_interpreter", "file_search", "image_generation"} {
+					for _, forbidden := range []string{"mcp", "web", "computer", "code_interpreter", "file_search", "image_generation", "item_reference", "multi_agent"} {
 						if strings.Contains(strings.ToLower(kind), forbidden) {
 							return true
 						}

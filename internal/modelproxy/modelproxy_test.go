@@ -106,7 +106,8 @@ func TestAnthropicSwapsTheToken(t *testing.T) {
 func TestOpenAISwapsTheBearerToken(t *testing.T) {
 	srv, calls, token := setup(t, OpenAI, http.StatusOK)
 
-	resp := call(t, srv, http.MethodPost, PathPrefix+"/v1/responses", withKey("Authorization", "Bearer "+token))
+	body := `{"model":"allowed","input":[{"type":"message","id":"msg_current","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`
+	resp := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", body, withKey("Authorization", "Bearer "+token))
 
 	if resp.StatusCode != http.StatusOK || len(*calls) != 1 || (*calls)[0].auth != "Bearer real-key" || (*calls)[0].apiKey != "" {
 		t.Fatalf("status %d, calls %+v", resp.StatusCode, *calls)
@@ -265,11 +266,16 @@ func TestNewRequiresAModel(t *testing.T) {
 func TestProviderCapabilitiesAndOtherModelsAreRefused(t *testing.T) {
 	srv, calls, token := setup(t, OpenAI, http.StatusOK)
 	for name, body := range map[string]string{
-		"other model":  `{"model":"expensive"}`,
-		"remote MCP":   `{"model":"allowed","tools":[{"type":"mcp","server_url":"https://evil.example"}]}`,
-		"remote file":  `{"model":"allowed","input":[{"type":"input_file","file_url":"https://evil.example"}]}`,
-		"conversation": `{"model":"allowed","conversation":"conv_other"}`,
-		"untyped tool": `{"model":"allowed","tools":[{"name":"remote"}]}`,
+		"other model":             `{"model":"expensive"}`,
+		"remote MCP":              `{"model":"allowed","tools":[{"type":"mcp","server_url":"https://evil.example"}]}`,
+		"remote file":             `{"model":"allowed","input":[{"type":"input_file","file_url":"https://evil.example"}]}`,
+		"conversation":            `{"model":"allowed","conversation":"conv_other"}`,
+		"item reference":          `{"model":"allowed","input":[{"type":"item_reference","id":"item_other"}]}`,
+		"implicit item reference": `{"model":"allowed","input":[{"id":"item_other"}]}`,
+		"null item reference":     `{"model":"allowed","input":[{"type":null,"id":"item_other"}]}`,
+		"multi-agent":             `{"model":"allowed","multi_agent":{"enabled":true,"max_concurrent_subagents":100}}`,
+		"nested multi-agent item": `{"model":"allowed","input":[{"type":"multi_agent_call","name":"spawn_agent"}]}`,
+		"untyped tool":            `{"model":"allowed","tools":[{"name":"remote"}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if resp := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", body, withKey("Authorization", "Bearer "+token)); resp.StatusCode != http.StatusForbidden {
@@ -279,6 +285,20 @@ func TestProviderCapabilitiesAndOtherModelsAreRefused(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("nothing should reach the upstream: %+v", *calls)
+	}
+}
+
+func TestAnthropicFallbacksAreRefused(t *testing.T) {
+	srv, calls, token := setup(t, Anthropic, http.StatusOK)
+	body := `{"model":"allowed","max_tokens":16000,"fallbacks":[{"model":"expensive","max_tokens":128000}]}`
+	header := withKey("X-Api-Key", token)
+	header.Set("Anthropic-Beta", "server-side-fallback-2026-07-01")
+
+	if resp := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/messages?beta=true", body, header); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("the fallback reached the upstream: %+v", *calls)
 	}
 }
 
