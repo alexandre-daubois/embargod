@@ -30,6 +30,10 @@ docker build --target claude -t embargod-agent:claude docker/agent
 
 The `Agent image` workflow publishes both to `ghcr.io/alexandre-daubois/embargod-agent` when that directory changes on `main`. To bump an agent CLI, update its tag and the sha256 of each architecture's asset together.
 
+## Dependency updates
+
+[Renovate](https://docs.renovatebot.com/) keeps Go modules, pinned actions, base images and the agent CLIs up to date, following [`renovate.json`](../renovate.json). It updates each CLI's tag and checksums in one pull request, keeps `harness-proxy` in the agent image on the same version as the `harness` module, and waits seven days after a release before proposing it. It needs the [Renovate GitHub App](https://github.com/apps/renovate) installed on the repository.
+
 ## Running locally
 
 embargod reads its configuration from environment variables, so it runs on any machine with Docker. From a checkout of the target repository:
