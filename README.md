@@ -82,6 +82,7 @@ GitHub Actions has no trigger for security advisories, hence the schedule. Set `
 | `bot-login` | owner of the token | Login the comments are posted as, used to recognise them. Required with a GitHub App token, which cannot look it up: `your-app-slug[bot]`. |
 | `repository` | current repository | Repository owning the advisories. |
 | `path` | `.` | Path of the repository checkout. |
+| `daybreak` | `false` | Turn on OpenAI's Daybreak cyber access program in Codex, with `engine: openai` only. The API key's org must be approved for it. |
 | `runner-image` | `ghcr.io/alexandre-daubois/embargod-agent:claude` or `:codex` | Image the agent runs in, built from `docker/agent`. It needs the agent CLI, git, curl and `harness-proxy`. |
 
 Add a `.github/embargod.md` file to the project to tell the model what is specific to it: scope, CVSS conventions, realistic configurations.

@@ -71,3 +71,32 @@ func TestBackends(t *testing.T) {
 		t.Errorf("base paths: %+v", backends)
 	}
 }
+
+func TestWriteConfig(t *testing.T) {
+	for name, tc := range map[string]struct {
+		backend  string
+		daybreak bool
+		want     string
+		wantErr  bool
+	}{
+		"codex with daybreak":  {"codex", true, "daybreak = true\n", false},
+		"codex without":        {"codex", false, "", false},
+		"claude without":       {"claude", false, "", false},
+		"claude with daybreak": {"claude", true, "", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			state := t.TempDir()
+			r := &Reader{backend: backends[tc.backend], Daybreak: tc.daybreak}
+
+			err := r.writeConfig(state)
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error = %v", err)
+			}
+			got, _ := os.ReadFile(filepath.Join(state, "config.toml"))
+			if string(got) != tc.want {
+				t.Fatalf("config.toml = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

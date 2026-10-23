@@ -33,6 +33,9 @@ inputs:
   path:
     description: Path of the repository checkout, relative to the workspace.
     default: .
+  daybreak:
+    description: Turn on OpenAI's Daybreak cyber access program in Codex, with `engine: openai` only. The API key's org must be approved for it.
+    default: "false"
   runner-image:
     description: Image the agent runs in, defaults to ghcr.io/alexandre-daubois/embargod-agent with the tag of the engine's agent. It needs the agent CLI, git, curl and harness-proxy.
     required: false
@@ -63,3 +66,4 @@ runs:
         REPOSITORY: ${{ inputs.repository }}
         REPO_PATH: ${{ inputs.path }}
         RUNNER_IMAGE: ${{ inputs.runner-image }}
+        DAYBREAK: ${{ inputs.daybreak }}

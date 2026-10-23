@@ -57,6 +57,9 @@ type Reader struct {
 	modelPort string
 	proxyURL  string
 	server    *http.Server
+
+	// Daybreak turns on OpenAI's cyber access program in Codex. The API key's org must be approved for it.
+	Daybreak bool
 }
 
 // Request is one report to read. Validate checks the JSON the agent wrote, its error goes back to the agent.
@@ -136,6 +139,9 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		return nil, err
 	}
 	defer os.RemoveAll(state)
+	if err := r.writeConfig(state); err != nil {
+		return nil, err
+	}
 
 	for name, content := range map[string][]byte{"report.md": []byte(req.Report), "schema.json": req.Schema} {
 		if err := os.WriteFile(filepath.Join(workspace, name), content, 0o600); err != nil {
@@ -197,6 +203,18 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		job.ResumeSessionID = session
 		job.ResumePrompt = fmt.Sprintf("/work/%s is missing or does not match /work/schema.json: %v. Write it again, fixed.", outputFile, err)
 	}
+}
+
+// writeConfig writes the agent CLI configuration into its state directory, which harness points CODEX_HOME at.
+func (r *Reader) writeConfig(state string) error {
+	if !r.Daybreak {
+		return nil
+	}
+	if r.backend.harness != "codex" {
+		return errors.New("daybreak is only available with codex")
+	}
+
+	return os.WriteFile(filepath.Join(state, "config.toml"), []byte("daybreak = true\n"), 0o600)
 }
 
 // sourceMounts mounts the repository read-only and hides .git/config, where actions/checkout may persist a token.

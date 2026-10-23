@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"time"
 
 	"github.com/alexandre-daubois/embargod/internal/engine"
@@ -70,11 +71,21 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	daybreak := false
+	if v := os.Getenv("DAYBREAK"); v != "" {
+		if daybreak, err = strconv.ParseBool(v); err != nil {
+			return fmt.Errorf("DAYBREAK: %w", err)
+		}
+	}
+	if daybreak && agent != "codex" {
+		return errors.New("DAYBREAK requires ENGINE=openai")
+	}
 	reader, err := sandbox.New(agent, model, os.Getenv("LLM_API_KEY"), os.Getenv("RUNNER_IMAGE"))
 	if err != nil {
 		return err
 	}
 	defer reader.Close()
+	reader.Daybreak = daybreak
 
 	return triage.Run(ctx, cfg, github.New(token), reader, eng, log)
 }
