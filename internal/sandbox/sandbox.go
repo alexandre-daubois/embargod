@@ -5,6 +5,7 @@ package sandbox
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,14 +39,27 @@ type backend struct {
 	keyEnv   string
 	// basePath completes the model proxy URL the way the CLI expects its API base URL.
 	basePath string
-	// image is built from docker/agent and published by the agent-image workflow.
-	image string
 }
 
 var backends = map[string]backend{
-	"claude": {"claude", modelproxy.Anthropic, "ANTHROPIC_API_KEY", modelproxy.PathPrefix, "ghcr.io/alexandre-daubois/embargod-agent:claude"},
-	"codex":  {"codex", modelproxy.OpenAI, "CODEX_API_KEY", modelproxy.PathPrefix + "/v1", "ghcr.io/alexandre-daubois/embargod-agent:codex"},
+	"claude": {"claude", modelproxy.Anthropic, "ANTHROPIC_API_KEY", modelproxy.PathPrefix},
+	"codex":  {"codex", modelproxy.OpenAI, "CODEX_API_KEY", modelproxy.PathPrefix + "/v1"},
 }
+
+// imagesJSON pins each agent image by digest, so a version of embargod always runs the images built for it.
+// The agent-image workflow updates it through a pull request after publishing new images.
+//
+//go:embed images.json
+var imagesJSON []byte
+
+var Images = func() map[string]string {
+	var images map[string]string
+	if err := json.Unmarshal(imagesJSON, &images); err != nil {
+		panic("sandbox: invalid images.json: " + err.Error())
+	}
+
+	return images
+}()
 
 type Reader struct {
 	backend   backend
@@ -87,7 +101,7 @@ func New(name, model, apiKey, image string) (*Reader, error) {
 		return nil, errors.New("a container runtime (docker or podman) is required to run the agent")
 	}
 	if image == "" {
-		image = b.image
+		image = Images[name]
 	}
 
 	models, err := modelproxy.New(b.provider, apiKey)

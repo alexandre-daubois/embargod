@@ -51,3 +51,33 @@ jobs:
           subject-name: ghcr.io/${{ github.repository }}-agent
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
+  # Releases pin images by digest in internal/sandbox/images.json, so new images only reach users
+  # through a reviewed pull request.
+  pin:
+    needs: image
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open a pull request pinning the new digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ghcr.io/${{ github.repository }}-agent
+        run: |
+          set -euo pipefail
+          digest() { docker buildx imagetools inspect "$IMAGE:$1-$GITHUB_SHA" --format '{{json .Manifest.Digest}}' | tr -d '"'; }
+          jq -n --arg claude "$IMAGE@$(digest claude)" --arg codex "$IMAGE@$(digest codex)" '{claude: $claude, codex: $codex}' > internal/sandbox/images.json
+          if git diff --quiet; then
+            exit 0
+          fi
+          branch="agent-images/$GITHUB_SHA"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "Pin the agent images built from $GITHUB_SHA"
+          git push origin "$branch"
+          gh pr create --head "$branch" --title "Pin the agent images built from ${GITHUB_SHA:0:7}" --body "Pins the agent images the Agent image workflow published from $GITHUB_SHA."

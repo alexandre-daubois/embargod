@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -107,7 +108,7 @@ func TestHostProxyReachesTheModelProxyOnly(t *testing.T) {
 func TestBackends(t *testing.T) {
 	for name, wantKey := range map[string]string{"claude": "ANTHROPIC_API_KEY", "codex": "CODEX_API_KEY"} {
 		b, ok := backends[name]
-		if !ok || b.keyEnv != wantKey || b.harness != name || b.image != "ghcr.io/alexandre-daubois/embargod-agent:"+name {
+		if !ok || b.keyEnv != wantKey || b.harness != name {
 			t.Errorf("%s: %+v", name, b)
 		}
 	}
@@ -142,5 +143,17 @@ func TestWriteConfig(t *testing.T) {
 				t.Fatalf("config.toml = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestImagesArePinnedByDigest(t *testing.T) {
+	pinned := regexp.MustCompile(`^ghcr\.io/alexandre-daubois/embargod-agent@sha256:[0-9a-f]{64}$`)
+	for name := range backends {
+		if image := Images[name]; !pinned.MatchString(image) {
+			t.Errorf("%s: %q is not pinned by digest", name, image)
+		}
+	}
+	if len(Images) != len(backends) {
+		t.Errorf("images.json lists %d images for %d agents", len(Images), len(backends))
 	}
 }

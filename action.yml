@@ -37,7 +37,7 @@ inputs:
     description: Turn on OpenAI's Daybreak cyber access program in Codex, with `engine: openai` only. The API key's org must be approved for it.
     default: "false"
   runner-image:
-    description: Image the agent runs in, defaults to ghcr.io/alexandre-daubois/embargod-agent with the tag of the engine's agent. It needs the agent CLI, git, curl and harness-proxy.
+    description: Image the agent runs in, instead of the embargod agent image pinned by digest and checked against its build attestation. It needs the agent CLI, git, curl and harness-proxy, and is not checked.
     required: false
 
 runs:
@@ -52,6 +52,18 @@ runs:
       shell: bash
       working-directory: ${{ github.action_path }}
       run: go build -trimpath -o "$RUNNER_TEMP/embargod" ./cmd/embargod
+    # The default images are pinned by digest. This checks they were built by embargod's own workflow.
+    - name: Verify the agent image
+      if: inputs.runner-image == ''
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        ENGINE: ${{ inputs.engine }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        case "$ENGINE" in openai) agent=codex ;; *) agent=claude ;; esac
+        image=$(jq -er --arg agent "$agent" '.[$agent]' internal/sandbox/images.json)
+        gh attestation verify "oci://$image" --repo alexandre-daubois/embargod --signer-workflow alexandre-daubois/embargod/.github/workflows/agent-image.yml
     - name: Triage
       shell: bash
       run: '"$RUNNER_TEMP/embargod"'
