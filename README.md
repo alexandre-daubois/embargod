@@ -7,9 +7,10 @@ For each new report it:
 - looks for duplicates among the other advisories of the repository, in every state,
 - looks for public issues and pull requests already fixing or hardening the same code,
 - checks that the files and functions the report cites exist in the repository,
+- reads the repository `SECURITY.md` and points out what may exclude the report,
 - suggests a CWE and a CVSS 4.0 base vector, with a short justification.
 
-It does not decide anything. It helps maintainers sort the flow, and every suggestion links to its evidence.
+It does not decide anything. It helps maintainers sort the flow, with a confidence level on every duplicate and related issue.
 
 ## Usage
 

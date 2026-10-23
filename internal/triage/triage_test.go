@@ -69,7 +69,7 @@ func (e *fakeEngine) Run(_ context.Context, system, prompt string, ts []tools.To
 		return nil, errors.New("model unavailable")
 	}
 
-	return json.RawMessage(`{"summary":"Looks like a heap overflow.","duplicates":[{"ghsa_id":"GHSA-old","reason":"same"}],"cwe":[{"id":"CWE-787","reason":"write"}]}`), nil
+	return json.RawMessage(`{"summary":"Looks like a heap overflow.","duplicates":[{"ghsa_id":"GHSA-old","confidence":"high","exact":true}],"policy_exclusions":[{"point":"Malicious unserialize() inputs","reason":"The PoC calls unserialize()."}],"cwe":[{"id":"CWE-787","reason":"write"}]}`), nil
 }
 
 func newFixture() *fakeGitHub {
@@ -106,13 +106,38 @@ func TestRunOnlyPostsOnNewUntriagedAdvisories(t *testing.T) {
 		t.Fatalf("posted = %v", gh.posted)
 	}
 	body := gh.posted["GHSA-new"]
-	for _, want := range []string{report.Marker, "Looks like a heap overflow.", "[GHSA-old](https://x/GHSA-old)", "CWE-787"} {
+	for _, want := range []string{report.Marker, "Looks like a heap overflow.", "| [GHSA-old](https://x/GHSA-old) |", "High • Exact duplicate", "CWE-787"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in:\n%s", want, body)
 		}
 	}
-	if len(eng.prompts) != 1 || !strings.Contains(eng.prompts[0], "Overflow in foo") {
+	if len(eng.prompts) != 1 || !strings.Contains(eng.prompts[0], "Overflow in foo") || !strings.Contains(eng.prompts[0], "no security policy") {
 		t.Fatalf("prompts = %v", eng.prompts)
+	}
+	if strings.Contains(body, "Security policy") {
+		t.Errorf("no policy file, no policy section:\n%s", body)
+	}
+}
+
+func TestRunChecksTheSecurityPolicy(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".github", "SECURITY.md"), []byte("Malicious unserialize() inputs are not security issues."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := run(t, Config{Since: since, RepoPath: dir}, gh, eng); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(eng.prompts[0], "The repository security policy is in .github/SECURITY.md.") {
+		t.Errorf("prompt = %s", eng.prompts[0])
+	}
+	if body := gh.posted["GHSA-new"]; !strings.Contains(body, "Checked against `.github/SECURITY.md`.") || !strings.Contains(body, "- Malicious unserialize() inputs: The PoC calls unserialize().") {
+		t.Errorf("missing policy section:\n%s", body)
 	}
 }
 

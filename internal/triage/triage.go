@@ -102,14 +102,15 @@ func commented(comments []github.Comment) bool {
 func triage(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, a github.Advisory, all []github.Advisory) error {
 	code := repo.Repo{Dir: cfg.RepoPath}
 	others := make([]github.Advisory, 0, len(all))
-	urls := make(map[string]string, len(all))
+	byID := make(map[string]github.Advisory, len(all))
 	for _, o := range all {
 		if o.GHSAID == a.GHSAID {
 			continue
 		}
 		others = append(others, o)
-		urls[o.GHSAID] = o.HTMLURL
+		byID[o.GHSAID] = o
 	}
+	policy := securityPolicy(code)
 
 	properties, required := report.Properties()
 	ts := append(tools.Build(gh, cfg.Repo, code, others), tools.Tool{
@@ -124,17 +125,17 @@ func triage(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, a git
 		return err
 	}
 
-	raw, err := eng.Run(ctx, system, prompt(cfg.Repo, a), ts)
+	raw, err := eng.Run(ctx, system, prompt(cfg.Repo, a, policy), ts)
 	if err != nil {
 		return err
 	}
 
-	var r report.Report
+	r := report.Report{Policy: policy}
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return fmt.Errorf("decoding the report: %w", err)
 	}
 
-	checker := report.Checker{Repo: cfg.Repo, Issues: gh, Code: code, Advisories: urls}
+	checker := report.Checker{Repo: cfg.Repo, Issues: gh, Code: code, Advisories: byID}
 	if err := checker.Verify(ctx, &r); err != nil {
 		return fmt.Errorf("verifying the report: %w", err)
 	}
@@ -161,14 +162,30 @@ func systemPrompt(repoPath string) (string, error) {
 	return skill.Text + "\n## Project guidance\n\n" + string(profile), nil
 }
 
-func prompt(repoName string, a github.Advisory) string {
+// securityPolicy returns the path of the security policy in one of the locations GitHub recognises, or "".
+func securityPolicy(code repo.Repo) string {
+	for _, path := range []string{"SECURITY.md", ".github/SECURITY.md", "docs/SECURITY.md"} {
+		if code.Exists(path) {
+			return path
+		}
+	}
+
+	return ""
+}
+
+func prompt(repoName string, a github.Advisory, policy string) string {
+	policyHint := "The repository has no security policy file, leave policy_exclusions empty."
+	if policy != "" {
+		policyHint = fmt.Sprintf("The repository security policy is in %s. Read it and list the points that may exclude this report.", policy)
+	}
+
 	return fmt.Sprintf(`Triage the security report below, filed on %s as %s.
 
-Use the tools to investigate the repository, its other advisories, issues and pull requests. When you are done, call %s with your findings.
+Use the tools to investigate the repository, its other advisories, issues and pull requests. %s When you are done, call %s with your findings.
 
 <report>
 Title: %s
 
 %s
-</report>`, repoName, a.GHSAID, tools.Submit, a.Summary, a.Description)
+</report>`, repoName, a.GHSAID, policyHint, tools.Submit, a.Summary, a.Description)
 }
