@@ -18,6 +18,7 @@ import (
 
 	"github.com/alexandre-daubois/embargod/internal/engine"
 	"github.com/alexandre-daubois/embargod/internal/github"
+	"github.com/alexandre-daubois/embargod/internal/repo"
 	"github.com/alexandre-daubois/embargod/internal/report"
 	"github.com/alexandre-daubois/embargod/internal/tools"
 	"github.com/alexandre-daubois/embargod/skill"
@@ -184,30 +185,67 @@ func TestRunOnlyPostsOnNewUntriagedAdvisories(t *testing.T) {
 	}
 }
 
-func TestRunChecksTheSecurityPolicy(t *testing.T) {
-	gh, eng := newFixture(), &fakeEngine{}
+// gitRepo creates a git repository tracking the given files.
+func gitRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o755); err != nil {
-		t.Fatal(err)
+	for name, content := range files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".github", "SECURITY.md"), []byte("Malicious unserialize() inputs are not security issues."), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{{"init", "-q"}, {"add", "."}} {
+	for _, args := range [][]string{{"init", "-q"}, {"add", "-f", "."}} {
 		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v %s", args, err, out)
 		}
 	}
 
+	return dir
+}
+
+func TestRunChecksTheSecurityPolicy(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	dir := gitRepo(t, map[string]string{
+		".github/SECURITY.md": "Malicious unserialize() inputs are not security issues.",
+		"AGENTS.md":           "Security reports go through GitHub advisories.",
+	})
+
 	if err := run(t, Config{Since: since, RepoPath: dir}, gh, eng); err != nil {
 		t.Fatal(err)
 	}
 
-	if prompt := eng.role("")[0].prompt; !strings.Contains(prompt, "The repository security policy is in .github/SECURITY.md.") {
+	if prompt := eng.role("")[0].prompt; !strings.Contains(prompt, "These files may say what the project treats as a security issue: .github/SECURITY.md, AGENTS.md.") {
 		t.Errorf("prompt = %s", prompt)
 	}
-	if body := gh.posted["GHSA-new"]; !strings.Contains(body, "Checked against `.github/SECURITY.md`.") || !strings.Contains(body, `- Malicious unserialize\(\) inputs: The PoC calls unserialize\(\).`) {
+	if body := gh.posted["GHSA-new"]; !strings.Contains(body, "Checked against `.github/SECURITY.md`, `AGENTS.md`.") || !strings.Contains(body, `- Malicious unserialize\(\) inputs: The PoC calls unserialize\(\).`) {
 		t.Errorf("missing policy section:\n%s", body)
+	}
+}
+
+func TestPolicyDocuments(t *testing.T) {
+	dir := gitRepo(t, map[string]string{
+		"AGENTS.md":           "",
+		"docs/security.rst":   "",
+		"SECURITY.md":         "",
+		".github/Security.md": "",
+		".github/CLAUDE.md":   "",
+		"ext/foo/SECURITY.md": "",
+		"SECURITY.md.orig":    "",
+		"security-notes.md":   "",
+		"agents.txt":          "",
+	})
+
+	got := policyDocuments(repo.Repo{Dir: dir})
+
+	want := []string{".github/Security.md", "SECURITY.md", "docs/security.rst", ".github/CLAUDE.md", "AGENTS.md"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if got := policyDocuments(repo.Repo{Dir: t.TempDir()}); len(got) != 0 {
+		t.Fatalf("a directory outside git has no policy: %v", got)
 	}
 }
 

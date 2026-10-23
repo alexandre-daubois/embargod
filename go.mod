@@ -1,6 +1,6 @@
 module github.com/alexandre-daubois/embargod
 
-go 1.26.2
+go 1.27.3
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.84.0

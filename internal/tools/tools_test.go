@@ -88,3 +88,37 @@ func TestCallSkipsToolsWithoutRun(t *testing.T) {
 		t.Fatalf("got %q, %v", out, isError)
 	}
 }
+
+func TestCodeTools(t *testing.T) {
+	ts := Code(repo.Repo{Dir: "."})
+	for _, tc := range []struct{ name, input, want string }{
+		{"grep_code", `{"pattern":"func Code\\(","path":"tools.go"}`, "tools.go:"},
+		{"grep_code", `{"pattern":"no_such_symbol_anywhere_42"}`, "no match"},
+		{"git_log", `{"path":"tools.go"}`, ""},
+	} {
+		out, isError := Call(context.Background(), ts, tc.name, json.RawMessage(tc.input))
+		if isError || !strings.Contains(out, tc.want) {
+			t.Errorf("%s(%s) = %q, %v", tc.name, tc.input, out, isError)
+		}
+	}
+
+	for _, tc := range []struct{ name, input string }{
+		{"grep_code", `{"pattern":"("}`},
+		{"grep_code", `[]`},
+		{"git_log", `{"path":1}`},
+		{"read_file", `{"path":".git/config"}`},
+	} {
+		if out, isError := Call(context.Background(), ts, tc.name, json.RawMessage(tc.input)); !isError {
+			t.Errorf("%s(%s) = %q, want an error", tc.name, tc.input, out)
+		}
+	}
+}
+
+func TestDecodeEmptyInput(t *testing.T) {
+	v, err := decode[struct {
+		Path string `json:"path"`
+	}](nil)
+	if err != nil || v.Path != "" {
+		t.Fatalf("got %+v, %v", v, err)
+	}
+}

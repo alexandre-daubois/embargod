@@ -47,8 +47,8 @@ type Report struct {
 
 	// Duplicates come from the comparator, never from the reader.
 	Duplicates []Duplicate `json:"-"`
-	// Policy is the path of the repository security policy, empty when there is none.
-	Policy string `json:"-"`
+	// Policies are the files the policy check read, empty when the repository has none.
+	Policies []string `json:"-"`
 	// Removed counts the model claims dropped because they could not be verified.
 	Removed int `json:"-"`
 }
@@ -325,8 +325,12 @@ func Render(r Report) string {
 		}
 	}
 
-	if r.Policy != "" {
-		fmt.Fprintf(&b, "\n#### Security policy\n\nChecked against `%s`.\n\n", r.Policy)
+	if len(r.Policies) > 0 {
+		files := make([]string, 0, len(r.Policies))
+		for _, p := range r.Policies {
+			files = append(files, code(p))
+		}
+		fmt.Fprintf(&b, "\n#### Security policy\n\nChecked against %s.\n\n", strings.Join(files, ", "))
 		if len(r.PolicyExclusions) == 0 {
 			b.WriteString("Nothing in the policy seems to exclude this report.\n")
 		}

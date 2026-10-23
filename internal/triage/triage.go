@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -147,7 +150,7 @@ func triage(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, a git
 		others = append(others, o)
 		byID[o.GHSAID] = o
 	}
-	policy := securityPolicy(code)
+	policies := policyDocuments(code)
 
 	system, err := systemPrompt(cfg.RepoPath)
 	if err != nil {
@@ -155,11 +158,11 @@ func triage(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, a git
 	}
 	properties, required := report.ReaderProperties()
 	readerTools := append(append(tools.Code(code), tools.Issues(gh, cfg.Repo)...), submit("Submit the triage report", properties, required))
-	raw, err := eng.Run(ctx, system, readerPrompt(cfg.Repo, a, policy), readerTools)
+	raw, err := eng.Run(ctx, system, readerPrompt(cfg.Repo, a, policies), readerTools)
 	if err != nil {
 		return err
 	}
-	r := report.Report{Policy: policy}
+	r := report.Report{Policies: policies}
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return errInvalidReport
 	}
@@ -209,21 +212,40 @@ func systemPrompt(repoPath string) (string, error) {
 	return skill.Text + "\n## Project guidance\n\n" + string(profile), nil
 }
 
-// securityPolicy returns the path of the security policy in one of the locations GitHub recognises, or "".
-func securityPolicy(code repo.Repo) string {
-	for _, path := range []string{"SECURITY.md", ".github/SECURITY.md", "docs/SECURITY.md"} {
-		if code.Exists(path) {
-			return path
+var (
+	policyDirs   = []string{".", ".github", "docs"}
+	policyName   = regexp.MustCompile(`(?i)^security(\.(md|markdown|rst|txt|adoc))?$`)
+	guidanceName = regexp.MustCompile(`(?i)^(agents|claude)\.md$`)
+)
+
+// policyDocuments returns the tracked files that may say what the project treats as a security
+// issue: security policies where GitHub looks for them, then agent guidance files.
+func policyDocuments(code repo.Repo) []string {
+	files, err := code.Files()
+	if err != nil {
+		return nil
+	}
+
+	var policies, guidance []string
+	for _, f := range files {
+		if !slices.Contains(policyDirs, path.Dir(f)) {
+			continue
+		}
+		switch base := path.Base(f); {
+		case policyName.MatchString(base):
+			policies = append(policies, f)
+		case guidanceName.MatchString(base):
+			guidance = append(guidance, f)
 		}
 	}
 
-	return ""
+	return append(policies, guidance...)
 }
 
-func readerPrompt(repoName string, a github.Advisory, policy string) string {
-	policyHint := "The repository has no security policy file, leave policy_exclusions empty."
-	if policy != "" {
-		policyHint = fmt.Sprintf("The repository security policy is in %s. Read it and list the points that may exclude this report.", policy)
+func readerPrompt(repoName string, a github.Advisory, policies []string) string {
+	policyHint := "The repository has no security policy nor agent guidance file, leave policy_exclusions empty."
+	if len(policies) > 0 {
+		policyHint = fmt.Sprintf("These files may say what the project treats as a security issue: %s. Read them and list the points that may exclude this report.", strings.Join(policies, ", "))
 	}
 
 	return fmt.Sprintf(`Triage the security report below, filed on %s as %s.

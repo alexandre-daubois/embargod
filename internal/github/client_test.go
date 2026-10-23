@@ -146,3 +146,28 @@ func TestLogin(t *testing.T) {
 		t.Fatalf("got %q, %v", got, err)
 	}
 }
+
+func TestInvalidJSONResponse(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"number": "SECRET-PAYLOAD"`)
+	})
+
+	_, err := c.GetIssue(context.Background(), "o/r", 1)
+	if err == nil || err.Error() != "github: invalid response" {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestNew(t *testing.T) {
+	c := New("tok")
+
+	if c.BaseURL != "https://api.github.com" || c.Token != "tok" || c.HTTP.Timeout <= 0 {
+		t.Fatalf("unexpected client %+v", c)
+	}
+}
+
+func TestHTTPErrorUnwrapsOnlyNotFound(t *testing.T) {
+	if !errors.Is(&HTTPError{Status: 404}, ErrNotFound) || errors.Is(&HTTPError{Status: 403}, ErrNotFound) || errors.Is(&HTTPError{}, ErrNotFound) {
+		t.Fatal("only a 404 is ErrNotFound")
+	}
+}

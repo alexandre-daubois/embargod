@@ -75,6 +75,16 @@ func (r Repo) tracked(path string) bool {
 	return err == nil && out != ""
 }
 
+// Files lists the tracked files.
+func (r Repo) Files() ([]string, error) {
+	out, err := r.git("ls-files", "-z")
+	if err != nil {
+		return nil, err
+	}
+
+	return strings.Split(strings.TrimSuffix(out, "\x00"), "\x00"), nil
+}
+
 // Grep runs an extended regexp search over tracked files, path narrows it when set.
 func (r Repo) Grep(pattern, path string) (string, error) {
 	args := []string{"grep", "-n", "-I", "-E", "-e", pattern}

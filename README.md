@@ -4,17 +4,17 @@ A GitHub Action that gives every new private vulnerability report a first, evide
 
 For each new report it:
 
-- looks for duplicates among the other advisories of the repository, in every state,
+- looks for duplicates among the other advisories of the repository,
 - looks for public issues and pull requests already fixing or hardening the same code,
 - checks that the files and functions the report cites exist in the repository,
-- reads the repository `SECURITY.md` and points out what may exclude the report,
-- suggests a CWE and a CVSS 4.0 base vector, with a short justification.
+- reads the security policy (`SECURITY.md`, `AGENTS.md`, `CLAUDE.md`) and points out what may exclude the report,
+- suggests a CWE and a CVSS 4.0 base vector.
 
-It does not decide anything. It helps maintainers sort the flow, with a confidence level on every duplicate and related issue.
+It does not decide anything, it helps maintainers sort the flow.
 
 ## Usage
 
-Run the workflow from a private repository that targets the public one, for example `your-org/embargod-runner` for `your-org/your-project`. See [Run it from a private repository](#run-it-from-a-private-repository) for why.
+Run the workflow from a private repository that targets the public one, so its logs, inputs and secrets stay private.
 
 ```yaml
 name: Embargod
@@ -50,7 +50,7 @@ jobs:
           github-token: ${{ secrets.EMBARGOD_TOKEN }}
 ```
 
-GitHub Actions has no trigger for security advisories, hence the schedule. Each run lists the advisories in the `triage` state created after `since` and skips the ones it already commented, so set `since` to the day you install the action and the existing backlog is left alone.
+GitHub Actions has no trigger for security advisories, hence the schedule. Set `since` to the day you install the action so the existing backlog is left alone.
 
 | Input | Default | Description |
 |---|---|---|
@@ -59,36 +59,13 @@ GitHub Actions has no trigger for security advisories, hence the schedule. Each 
 | `engine` | `claude` | `claude` or `openai`. |
 | `model` | `claude-opus-5-5` / `gpt-5.5` | Model id. |
 | `api-key` | | API key of the LLM provider. |
-| `github-token` | | Token able to read and comment the repository advisories. |
+| `github-token` | | Personal access token of a security manager of the repository, with the repository security advisories scope. A dedicated bot account is best, embargod recognises its own comments by its login. |
 | `repository` | current repository | Repository owning the advisories. |
 | `path` | `.` | Path of the repository checkout. |
 
-### Run it from a private repository
+Add a `.github/embargod.md` file to the project to tell the model what is specific to it: scope, CVSS conventions, realistic configurations.
 
-Run logs, job summaries and artifacts of a public repository are public, and embargod handles embargoed reports. The run log only ever gets counters and status codes: no report content, no comment, no GHSA identifier, no error message from GitHub or the LLM provider, and a panic is logged as "internal error" without its value. GitHub itself prints the step inputs at the top of the step log, so a GHSA passed through `advisory` shows there. Running the workflow from a private repository keeps those inputs, the timing of the runs and the secrets away from the public project.
-
-### The token
-
-Unpublished advisories are only visible to security managers, administrators and collaborators of each advisory. Use a personal access token of an account that is a security manager or an administrator of the repository, with the repository security advisories scope. embargod recognises its own comments by that account's login, so a dedicated bot account is best. Keep it in a protected environment so pull request workflows cannot reach it.
-
-### Project guidance
-
-Add a `.github/embargod.md` file to tell the model what is specific to your project: what is in scope, how you score CVSS, which configurations are realistic. It is appended to the triage method.
-
-## What to know before installing it
-
-- The reporter sees the comment. GitHub does not yet let the API post confidential comments, nor delete comments.
-- The advisory comments API is in public preview since October 2026 and is not documented yet, so it may change.
-- The report text is controlled by the reporter, and other advisories may be under embargo, so no model ever holds both. A first model reads the report with public tools only (`git grep`, reading files tracked by git, `git log`, issue search). A second model looks for duplicates among the other advisories without seeing the report: it only gets the affected paths, C identifiers, line numbers, PHP entry points and CWE found by the first one, filtered against strict patterns, and reads the code there itself, and it can only answer with GHSA identifiers, a confidence level and an exact flag. Neither has a shell or network access of its own, and neither can read `.git`, untracked files or symlinks, which is also why `persist-credentials: false` matters.
-- Every piece of text in the comment is escaped, so it cannot hold links, images, HTML or mentions.
-- Duplicates among published advisories are listed whatever their confidence. Unpublished ones (in triage, draft or closed) are only listed when they are exact duplicates, which tells the reporter nothing they do not know, and partial matches on them are dropped without a trace, not even in the count of removed suggestions.
-- A crafted report can still steer the first model, so its summary or its policy check may be misleading. It can also point the duplicate search at a line of its choice, which reveals whether another report describes that exact bug, much like a bug bounty platform answering "duplicate".
-- References the model makes to advisories, issues or pull requests are checked against GitHub before posting, and the ones that do not exist are removed.
-- Embargoed reports are sent to the LLM provider you pick. Check that your security policy allows it.
-
-## Using the method without the action
-
-The triage method lives in [`skill/SKILL.md`](skill/SKILL.md) in the Agent Skills format, so Claude Code or Codex can apply it by hand on a report.
+Before installing it, know that the reporter sees the comment, since GitHub does not let the API post confidential comments yet, and that reports are sent to the LLM provider you pick.
 
 ## License
 

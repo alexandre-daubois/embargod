@@ -192,3 +192,43 @@ func TestOpenAIAPIError(t *testing.T) {
 		t.Fatalf("the response body leaked: %v", err)
 	}
 }
+
+func TestNetworkErrorsKeepNoDetail(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL
+	srv.Close()
+
+	for name, eng := range map[string]Engine{
+		"anthropic": NewClaude("key", "m", anthropicoption.WithBaseURL(url), anthropicoption.WithMaxRetries(0)),
+		"openai":    NewOpenAI("key", "m", openaioption.WithBaseURL(url), openaioption.WithMaxRetries(0)),
+	} {
+		_, err := eng.Run(context.Background(), "s", "SECRET-PAYLOAD", testTools(new([]string)))
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Provider != name || apiErr.Status != 0 || err.Error() != name+": request failed" {
+			t.Errorf("%s: got %v", name, err)
+		}
+	}
+}
+
+func TestOpenAIEmptyCompletion(t *testing.T) {
+	srv, _ := scripted(t, `{"id":"c","object":"chat.completion","created":0,"model":"m","choices":[]}`)
+
+	_, err := NewOpenAI("key", "m", openaioption.WithBaseURL(srv.URL), openaioption.WithMaxRetries(0)).
+		Run(context.Background(), "s", "p", testTools(new([]string)))
+	if err == nil || err.Error() != "empty completion" {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestErrorMessages(t *testing.T) {
+	for err, want := range map[error]string{
+		&APIError{Provider: "anthropic", Status: 529}: "anthropic: HTTP 529",
+		&APIError{Provider: "openai"}:                 "openai: request failed",
+		&RefusalError{}:                               "the model refused",
+		&RefusalError{Category: "bio"}:                `the model refused (category "bio")`,
+	} {
+		if err.Error() != want {
+			t.Errorf("got %q, want %q", err.Error(), want)
+		}
+	}
+}

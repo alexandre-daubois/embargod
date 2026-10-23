@@ -4,12 +4,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
 // newRepo creates a git repository with one committed C file.
-func newRepo(t *testing.T) Repo {
+func newRepo(t testing.TB) Repo {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "ext"), 0o755); err != nil {
@@ -152,5 +153,77 @@ func TestTruncateLines(t *testing.T) {
 	got := truncateLines("a\nb\nc\n", 2)
 	if got != "a\nb\n... 2 more lines, narrow the search\n" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestMissingRepository(t *testing.T) {
+	r := Repo{Dir: filepath.Join(t.TempDir(), "missing")}
+
+	if _, err := r.ReadFile("a.c", 0, 0); err == nil {
+		t.Error("ReadFile should fail")
+	}
+	if r.Exists("a.c") {
+		t.Error("Exists should be false")
+	}
+	if _, err := r.Grep("a", ""); err == nil {
+		t.Error("Grep should fail")
+	}
+	if _, err := r.Log("", ""); err == nil {
+		t.Error("Log should fail")
+	}
+	if _, err := r.HasSymbol("", "a"); err == nil {
+		t.Error("HasSymbol should fail")
+	}
+}
+
+func TestReadFileClampsTheRange(t *testing.T) {
+	r := newRepo(t)
+
+	got, err := r.ReadFile("ext/a.c", 3, 1)
+	if err != nil || got != "3\t}\n" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	got, err = r.ReadFile("ext/a.c", 0, 0)
+	if err != nil || !strings.HasPrefix(got, "1\tint php_overflow") {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}
+
+func FuzzReadFileStaysInTrackedFiles(f *testing.F) {
+	for _, seed := range []string{"ext/a.c", ".git/config", "../secret", "/etc/passwd", "ext/../.git/HEAD", ":(glob)**", "./.git/config", "EXT/A.C", "ext//a.c"} {
+		f.Add(seed)
+	}
+	r := newRepo(f)
+	tracked := "int php_overflow(int len) {\n\treturn len * 2;\n}\n"
+
+	f.Fuzz(func(t *testing.T, path string) {
+		got, err := r.ReadFile(path, 0, 0)
+		if err != nil {
+			return
+		}
+		// Whatever the path, the only readable content is the one tracked file.
+		var lines []string
+		for _, l := range strings.Split(strings.TrimSuffix(got, "\n"), "\n") {
+			_, text, _ := strings.Cut(l, "\t")
+			lines = append(lines, text)
+		}
+		if strings.Join(lines, "\n")+"\n" != tracked {
+			t.Fatalf("ReadFile(%q) read %q", path, got)
+		}
+	})
+}
+
+func TestFiles(t *testing.T) {
+	r := newRepo(t)
+	if err := os.WriteFile(filepath.Join(r.Dir, "with space.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", r.Dir, "add", "with space.md").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+
+	got, err := r.Files()
+	if err != nil || !slices.Equal(got, []string{"ext/a.c", "with space.md"}) {
+		t.Fatalf("got %q, %v", got, err)
 	}
 }
