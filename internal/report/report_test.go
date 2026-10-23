@@ -492,3 +492,23 @@ func TestRenderCWEWithoutKnownName(t *testing.T) {
 		}
 	}
 }
+
+func TestKeepCited(t *testing.T) {
+	r := Report{CodeReferences: []CodeReference{
+		{Path: "ext/standard/url.c", Symbol: "php_url_decode_ex"},
+		{Path: "ext/standard/url.c", Symbol: "php_raw_url_decode_ex"},
+		{Path: "ext/standard/url.h"},
+		{Path: "ext/standard/metaphone.c"},
+		{Path: "", Symbol: ""},
+	}}
+
+	r.KeepCited("`php_url_decode_ex()` in `url.h` reads out of bounds")
+
+	var kept []string
+	for _, ref := range r.CodeReferences {
+		kept = append(kept, ref.Path+" "+ref.Symbol)
+	}
+	if !slices.Equal(kept, []string{"ext/standard/url.c php_url_decode_ex", "ext/standard/url.h "}) {
+		t.Fatalf("kept %q", kept)
+	}
+}

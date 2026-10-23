@@ -172,6 +172,7 @@ func triage(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, a git
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return errInvalidReport
 	}
+	r.KeepCited(a.Summary + "\n" + a.Description)
 
 	if clues := report.Clues(r); len(others) > 0 && clues.Location.Path != "" {
 		properties, required := report.ComparatorProperties()

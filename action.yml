@@ -36,7 +36,8 @@ inputs:
 
 runs:
   using: docker
-  image: Dockerfile
+  # Built and pushed by the release workflow, CI builds the Dockerfile itself.
+  image: docker://ghcr.io/alexandre-daubois/embargod:v1
   env:
     SINCE: ${{ inputs.since }}
     ADVISORY: ${{ inputs.advisory }}

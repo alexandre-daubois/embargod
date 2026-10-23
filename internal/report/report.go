@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -201,6 +202,22 @@ func Clues(r Report) Comparison {
 	}
 
 	return c
+}
+
+// KeepCited drops the code references the report text does not name, which the reader tends to add
+// from its own investigation: the section lists what the report cites, found or not.
+func (r *Report) KeepCited(reportText string) {
+	cited := r.CodeReferences[:0]
+	for _, ref := range r.CodeReferences {
+		name := ref.Symbol
+		if name == "" && ref.Path != "" {
+			name = path.Base(ref.Path)
+		}
+		if name != "" && strings.Contains(reportText, name) {
+			cited = append(cited, ref)
+		}
+	}
+	r.CodeReferences = cited
 }
 
 type IssueGetter interface {

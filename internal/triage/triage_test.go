@@ -570,3 +570,17 @@ func TestRunWithBotLoginSkipsTheTokenOwnerLookup(t *testing.T) {
 		t.Fatalf("the App's own comment must mark GHSA-done as triaged: %v", gh.posted)
 	}
 }
+
+func TestRunOnlyListsCodeTheReportCites(t *testing.T) {
+	gh := newFixture()
+	eng := &fakeEngine{reader: `{"summary":"s","code_references":[{"path":"ext/foo/foo.c","symbol":"foo"},{"path":"ext/foo/foo.c","symbol":"php_found_by_the_reader"}]}`}
+
+	if err := run(t, Config{Advisory: "GHSA-new"}, gh, eng); err != nil {
+		t.Fatal(err)
+	}
+
+	body := gh.posted["GHSA-new"]
+	if !strings.Contains(body, "`foo`") || strings.Contains(body, "php_found_by_the_reader") {
+		t.Fatalf("only the code named by the report should be listed:\n%s", body)
+	}
+}
