@@ -10,12 +10,12 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/alexandre-daubois/securibot/internal/github"
-	"github.com/alexandre-daubois/securibot/internal/repo"
+	"github.com/alexandre-daubois/embargod/internal/github"
+	"github.com/alexandre-daubois/embargod/internal/repo"
 )
 
-// Marker identifies comments posted by securibot.
-const Marker = "<!-- securibot -->"
+// Marker identifies comments posted by embargod.
+const Marker = "<!-- embargod -->"
 
 var (
 	cweID = regexp.MustCompile(`^CWE-[1-9][0-9]*$`)
@@ -361,11 +361,11 @@ func label(confidence string) string {
 	return strings.ToUpper(confidence[:1]) + confidence[1:]
 }
 
-// escaper makes model and GitHub text inert: no links, images, HTML, headings or table breaks, so an
+// escaper makes model and GitHub text inert: no links, images, HTML, entities, headings or table breaks, so an
 // injected report cannot load a remote image carrying data, and a zero-width space after @ breaks mentions.
 var escaper = strings.NewReplacer(
 	`\`, `\\`, "`", "\\`", "*", `\*`, "_", `\_`, "[", `\[`, "]", `\]`, "(", `\(`, ")", `\)`,
-	"<", `\<`, ">", `\>`, "!", `\!`, "#", `\#`, "|", `\|`, "~", `\~`, "@", "@\u200b",
+	"<", `\<`, ">", `\>`, "!", `\!`, "#", `\#`, "|", `\|`, "~", `\~`, "&", `\&`, "@", "@\u200b",
 )
 
 // text flattens untrusted text on one line and escapes it.

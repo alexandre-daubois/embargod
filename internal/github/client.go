@@ -1,4 +1,4 @@
-// Package github is a minimal REST client for the endpoints securibot needs.
+// Package github is a minimal REST client for the endpoints embargod needs.
 package github
 
 import (

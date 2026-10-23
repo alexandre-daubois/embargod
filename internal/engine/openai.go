@@ -9,7 +9,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/shared"
 
-	"github.com/alexandre-daubois/securibot/internal/tools"
+	"github.com/alexandre-daubois/embargod/internal/tools"
 )
 
 const DefaultOpenAIModel = shared.ChatModelGPT5_5

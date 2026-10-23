@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/alexandre-daubois/securibot/internal/tools"
+	"github.com/alexandre-daubois/embargod/internal/tools"
 )
 
 const (

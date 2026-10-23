@@ -12,16 +12,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alexandre-daubois/securibot/internal/engine"
-	"github.com/alexandre-daubois/securibot/internal/github"
-	"github.com/alexandre-daubois/securibot/internal/repo"
-	"github.com/alexandre-daubois/securibot/internal/report"
-	"github.com/alexandre-daubois/securibot/internal/tools"
-	"github.com/alexandre-daubois/securibot/skill"
+	"github.com/alexandre-daubois/embargod/internal/engine"
+	"github.com/alexandre-daubois/embargod/internal/github"
+	"github.com/alexandre-daubois/embargod/internal/repo"
+	"github.com/alexandre-daubois/embargod/internal/report"
+	"github.com/alexandre-daubois/embargod/internal/tools"
+	"github.com/alexandre-daubois/embargod/skill"
 )
 
 // ProfilePath holds project-specific guidance, relative to the repository root.
-const ProfilePath = ".github/securibot.md"
+const ProfilePath = ".github/embargod.md"
 
 var errInvalidReport = errors.New("the model submitted an invalid report")
 

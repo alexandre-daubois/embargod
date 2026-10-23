@@ -1,4 +1,4 @@
-name: Securibot
+name: Embargod
 description: First-pass LLM triage of new GitHub security advisories, posted as an advisory comment.
 author: Alexandre Daubois
 branding:

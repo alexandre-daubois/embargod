@@ -8,7 +8,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"github.com/alexandre-daubois/securibot/internal/tools"
+	"github.com/alexandre-daubois/embargod/internal/tools"
 )
 
 const DefaultClaudeModel = "claude-opus-5-5"

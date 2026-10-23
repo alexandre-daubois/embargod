@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexandre-daubois/securibot/internal/engine"
-	"github.com/alexandre-daubois/securibot/internal/github"
-	"github.com/alexandre-daubois/securibot/internal/report"
-	"github.com/alexandre-daubois/securibot/internal/tools"
-	"github.com/alexandre-daubois/securibot/skill"
+	"github.com/alexandre-daubois/embargod/internal/engine"
+	"github.com/alexandre-daubois/embargod/internal/github"
+	"github.com/alexandre-daubois/embargod/internal/report"
+	"github.com/alexandre-daubois/embargod/internal/tools"
+	"github.com/alexandre-daubois/embargod/skill"
 )
 
 var since = time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
@@ -30,14 +30,18 @@ type fakeGitHub struct {
 	comments    map[string][]github.Comment
 	posted      map[string]string
 	commentsErr error
+	loginErr    error
+	listErr     error
+	issueErr    error
+	postErr     error
 }
 
 func (f *fakeGitHub) Login(context.Context) (string, error) {
-	return "securibot-bot", nil
+	return "embargod-bot", f.loginErr
 }
 
 func (f *fakeGitHub) ListAdvisories(context.Context, string, string) ([]github.Advisory, error) {
-	return f.advisories, nil
+	return f.advisories, f.listErr
 }
 
 func (f *fakeGitHub) SearchIssues(context.Context, string, string) ([]github.Issue, error) {
@@ -45,6 +49,10 @@ func (f *fakeGitHub) SearchIssues(context.Context, string, string) ([]github.Iss
 }
 
 func (f *fakeGitHub) GetIssue(context.Context, string, int) (github.Issue, error) {
+	if f.issueErr != nil {
+		return github.Issue{}, f.issueErr
+	}
+
 	return github.Issue{}, github.ErrNotFound
 }
 
@@ -57,6 +65,9 @@ func (f *fakeGitHub) ListComments(_ context.Context, _, ghsa string) ([]github.C
 }
 
 func (f *fakeGitHub) PostComment(_ context.Context, _, ghsa, body string) error {
+	if f.postErr != nil {
+		return f.postErr
+	}
 	f.posted[ghsa] = body
 
 	return nil
@@ -115,7 +126,7 @@ func (e *fakeEngine) role(system string) []engineCall {
 
 func botComment(body string) github.Comment {
 	c := github.Comment{Body: body}
-	c.User.Login = "securibot-bot"
+	c.User.Login = "embargod-bot"
 
 	return c
 }
@@ -383,5 +394,108 @@ func TestDescribe(t *testing.T) {
 		if got := describe(err); got != want {
 			t.Errorf("describe(%v) = %q, want %q", err, got, want)
 		}
+	}
+}
+
+func TestRunStopsWhenGitHubIsUnreachable(t *testing.T) {
+	for name, tc := range map[string]struct {
+		setup func(*fakeGitHub)
+		want  string
+	}{
+		"login": {func(gh *fakeGitHub) { gh.loginErr = &github.HTTPError{Status: 401} }, "identifying the token owner: github: HTTP 401"},
+		"advisories": {func(gh *fakeGitHub) {
+			gh.listErr = fmt.Errorf("GHSA-new SECRET-PAYLOAD: %w", &github.HTTPError{Status: 403})
+		}, "listing advisories: github: HTTP 403"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gh, eng := newFixture(), &fakeEngine{}
+			tc.setup(gh)
+
+			err := run(t, Config{Since: since}, gh, eng)
+
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("want %q, got %v", tc.want, err)
+			}
+			if len(eng.calls) != 0 || len(gh.posted) != 0 {
+				t.Fatalf("nothing should run: %d calls, %v", len(eng.calls), gh.posted)
+			}
+		})
+	}
+}
+
+func TestRunFailures(t *testing.T) {
+	for name, tc := range map[string]struct {
+		setup  func(*fakeGitHub, *fakeEngine)
+		reason string
+	}{
+		"reader fails":            {func(_ *fakeGitHub, e *fakeEngine) { e.fail = "Overflow in foo" }, "unexpected error"},
+		"reader invalid json":     {func(_ *fakeGitHub, e *fakeEngine) { e.reader = `{"summary": 1}` }, errInvalidReport.Error()},
+		"comparator fails":        {func(_ *fakeGitHub, e *fakeEngine) { e.fail = "php_foo" }, "unexpected error"},
+		"comparator invalid json": {func(_ *fakeGitHub, e *fakeEngine) { e.comparator = `not json` }, errInvalidReport.Error()},
+		"verification fails": {func(gh *fakeGitHub, e *fakeEngine) {
+			gh.issueErr = &github.HTTPError{Status: 502}
+			e.reader = `{"summary":"s","related":[{"number":12,"confidence":"high"}]}`
+		}, "github: HTTP 502"},
+		"post fails": {func(gh *fakeGitHub, _ *fakeEngine) { gh.postErr = &github.HTTPError{Status: 422} }, "github: HTTP 422"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gh, eng := newFixture(), &fakeEngine{}
+			tc.setup(gh, eng)
+			var logs bytes.Buffer
+
+			err := runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs)
+
+			if err == nil || err.Error() != "1 advisory(ies) failed" {
+				t.Fatalf("want one failure, got %v", err)
+			}
+			if gh.posted["GHSA-new"] != "" {
+				t.Fatalf("nothing should be posted:\n%s", gh.posted["GHSA-new"])
+			}
+			if !strings.Contains(logs.String(), fmt.Sprintf("reason=%q", tc.reason)) || strings.Contains(logs.String(), "GHSA-") || strings.Contains(logs.String(), "SECRET-PAYLOAD") {
+				t.Fatalf("unexpected logs:\n%s", logs.String())
+			}
+		})
+	}
+}
+
+func TestRunIgnoresFreeTextFromTheComparator(t *testing.T) {
+	gh := newFixture()
+	eng := &fakeEngine{comparator: `{"notes":"SECRET-PAYLOAD","duplicates":[{"ghsa_id":"GHSA-old","confidence":"high","exact":true,"reason":"SECRET-PAYLOAD","title":"SECRET-PAYLOAD"}]}`}
+
+	if err := run(t, Config{Advisory: "GHSA-new"}, gh, eng); err != nil {
+		t.Fatal(err)
+	}
+
+	body := gh.posted["GHSA-new"]
+	if strings.Contains(body, "SECRET-PAYLOAD") || !strings.Contains(body, "| [GHSA-old](https://x/GHSA-old) | Unpublished | High • Exact duplicate |") {
+		t.Fatalf("only the closed fields of the comparator may reach the comment:\n%s", body)
+	}
+}
+
+func TestRunWithoutOtherAdvisoriesSkipsTheComparator(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.advisories = []github.Advisory{{GHSAID: "GHSA-new", State: "triage", CreatedAt: since.Add(time.Hour)}}
+
+	if err := run(t, Config{Since: since}, gh, eng); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(eng.role(skill.Compare)) != 0 || gh.posted["GHSA-new"] == "" {
+		t.Fatalf("comparator calls %d, posted %v", len(eng.role(skill.Compare)), gh.posted)
+	}
+}
+
+func TestRunFailsOnAnUnreadableProfile(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ProfilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := run(t, Config{Advisory: "GHSA-new", RepoPath: dir}, gh, eng); err == nil {
+		t.Fatal("a profile that cannot be read should fail the triage")
+	}
+	if len(eng.calls) != 0 {
+		t.Fatalf("the model should not run: %d calls", len(eng.calls))
 	}
 }

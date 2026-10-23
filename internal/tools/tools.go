@@ -10,8 +10,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/alexandre-daubois/securibot/internal/github"
-	"github.com/alexandre-daubois/securibot/internal/repo"
+	"github.com/alexandre-daubois/embargod/internal/github"
+	"github.com/alexandre-daubois/embargod/internal/repo"
 )
 
 // Submit is the tool the model calls with its final answer, which ends the run.

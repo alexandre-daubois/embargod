@@ -9,9 +9,9 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/alexandre-daubois/securibot/internal/engine"
-	"github.com/alexandre-daubois/securibot/internal/github"
-	"github.com/alexandre-daubois/securibot/internal/triage"
+	"github.com/alexandre-daubois/embargod/internal/engine"
+	"github.com/alexandre-daubois/embargod/internal/github"
+	"github.com/alexandre-daubois/embargod/internal/triage"
 )
 
 func main() {

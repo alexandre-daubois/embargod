@@ -1,4 +1,4 @@
-module github.com/alexandre-daubois/securibot
+module github.com/alexandre-daubois/embargod
 
 go 1.26.2
 

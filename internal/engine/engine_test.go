@@ -13,7 +13,7 @@ import (
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
 	openaioption "github.com/openai/openai-go/v3/option"
 
-	"github.com/alexandre-daubois/securibot/internal/tools"
+	"github.com/alexandre-daubois/embargod/internal/tools"
 )
 
 // scripted serves the given responses in order and records the request bodies.

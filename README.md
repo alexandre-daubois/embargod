@@ -1,4 +1,4 @@
-# securibot
+# embargod
 
 A GitHub Action that gives every new private vulnerability report a first, evidence-based read with an LLM, and posts it as a comment on the advisory.
 
@@ -14,10 +14,10 @@ It does not decide anything. It helps maintainers sort the flow, with a confiden
 
 ## Usage
 
-Run the workflow from a private repository that targets the public one, for example `your-org/securibot-runner` for `your-org/your-project`. See [Run it from a private repository](#run-it-from-a-private-repository) for why.
+Run the workflow from a private repository that targets the public one, for example `your-org/embargod-runner` for `your-org/your-project`. See [Run it from a private repository](#run-it-from-a-private-repository) for why.
 
 ```yaml
-name: Securibot
+name: Embargod
 
 on:
   schedule:
@@ -31,7 +31,7 @@ on:
 jobs:
   triage:
     runs-on: ubuntu-latest
-    environment: securibot
+    environment: embargod
     permissions:
       contents: read
     steps:
@@ -40,14 +40,14 @@ jobs:
           repository: your-org/your-project
           fetch-depth: 0
           persist-credentials: false
-      - uses: alexandre-daubois/securibot@v1
+      - uses: alexandre-daubois/embargod@v1
         with:
           repository: your-org/your-project
           since: "2026-10-22"
           advisory: ${{ inputs.advisory }}
           engine: claude
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github-token: ${{ secrets.SECURIBOT_TOKEN }}
+          github-token: ${{ secrets.EMBARGOD_TOKEN }}
 ```
 
 GitHub Actions has no trigger for security advisories, hence the schedule. Each run lists the advisories in the `triage` state created after `since` and skips the ones it already commented, so set `since` to the day you install the action and the existing backlog is left alone.
@@ -65,15 +65,15 @@ GitHub Actions has no trigger for security advisories, hence the schedule. Each 
 
 ### Run it from a private repository
 
-Run logs, job summaries and artifacts of a public repository are public, and securibot handles embargoed reports. The run log only ever gets counters and status codes: no report content, no comment, no GHSA identifier, no error message from GitHub or the LLM provider, and a panic is logged as "internal error" without its value. GitHub itself prints the step inputs at the top of the step log, so a GHSA passed through `advisory` shows there. Running the workflow from a private repository keeps those inputs, the timing of the runs and the secrets away from the public project.
+Run logs, job summaries and artifacts of a public repository are public, and embargod handles embargoed reports. The run log only ever gets counters and status codes: no report content, no comment, no GHSA identifier, no error message from GitHub or the LLM provider, and a panic is logged as "internal error" without its value. GitHub itself prints the step inputs at the top of the step log, so a GHSA passed through `advisory` shows there. Running the workflow from a private repository keeps those inputs, the timing of the runs and the secrets away from the public project.
 
 ### The token
 
-Unpublished advisories are only visible to security managers, administrators and collaborators of each advisory. Use a personal access token of an account that is a security manager or an administrator of the repository, with the repository security advisories scope. securibot recognises its own comments by that account's login, so a dedicated bot account is best. Keep it in a protected environment so pull request workflows cannot reach it.
+Unpublished advisories are only visible to security managers, administrators and collaborators of each advisory. Use a personal access token of an account that is a security manager or an administrator of the repository, with the repository security advisories scope. embargod recognises its own comments by that account's login, so a dedicated bot account is best. Keep it in a protected environment so pull request workflows cannot reach it.
 
 ### Project guidance
 
-Add a `.github/securibot.md` file to tell the model what is specific to your project: what is in scope, how you score CVSS, which configurations are realistic. It is appended to the triage method.
+Add a `.github/embargod.md` file to tell the model what is specific to your project: what is in scope, how you score CVSS, which configurations are realistic. It is appended to the triage method.
 
 ## What to know before installing it
 

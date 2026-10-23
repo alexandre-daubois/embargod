@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexandre-daubois/securibot/internal/github"
-	"github.com/alexandre-daubois/securibot/internal/repo"
+	"github.com/alexandre-daubois/embargod/internal/github"
+	"github.com/alexandre-daubois/embargod/internal/repo"
 )
 
 type fakeGitHub struct{}
