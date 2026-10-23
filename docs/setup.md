@@ -30,7 +30,7 @@ In that repository, create an `embargod` environment and add:
 |---|---|---|
 | Variable | `EMBARGOD_CLIENT_ID` | the App client ID |
 | Secret | `EMBARGOD_PRIVATE_KEY` | the App private key |
-| Secret | `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | the model provider key |
+| Secret | `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | the model provider key, or a [Codex access token](configuration.md#codex-access-token) |
 
 Restrict the environment to the default branch so other workflows cannot read its secrets.
 

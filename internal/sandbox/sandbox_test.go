@@ -81,7 +81,7 @@ func TestAgentContainerUsesOnlyThePrivateProxyAndLimitsResources(t *testing.T) {
 }
 
 func TestOnlyDockerCanStartAnIsolatedRun(t *testing.T) {
-	if _, err := startIsolatedRun(t.Context(), container.Runtime{Bin: "podman"}, "agent", "1234"); err == nil {
+	if _, err := startIsolatedRun(t.Context(), container.Runtime{Bin: "podman"}, "agent", "1234", false, allow); err == nil {
 		t.Fatal("an unsupported runtime must fail closed")
 	}
 }
@@ -102,14 +102,15 @@ func TestReadOutputIsBounded(t *testing.T) {
 }
 
 func TestBackends(t *testing.T) {
-	for name, wantKey := range map[string]string{"claude": "ANTHROPIC_API_KEY", "codex": "CODEX_API_KEY"} {
+	for name, want := range map[string]struct{ harness, keyEnv, basePath string }{
+		"claude":      {"claude", "ANTHROPIC_API_KEY", "/model-proxy"},
+		"codex":       {"codex", "CODEX_API_KEY", "/model-proxy/v1"},
+		"codex-token": {"codex", "CODEX_ACCESS_TOKEN", "/model-proxy/backend-api/codex"},
+	} {
 		b, ok := backends[name]
-		if !ok || b.keyEnv != wantKey || b.harness != name {
+		if !ok || b.harness != want.harness || b.keyEnv != want.keyEnv || b.basePath != want.basePath || b.accessToken != (name == "codex-token") {
 			t.Errorf("%s: %+v", name, b)
 		}
-	}
-	if backends["codex"].basePath != "/model-proxy/v1" || backends["claude"].basePath != "/model-proxy" {
-		t.Errorf("base paths: %+v", backends)
 	}
 }
 
@@ -122,14 +123,15 @@ func TestWriteConfig(t *testing.T) {
 	}{
 		"codex with daybreak":  {"codex", true, true, false},
 		"codex without":        {"codex", false, true, false},
+		"codex access token":   {"codex-token", false, true, false},
 		"claude without":       {"claude", false, false, false},
 		"claude with daybreak": {"claude", true, false, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			state := t.TempDir()
-			r := &Reader{backend: backends[tc.backend], Daybreak: tc.daybreak}
+			r := &Reader{backend: backends[tc.backend], Daybreak: tc.daybreak, ca: []byte("CA")}
 
-			err := r.writeConfig(state, "http://proxy/model-proxy/v1")
+			err := r.writeConfig(state, "https://proxy:1")
 
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("error = %v", err)
@@ -138,8 +140,15 @@ func TestWriteConfig(t *testing.T) {
 			if (len(got) > 0) != tc.wantConfig {
 				t.Fatalf("config.toml = %q", got)
 			}
-			if tc.wantConfig && (!strings.Contains(string(got), "model_provider = \"embargod\"") || !strings.Contains(string(got), "supports_websockets = false")) {
-				t.Fatalf("unsafe config.toml = %q", got)
+			for _, want := range []string{"model_provider = \"embargod\"", "supports_websockets = false", "plugins = false", "[analytics]\nenabled = false", "chatgpt_base_url = \"https://proxy:1/model-proxy/backend-api\"", "base_url = \"https://proxy:1" + backends[tc.backend].basePath + "\""} {
+				if tc.wantConfig && !strings.Contains(string(got), want) {
+					t.Fatalf("config.toml misses %q: %q", want, got)
+				}
+			}
+			ca, _ := os.ReadFile(filepath.Join(state, caFile))
+			tokenAuth := strings.Contains(string(got), "requires_openai_auth = true") && !strings.Contains(string(got), "env_key")
+			if tokenAuth != (tc.backend == "codex-token") || (string(ca) == "CA") != tokenAuth {
+				t.Fatalf("access token config = %q, CA = %q", got, ca)
 			}
 		})
 	}
@@ -147,12 +156,14 @@ func TestWriteConfig(t *testing.T) {
 
 func TestImagesArePinnedByDigest(t *testing.T) {
 	pinned := regexp.MustCompile(`^ghcr\.io/alexandre-daubois/embargod-agent@sha256:[0-9a-f]{64}$`)
-	for name := range backends {
-		if image := Images[name]; !pinned.MatchString(image) {
-			t.Errorf("%s: %q is not pinned by digest", name, image)
+	agents := map[string]bool{}
+	for _, b := range backends {
+		agents[b.harness] = true
+		if image := Images[b.harness]; !pinned.MatchString(image) {
+			t.Errorf("%s: %q is not pinned by digest", b.harness, image)
 		}
 	}
-	if len(Images) != len(backends) {
-		t.Errorf("images.json lists %d images for %d agents", len(Images), len(backends))
+	if len(Images) != len(agents) {
+		t.Errorf("images.json lists %d images for %d agents", len(Images), len(agents))
 	}
 }

@@ -5,6 +5,7 @@ package modelproxy
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -35,10 +36,16 @@ var errUpstreamRedirect = errors.New("model proxy: upstream redirect refused")
 
 // Provider describes one model API: where it lives, which routes an agent may call and how the key is sent.
 type Provider struct {
-	Upstream     string
-	Routes       func(method, route string) bool
-	SetKey       func(h http.Header, key string)
-	NoStore      bool
+	Upstream string
+	// Upstreams sends the routes under each prefix to their own upstream, the prefix itself is dropped.
+	Upstreams map[string]string
+	// TokenPrefix starts the tokens the agent gets, when its CLI recognises a credential by its prefix.
+	TokenPrefix string
+	Routes      func(method, route string) bool
+	SetKey      func(h http.Header, key string)
+	NoStore     bool
+	// StoreOff forces store to false only, for an upstream that rejects the other NoStore defaults.
+	StoreOff     bool
 	UntypedTools bool
 	BetaQuery    bool
 }
@@ -72,6 +79,29 @@ var OpenAI = Provider{
 	NoStore: true,
 }
 
+// ChatGPT serves Codex signed in with a Codex access token: it checks the token on auth.openai.com, then
+// calls the model through the ChatGPT backend instead of the OpenAI API.
+var ChatGPT = Provider{
+	Upstreams: map[string]string{
+		"/auth":        "https://auth.openai.com/api/accounts",
+		"/backend-api": "https://chatgpt.com/backend-api",
+	},
+	Routes: func(method, route string) bool {
+		switch method {
+		case http.MethodGet:
+			// Codex refuses to start without the workspace's managed configuration.
+			return route == "/auth/v1/user-auth-credential/whoami" || route == "/backend-api/wham/config/bundle"
+		case http.MethodPost:
+			return route == "/backend-api/codex/responses"
+		default:
+			return false
+		}
+	},
+	TokenPrefix: "at-" + tokenPrefix,
+	SetKey:      func(h http.Header, key string) { h.Set("Authorization", "Bearer "+key) },
+	StoreOff:    true,
+}
+
 type Proxy struct {
 	provider Provider
 	key      string
@@ -89,16 +119,35 @@ func New(provider Provider, key, model string) (*Proxy, error) {
 	if model == "" {
 		return nil, errors.New("model proxy: a model is required")
 	}
-	upstream, err := url.Parse(provider.Upstream)
-	if err != nil {
-		return nil, fmt.Errorf("model proxy: %w", err)
+	upstreams := map[string]*url.URL{}
+	for prefix, raw := range provider.Upstreams {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return nil, fmt.Errorf("model proxy: %w", err)
+		}
+		upstreams[prefix] = u
+	}
+	if provider.Upstreams == nil {
+		u, err := url.Parse(provider.Upstream)
+		if err != nil {
+			return nil, fmt.Errorf("model proxy: %w", err)
+		}
+		upstreams[""] = u
 	}
 
 	p := &Proxy{provider: provider, key: key, model: model, tokens: map[[sha256.Size]byte]int{}}
 	p.proxy = &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
+			// ServeHTTP only forwards permitted routes, each under exactly one prefix.
+			var upstream *url.URL
+			route := pr.In.URL.Path
+			for prefix, u := range upstreams {
+				if rest, ok := strings.CutPrefix(pr.In.URL.Path, prefix); ok && (prefix == "" || strings.HasPrefix(rest, "/")) {
+					upstream, route = u, rest
+				}
+			}
 			pr.Out.URL.Scheme, pr.Out.URL.Host, pr.Out.Host = upstream.Scheme, upstream.Host, upstream.Host
-			pr.Out.URL.Path, pr.Out.URL.RawPath = upstream.Path+pr.In.URL.Path, ""
+			pr.Out.URL.Path, pr.Out.URL.RawPath = upstream.Path+route, ""
 			for _, h := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Cookie", "OpenAI-Organization", "OpenAI-Project"} {
 				pr.Out.Header.Del(h)
 			}
@@ -132,7 +181,7 @@ func New(provider Provider, key, model string) (*Proxy, error) {
 func (p *Proxy) Issue() (token string, revoke func()) {
 	var raw [32]byte
 	_, _ = rand.Read(raw[:])
-	token = tokenPrefix + hex.EncodeToString(raw[:])
+	token = cmp.Or(p.provider.TokenPrefix, tokenPrefix) + hex.EncodeToString(raw[:])
 	sum := sha256.Sum256([]byte(token))
 	p.mu.Lock()
 	p.tokens[sum] = maxRequests
@@ -194,7 +243,10 @@ func (p *Proxy) authorized(r *http.Request) bool {
 	if p.tokens[sum] <= 0 {
 		return false
 	}
-	p.tokens[sum]--
+	// Only model calls are POST. The GET routes are the access token checks Codex repeats on every start.
+	if r.Method == http.MethodPost {
+		p.tokens[sum]--
+	}
 
 	return true
 }
@@ -241,6 +293,9 @@ func (p *Proxy) safeBody(body io.Reader) ([]byte, error) {
 				v[key] = maxTokens
 			}
 		}
+	}
+	if p.provider.StoreOff {
+		v["store"] = false
 	}
 	if p.provider.NoStore {
 		v["store"] = false

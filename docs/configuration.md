@@ -4,7 +4,7 @@
 
 | Input | Default | Description |
 |---|---|---|
-| `api-key` | | API key of the model provider. Required. |
+| `api-key` | | API key of the model provider, or a Codex access token with `openai`. Required. |
 | `github-token` | | Token able to read and comment the repository advisories. Required. |
 | `bot-login` | owner of the token | Login the comments are posted as, e.g. `my-app[bot]`. Required with a GitHub App token. |
 | `repository` | current repository | Repository owning the advisories. |
@@ -12,7 +12,7 @@
 | `since` | | Only advisories created after this date (`2026-10-22` or RFC 3339) are triaged. Required unless `advisory` is set. |
 | `advisory` | | Triage this GHSA only, whatever its state and creation date. |
 | `engine` | `claude` | `claude` (Claude Code and the Anthropic API) or `openai` (Codex and the OpenAI API). |
-| `model` | `claude-opus-5-5` / `gpt-5.5` | Model used by both the agent and the duplicate search. |
+| `model` | `claude-opus-5-5` / `gpt-5.5` | Model used by both the agent and the duplicate search. `gpt-6.1-sol` with a Codex access token. |
 | `daybreak` | `false` | Turn on OpenAI's Daybreak cyber access program in Codex. `openai` engine only, and the API key's organisation must be approved for it. |
 | `runner-image` | embargod agent image, pinned by digest | Image the agent runs in. It must contain the agent CLI, git, curl and `harness-proxy`. A custom image skips the attestation check. |
 
@@ -37,5 +37,10 @@ The comment lists the files it was checked against. Without any of them, the sec
 |---|---|---|---|
 | `claude` | Claude Code | Anthropic API | `api.anthropic.com` |
 | `openai` | Codex | OpenAI Chat Completions | `api.openai.com` |
+| `openai` with a Codex access token | Codex | Codex, in a container without GitHub access | `chatgpt.com` |
 
 The agent CLI versions are pinned in [`docker/agent/Dockerfile`](../docker/agent/Dockerfile).
+
+## Codex access token
+
+A ChatGPT workspace without OpenAI API access can create a [Codex access token](https://learn.chatgpt.com/docs/enterprise/access-tokens) in its admin console and pass it as `api-key` with `engine: openai`. It is recognised by its `at-` prefix. The ChatGPT backend does not serve the API models, so the default model becomes `gpt-6.1-sol`. Prefer a token of a service account, with the shortest expiration you can rotate.

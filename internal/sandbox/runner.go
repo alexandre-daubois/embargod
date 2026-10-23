@@ -34,9 +34,13 @@ type isolatedRun struct {
 	proxy   string
 	proxyIP string
 	token   string
+	// env is set in the agent container on top of the harness environment.
+	env []string
 }
 
-func startIsolatedRun(ctx context.Context, runtime container.Runtime, image, modelPort string) (*isolatedRun, error) {
+// startIsolatedRun starts the egress proxy, letting the agent reach the model proxy and hosts. harness
+// refuses tunnels to its API port, so a model proxy served over TLS is reached as a separate host port.
+func startIsolatedRun(ctx context.Context, runtime container.Runtime, image, modelPort string, tls bool, hosts []string) (*isolatedRun, error) {
 	if runtime.Bin != "docker" {
 		return nil, errors.New("only Docker is supported")
 	}
@@ -58,12 +62,16 @@ func startIsolatedRun(ctx context.Context, runtime container.Runtime, image, mod
 		}
 	}()
 
-	proxyEnv := container.SidecarEnv(container.SidecarConfig{
+	sidecar := container.SidecarConfig{
 		Token:     run.token,
-		Allow:     append([]string{egress.HostGatewayAlias}, allow...),
+		Allow:     append([]string{egress.HostGatewayAlias}, hosts...),
 		APIPort:   modelPort,
 		GatewayIP: egress.HostGatewayAlias,
-	}, egress.ListenFirstIface+":"+proxyPort)
+	}
+	if tls {
+		sidecar.APIPort, sidecar.HostPorts = "", []string{modelPort}
+	}
+	proxyEnv := container.SidecarEnv(sidecar, egress.ListenFirstIface+":"+proxyPort)
 	args := []string{"run", "-d", "--name", run.proxy, "--network", run.network, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m", "--add-host", egress.HostGatewayAlias + ":host-gateway", "-e", container.ProxyTokenEnv}
 	for _, entry := range proxyEnv[1:] {
 		args = append(args, "-e", entry)
@@ -165,8 +173,13 @@ func (r *isolatedRun) agentArgs(h harness.Harness, job harness.Job, workspace, s
 		"--tmpfs", container.StateMount + ":rw,noexec,nosuid,size=256m",
 		"-w", container.WorkMount, "--network", r.network, "--add-host", egress.HostGatewayAlias + ":" + r.proxyIP,
 	}
-	if _, err := os.Stat(filepath.Join(state, "config.toml")); err == nil {
-		args = append(args, "--mount", "type=bind,src="+filepath.Join(state, "config.toml")+",dst="+container.StateMount+"/config.toml,readonly")
+	for _, name := range []string{"config.toml", caFile} {
+		if _, err := os.Stat(filepath.Join(state, name)); err == nil {
+			args = append(args, "--mount", "type=bind,src="+filepath.Join(state, name)+",dst="+container.StateMount+"/"+name+",readonly")
+		}
+	}
+	for _, entry := range r.env {
+		args = append(args, "-e", entry)
 	}
 	for _, entry := range h.StateEnv(container.StateMount) {
 		args = append(args, "-e", entry)

@@ -6,7 +6,7 @@ embargod reads text written by an outside reporter, with access to embargoed adv
 
 | Threat | Mitigation |
 |---|---|
-| A prompt injection makes the agent leak other advisories | The agent never has access to them. Each duplicate candidate runs in its own model context, which sees no other advisory and returns only confidence and an exact flag. Unpublished identifiers are never posted. |
+| A prompt injection makes the agent leak other advisories | The agent never has access to them. Each duplicate candidate runs in its own model context, which sees no other advisory and returns only confidence and an exact flag. An unpublished advisory only appears when it is an exact duplicate, as its identifier and a link the reporter cannot open. |
 | The agent leaks secrets | The container holds no secret. The model key stays on the runner, `.git/config` is masked and the GitHub token never enters the container. |
 | The agent exfiltrates data over the network | The container sits on an isolated internal network and only knows a private egress sidecar. The model proxy pins the model and rejects remote URLs, remote MCP servers, hosted tools, stored conversations and background calls. |
 | The comment loads a remote image carrying data, or pings people | All model text is escaped: no links, images, HTML, entities or mentions. |
@@ -28,10 +28,12 @@ The agent runs through [harness](https://github.com/alpha-omega-security/harness
 
 The model key never enters the container. A proxy on the runner gives each agent a random token revoked when the run ends. It only accepts `POST /v1/messages`, `POST /v1/messages/count_tokens` or `POST /v1/responses`, pins the configured model, caps the request count and tokens, and rejects provider features that can reach another system or persisted provider data.
 
+A Codex access token stays on the runner the same way. Codex only sends it over HTTPS, so the proxy serves a certificate from a CA generated for the process, whose key is dropped once the certificate is signed. The agent gets a fake `at-` token and the proxy only accepts the token check, the workspace configuration and `POST /backend-api/codex/responses`. Codex's ChatGPT features that call other routes (plugins, apps, image generation, analytics) are turned off.
+
 ## Known limits
 
 - The reporter reads the comment. A crafted report can still steer the agent's own text, for example its summary or its policy check.
-- A report can point the duplicate search at a line of its choice and learn whether an unpublished report describes that exact bug, much like a bug bounty platform answering "duplicate". Its identifier remains private.
+- A report can point the duplicate search at a line of its choice and learn whether an unpublished report describes that exact bug, much like a bug bounty platform answering "duplicate". The comment then shows that advisory's identifier, not its content.
 - The report is sent to the model provider. Check its data retention terms against your disclosure policy.
 - Docker Engine 28 or newer is required for an internal network without a host gateway.
 - The advisory comments API is in public preview and may change.

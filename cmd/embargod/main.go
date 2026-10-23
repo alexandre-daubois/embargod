@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alexandre-daubois/embargod/internal/engine"
@@ -15,6 +17,9 @@ import (
 	"github.com/alexandre-daubois/embargod/internal/sandbox"
 	"github.com/alexandre-daubois/embargod/internal/triage"
 )
+
+// defaultCodexTokenModel is Codex's default with a ChatGPT account, which does not serve the API models.
+const defaultCodexTokenModel = "gpt-6.1-sol"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -77,7 +82,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("DAYBREAK: %w", err)
 		}
 	}
-	if daybreak && agent != "codex" {
+	if daybreak && !strings.HasPrefix(agent, "codex") {
 		return errors.New("DAYBREAK requires ENGINE=openai")
 	}
 	reader, err := sandbox.New(agent, model, os.Getenv("LLM_API_KEY"), os.Getenv("RUNNER_IMAGE"))
@@ -105,7 +110,8 @@ func parseSince(v string) (time.Time, error) {
 	return t, nil
 }
 
-// newEngine returns the comparator engine, and the sandboxed agent and model the reader runs with.
+// newEngine returns the comparator engine, and the sandboxed agent and model the reader runs with. A Codex
+// access token cannot call the OpenAI API, so the comparator runs as a sandboxed agent too: no engine.
 func newEngine(name, model, apiKey string) (engine.Engine, string, string, error) {
 	if apiKey == "" {
 		return nil, "", "", errors.New("LLM_API_KEY is required")
@@ -118,6 +124,9 @@ func newEngine(name, model, apiKey string) (engine.Engine, string, string, error
 		}
 		return engine.NewClaude(apiKey, model), "claude", model, nil
 	case "openai":
+		if strings.HasPrefix(apiKey, "at-") {
+			return nil, "codex-token", cmp.Or(model, defaultCodexTokenModel), nil
+		}
 		if model == "" {
 			model = engine.DefaultOpenAIModel
 		}

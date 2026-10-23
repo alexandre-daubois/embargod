@@ -275,7 +275,6 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 	// unpublished advisory came close.
 	dups := r.Duplicates[:0]
 	seen := map[string]bool{}
-	unpublished := false
 	for _, d := range r.Duplicates {
 		a, ok := c.Advisories[d.GHSAID]
 		key := strings.ToLower(d.GHSAID)
@@ -286,12 +285,8 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 		d.URL, d.Published = a.HTMLURL, a.State == "published"
 		// A reporter learns nothing from an exact duplicate of their own bug, a partial match on an
 		// unpublished advisory would reveal another report.
-		if !d.Published {
-			if unpublished || !(d.Exact && d.Confidence == "high") {
-				continue
-			}
-			unpublished = true
-			d.GHSAID, d.URL = "", ""
+		if !d.Published && !(d.Exact && d.Confidence == "high") {
+			continue
 		}
 		dups = append(dups, d)
 	}
@@ -369,11 +364,7 @@ func Render(r Report) string {
 			status = "Published"
 		}
 		// No title: the reporter reads this comment, and other advisories may still be under embargo.
-		name := "Unpublished advisory"
-		if d.Published {
-			name = fmt.Sprintf("[%s](%s)", d.GHSAID, d.URL)
-		}
-		fmt.Fprintf(&b, "| %s | %s | %s |\n", name, status, confidence)
+		fmt.Fprintf(&b, "| [%s](%s) | %s | %s |\n", d.GHSAID, d.URL, status, confidence)
 	}
 	b.WriteString("\n_Unpublished advisories are only listed when they are exact duplicates._\n")
 

@@ -5,6 +5,7 @@ package sandbox
 
 import (
 	"context"
+	"crypto/tls"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,7 @@ import (
 const (
 	maxTurns   = 80
 	outputFile = "report.json"
+	caFile     = "embargod-ca.pem"
 	// srcDir is where the repository is mounted, relative to the workspace.
 	srcDir = "src"
 )
@@ -39,11 +41,14 @@ type backend struct {
 	keyEnv   string
 	// basePath completes the model proxy URL the way the CLI expects its API base URL.
 	basePath string
+	// accessToken signs Codex in with a Codex access token, which it only sends over HTTPS.
+	accessToken bool
 }
 
 var backends = map[string]backend{
-	"claude": {"claude", modelproxy.Anthropic, "ANTHROPIC_API_KEY", modelproxy.PathPrefix},
-	"codex":  {"codex", modelproxy.OpenAI, "CODEX_API_KEY", modelproxy.PathPrefix + "/v1"},
+	"claude":      {"claude", modelproxy.Anthropic, "ANTHROPIC_API_KEY", modelproxy.PathPrefix, false},
+	"codex":       {"codex", modelproxy.OpenAI, "CODEX_API_KEY", modelproxy.PathPrefix + "/v1", false},
+	"codex-token": {"codex", modelproxy.ChatGPT, "CODEX_ACCESS_TOKEN", modelproxy.PathPrefix + "/backend-api/codex", true},
 }
 
 // imagesJSON pins each agent image by digest, so a version of embargod always runs the images built for it.
@@ -70,6 +75,8 @@ type Reader struct {
 	models    *modelproxy.Proxy
 	modelPort string
 	server    *http.Server
+	// ca is the PEM certificate the container trusts for the model proxy, with an access token only.
+	ca []byte
 
 	// Daybreak turns on OpenAI's cyber access program in Codex. The API key's org must be approved for it.
 	Daybreak bool
@@ -83,13 +90,16 @@ type Request struct {
 	Report   string
 	Schema   []byte
 	Validate func(json.RawMessage) error
+	// Offline cuts the agent off from GitHub, leaving it the model only.
+	Offline bool
 }
 
 // New starts the model proxy and the egress proxy for the whole process. Close stops the model proxy.
+// With codex-token, the key is a Codex access token.
 func New(name, model, apiKey, image string) (*Reader, error) {
 	b, ok := backends[name]
 	if !ok {
-		return nil, fmt.Errorf("unknown agent %q, expected claude or codex", name)
+		return nil, fmt.Errorf("unknown agent %q, expected claude, codex or codex-token", name)
 	}
 	h, err := harness.ByName(b.harness)
 	if err != nil {
@@ -100,7 +110,7 @@ func New(name, model, apiKey, image string) (*Reader, error) {
 		return nil, errors.New("a container runtime (docker or podman) is required to run the agent")
 	}
 	if image == "" {
-		image = Images[name]
+		image = Images[b.harness]
 	}
 
 	models, err := modelproxy.New(b.provider, apiKey, model)
@@ -112,6 +122,15 @@ func New(name, model, apiKey, image string) (*Reader, error) {
 		return nil, err
 	}
 	server := &http.Server{Handler: models, ReadHeaderTimeout: 10 * time.Second}
+	var ca []byte
+	if b.accessToken {
+		var cert tls.Certificate
+		if ca, cert, err = newCertificate(egress.HostGatewayAlias); err != nil {
+			ln.Close()
+			return nil, err
+		}
+		ln = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
+	}
 	go func() { _ = server.Serve(ln) }()
 	modelPort := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 
@@ -124,6 +143,7 @@ func New(name, model, apiKey, image string) (*Reader, error) {
 		models:    models,
 		modelPort: modelPort,
 		server:    server,
+		ca:        ca,
 	}, nil
 }
 
@@ -158,11 +178,20 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 
 	token, revoke := r.models.Issue()
 	defer revoke()
-	run, err := startIsolatedRun(ctx, r.runtime, r.image, r.modelPort)
+	hosts := allow
+	if req.Offline {
+		hosts = nil
+	}
+	run, err := startIsolatedRun(ctx, r.runtime, r.image, r.modelPort, r.backend.accessToken, hosts)
 	if err != nil {
 		return nil, err
 	}
 	defer run.Close()
+	origin := "http://" + egress.HostGatewayAlias + ":" + r.modelPort
+	if r.backend.accessToken {
+		origin = "https://" + egress.HostGatewayAlias + ":" + r.modelPort
+		run.env = []string{"CODEX_CA_CERTIFICATE=" + container.StateMount + "/" + caFile, "CODEX_AUTHAPI_BASE_URL=" + origin + modelproxy.PathPrefix + "/auth"}
+	}
 	job := harness.Job{
 		Workspace:    workspace,
 		SrcDir:       srcDir,
@@ -171,9 +200,9 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		Model:        r.model,
 		MaxTurns:     maxTurns,
 		OutputFile:   outputFile,
-		BaseURL:      "http://" + egress.HostGatewayAlias + ":" + r.modelPort + r.backend.basePath,
+		BaseURL:      origin + r.backend.basePath,
 	}
-	if err := r.writeConfig(state, job.BaseURL); err != nil {
+	if err := r.writeConfig(state, origin); err != nil {
 		return nil, err
 	}
 
@@ -209,7 +238,7 @@ func readOutput(path string) ([]byte, error) {
 }
 
 // writeConfig writes the agent CLI configuration into its state directory, which harness points CODEX_HOME at.
-func (r *Reader) writeConfig(state, baseURL string) error {
+func (r *Reader) writeConfig(state, origin string) error {
 	if r.backend.harness != "codex" {
 		if !r.Daybreak {
 			return nil
@@ -217,7 +246,15 @@ func (r *Reader) writeConfig(state, baseURL string) error {
 		return errors.New("daybreak is only available with codex")
 	}
 
-	config := fmt.Sprintf("model_provider = \"embargod\"\ndaybreak = %t\nweb_search = \"disabled\"\n\n[model_providers.embargod]\nname = \"Embargod\"\nbase_url = %q\nenv_key = \"CODEX_API_KEY\"\nwire_api = \"responses\"\nsupports_websockets = false\nsupports_standalone_web_search = false\nrequest_max_retries = 0\nstream_max_retries = 0\n", r.Daybreak, baseURL)
+	auth := "env_key = \"CODEX_API_KEY\""
+	if r.backend.accessToken {
+		auth = "requires_openai_auth = true"
+		if err := os.WriteFile(filepath.Join(state, caFile), r.ca, 0o600); err != nil {
+			return err
+		}
+	}
+	// The ChatGPT features are off: they would call routes the model proxy refuses.
+	config := fmt.Sprintf("model_provider = \"embargod\"\ndaybreak = %t\nweb_search = \"disabled\"\nchatgpt_base_url = %q\n\n[analytics]\nenabled = false\n\n[features]\napps = false\nplugins = false\nremote_plugin = false\nplugin_sharing = false\ngoals = false\nimage_generation = false\nskill_mcp_dependency_install = false\n\n[model_providers.embargod]\nname = \"Embargod\"\nbase_url = %q\n%s\nwire_api = \"responses\"\nsupports_websockets = false\nsupports_standalone_web_search = false\nrequest_max_retries = 0\nstream_max_retries = 0\n", r.Daybreak, origin+modelproxy.PathPrefix+"/backend-api", origin+r.backend.basePath, auth)
 	return os.WriteFile(filepath.Join(state, "config.toml"), []byte(config), 0o600)
 }
 

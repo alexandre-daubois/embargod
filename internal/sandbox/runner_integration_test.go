@@ -36,7 +36,7 @@ func TestIsolatedNetworkReachesTheModelButNotOtherHostServices(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	run, err := startIsolatedRun(ctx, runtime, os.Getenv("EMBARGOD_TEST_IMAGE"), modelPort)
+	run, err := startIsolatedRun(ctx, runtime, os.Getenv("EMBARGOD_TEST_IMAGE"), modelPort, false, allow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +57,10 @@ func TestCodexCanReachTheFilteredModelProxy(t *testing.T) {
 	testAgentCanReachTheFilteredModelProxy(t, "codex", "gpt-5.5", ":codex")
 }
 
+func TestCodexWithAnAccessTokenCanReachTheFilteredModelProxy(t *testing.T) {
+	testAgentCanReachTheFilteredModelProxy(t, "codex-token", "gpt-5.5", ":codex")
+}
+
 func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuffix string) {
 	t.Helper()
 	image := os.Getenv("EMBARGOD_TEST_IMAGE")
@@ -72,6 +76,12 @@ func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuff
 	original := backends[name]
 	changed := original
 	changed.provider.Upstream = "http://127.0.0.1:" + port
+	if changed.provider.Upstreams != nil {
+		changed.provider.Upstreams = map[string]string{}
+		for prefix := range original.provider.Upstreams {
+			changed.provider.Upstreams[prefix] = changed.provider.Upstream
+		}
+	}
 	backends[name] = changed
 	t.Cleanup(func() { backends[name] = original })
 

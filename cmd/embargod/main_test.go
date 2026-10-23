@@ -32,6 +32,12 @@ func TestNewEngine(t *testing.T) {
 			t.Errorf("%q: agent %q, model %q, %v", name, agent, model, err)
 		}
 	}
+	if eng, agent, model, err := newEngine("openai", "", "at-token"); err != nil || eng != nil || agent != "codex-token" || model != defaultCodexTokenModel {
+		t.Errorf("a Codex access token: engine %v, agent %q, model %q, %v", eng, agent, model, err)
+	}
+	if eng, agent, _, _ := newEngine("claude", "", "at-key"); eng == nil || agent != "claude" {
+		t.Errorf("only the openai engine reads a Codex access token, got agent %q", agent)
+	}
 	if _, _, model, _ := newEngine("claude", "claude-sonnet-5-5", "key"); model != "claude-sonnet-5-5" {
 		t.Errorf("an explicit model should be kept, got %q", model)
 	}

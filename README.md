@@ -17,7 +17,7 @@ It informs the maintainers' decision and never makes it.
 ## Quick start
 
 1. Create a GitHub App for your organisation with the "Repository security advisories" permission in read and write, and install it on the project repository only.
-2. In a private repository, store the App's client ID and private key, and an Anthropic or OpenAI API key.
+2. In a private repository, store the App's client ID and private key, and an Anthropic or OpenAI API key, or a [Codex access token](docs/configuration.md#codex-access-token).
 3. Add this workflow to the private repository:
 
 ```yaml

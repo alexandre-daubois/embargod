@@ -137,10 +137,10 @@ func TestVerifyOnlyKeepsExactUnpublishedDuplicates(t *testing.T) {
 	for _, d := range r.Duplicates {
 		kept = append(kept, d.GHSAID)
 	}
-	if !slices.Equal(kept, []string{"GHSA-pub", ""}) {
+	if !slices.Equal(kept, []string{"GHSA-pub", "GHSA-exact", "GHSA-closed"}) {
 		t.Fatalf("kept %v", kept)
 	}
-	if !r.Duplicates[0].Published || r.Duplicates[1].Published || r.Removed != 0 {
+	if !r.Duplicates[0].Published || r.Duplicates[1].Published || r.Duplicates[1].URL != "https://x/exact" || r.Removed != 0 {
 		t.Fatalf("unexpected %+v, removed %d", r.Duplicates, r.Removed)
 	}
 }
@@ -171,7 +171,7 @@ func TestRender(t *testing.T) {
 		"> Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.",
 		"Heap overflow claimed, cc @\u200bsomeone\n",
 		"| Advisory | Status | Confidence |",
-		"| Unpublished advisory | Unpublished | High • Exact duplicate |",
+		"| [GHSA-real](https://x/GHSA-real) | Unpublished | High • Exact duplicate |",
 		"| [GHSA-near](https://x/GHSA-near) | Published | Low |",
 		"_Unpublished advisories are only listed when they are exact duplicates._",
 		"| Issue or PR | Title | Confidence |",

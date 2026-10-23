@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -28,6 +29,14 @@ func setup(t *testing.T, p Provider, status int) (*httptest.Server, *[]upstreamC
 	}))
 	t.Cleanup(up.Close)
 	p.Upstream = up.URL
+	upstreams := map[string]string{}
+	for prefix, raw := range p.Upstreams {
+		u, _ := url.Parse(raw)
+		upstreams[prefix] = up.URL + u.Path
+	}
+	if p.Upstreams != nil {
+		p.Upstreams = upstreams
+	}
 
 	mp, err := New(p, "real-key", "allowed")
 	if err != nil {
@@ -97,6 +106,48 @@ func TestOpenAISwapsTheBearerToken(t *testing.T) {
 	}
 	if !strings.Contains((*calls)[0].body, `"store":false`) || !strings.Contains((*calls)[0].body, `"background":false`) {
 		t.Fatalf("unsafe OpenAI defaults were not overridden: %s", (*calls)[0].body)
+	}
+}
+
+func TestChatGPTSwapsTheAccessTokenOnBothUpstreams(t *testing.T) {
+	srv, calls, token := setup(t, ChatGPT, http.StatusOK)
+	if !strings.HasPrefix(token, "at-embargod-") {
+		t.Fatalf("Codex only reads a token starting with at- as an access token: %q", token)
+	}
+
+	whoami := call(t, srv, http.MethodGet, PathPrefix+"/auth/v1/user-auth-credential/whoami", withKey("Authorization", "Bearer "+token))
+	responses := call(t, srv, http.MethodPost, PathPrefix+"/backend-api/codex/responses", withKey("Authorization", "Bearer "+token))
+
+	if whoami.StatusCode != http.StatusOK || responses.StatusCode != http.StatusOK || len(*calls) != 2 {
+		t.Fatalf("statuses %d and %d, calls %+v", whoami.StatusCode, responses.StatusCode, *calls)
+	}
+	for i, want := range []string{"/api/accounts/v1/user-auth-credential/whoami", "/backend-api/codex/responses"} {
+		if got := (*calls)[i]; got.path != want || got.auth != "Bearer real-key" || got.cookie != "" {
+			t.Errorf("upstream got %+v, want path %s", got, want)
+		}
+	}
+	if body := (*calls)[1].body; !strings.Contains(body, `"store":false`) || strings.Contains(body, "background") || strings.Contains(body, "max_output_tokens") {
+		t.Errorf("the ChatGPT backend only accepts store set to false: %s", body)
+	}
+}
+
+func TestChatGPTRefusesTheOtherBackendRoutes(t *testing.T) {
+	srv, calls, token := setup(t, ChatGPT, http.StatusOK)
+
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/backend-api/codex/models"},
+		{http.MethodGet, "/backend-api/wham/accounts/check"},
+		{http.MethodPost, "/backend-api/ps/mcp"},
+		{http.MethodPost, "/auth/v1/user-auth-credential/whoami"},
+		{http.MethodGet, "/backend-api/codex/responses"},
+		{http.MethodPost, "/v1/responses"},
+	} {
+		if resp := call(t, srv, tc.method, PathPrefix+tc.path, withKey("Authorization", "Bearer "+token)); resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s %s: status %d", tc.method, tc.path, resp.StatusCode)
+		}
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("refused routes reached the upstream: %+v", *calls)
 	}
 }
 
@@ -194,6 +245,24 @@ func TestProviderTokenLimitIsClamped(t *testing.T) {
 	resp := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", `{"model":"allowed","max_output_tokens":16001}`, withKey("Authorization", "Bearer "+token))
 	if resp.StatusCode != http.StatusOK || len(*calls) != 1 || !strings.Contains((*calls)[0].body, `"max_output_tokens":16000`) {
 		t.Fatalf("status %d, calls %+v", resp.StatusCode, *calls)
+	}
+}
+
+func TestAccessTokenChecksDoNotSpendTheModelQuota(t *testing.T) {
+	srv, calls, token := setup(t, ChatGPT, http.StatusOK)
+	whoami := PathPrefix + "/auth/v1/user-auth-credential/whoami"
+	for range maxRequests + 1 {
+		call(t, srv, http.MethodGet, whoami, withKey("Authorization", "Bearer "+token))
+		call(t, srv, http.MethodGet, PathPrefix+"/backend-api/codex/models", withKey("Authorization", "Bearer "+token))
+	}
+	if resp := call(t, srv, http.MethodPost, PathPrefix+"/backend-api/codex/responses", withKey("Authorization", "Bearer "+token)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("model call after token checks: status %d", resp.StatusCode)
+	}
+	if resp := call(t, srv, http.MethodGet, whoami, withKey("Authorization", "Bearer at-embargod-guess")); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("token check with an unknown token: status %d", resp.StatusCode)
+	}
+	if len(*calls) != maxRequests+2 {
+		t.Fatalf("upstream calls = %d", len(*calls))
 	}
 }
 

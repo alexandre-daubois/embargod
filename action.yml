@@ -16,10 +16,10 @@ inputs:
     description: LLM provider, `claude` or `openai`.
     default: claude
   model:
-    description: Model id, defaults to claude-opus-5-5 or gpt-5.5 depending on the engine.
+    description: Model id, defaults to claude-opus-5-5, gpt-5.5, or gpt-6.1-sol with a Codex access token.
     required: false
   api-key:
-    description: API key of the LLM provider.
+    description: API key of the LLM provider. With `engine: openai`, a Codex access token (`at-...`) works too.
     required: true
   bot-login:
     description: Login the comments are posted as, required with a GitHub App token, e.g. `my-app[bot]`. Found through the token otherwise.
