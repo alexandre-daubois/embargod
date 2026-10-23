@@ -1,17 +1,21 @@
-// Package tools defines the read-only tools the model can call while triaging.
+// Package tools defines the read-only tools the models can call while triaging.
+//
+// The reader sees the untrusted report and only gets Code and Issues, which expose public data.
+// The comparator never sees the report and is the only one to get Advisories, which expose embargoed data.
 package tools
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/alexandre-daubois/securibot/internal/github"
 	"github.com/alexandre-daubois/securibot/internal/repo"
 )
 
-// Submit is the tool the model calls with its final report, which ends the run.
-const Submit = "submit_report"
+// Submit is the tool the model calls with its final answer, which ends the run.
+const Submit = "submit"
 
 type Tool struct {
 	Name        string
@@ -21,8 +25,7 @@ type Tool struct {
 	Run         func(ctx context.Context, input json.RawMessage) (string, error)
 }
 
-type GitHub interface {
-	GetAdvisory(ctx context.Context, repo, ghsa string) (github.Advisory, error)
+type IssueSearcher interface {
 	SearchIssues(ctx context.Context, repo, query string) ([]github.Issue, error)
 }
 
@@ -34,64 +37,15 @@ type advisoryBrief struct {
 	CreatedAt string   `json:"created_at"`
 }
 
-// Build returns the investigation tools for one advisory. others lists every other advisory of the repository.
-func Build(gh GitHub, repoName string, r repo.Repo, others []github.Advisory) []Tool {
-	str := func(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
-	integer := func(desc string) map[string]any { return map[string]any{"type": "integer", "description": desc} }
+func str(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
 
+func integer(desc string) map[string]any {
+	return map[string]any{"type": "integer", "description": desc}
+}
+
+// Code returns the tools reading the repository checkout.
+func Code(r repo.Repo) []Tool {
 	return []Tool{
-		{
-			Name:        "list_advisories",
-			Description: "List every other security advisory of the repository, in any state (triage, draft, published, closed), with its summary and CWEs.",
-			Run: func(context.Context, json.RawMessage) (string, error) {
-				briefs := make([]advisoryBrief, 0, len(others))
-				for _, a := range others {
-					briefs = append(briefs, advisoryBrief{a.GHSAID, a.State, a.Summary, a.CWEIDs, a.CreatedAt.Format("2006-01-02")})
-				}
-
-				return marshal(briefs)
-			},
-		},
-		{
-			Name:        "get_advisory",
-			Description: "Get the full description of another security advisory of the repository.",
-			Properties:  map[string]any{"ghsa_id": str("GHSA identifier, e.g. GHSA-xxxx-xxxx-xxxx")},
-			Required:    []string{"ghsa_id"},
-			Run: func(ctx context.Context, input json.RawMessage) (string, error) {
-				in, err := decode[struct {
-					GHSAID string `json:"ghsa_id"`
-				}](input)
-				if err != nil {
-					return "", err
-				}
-				a, err := gh.GetAdvisory(ctx, repoName, in.GHSAID)
-				if err != nil {
-					return "", err
-				}
-
-				return marshal(a)
-			},
-		},
-		{
-			Name:        "search_issues",
-			Description: "Search public issues and pull requests of the repository with GitHub search syntax, e.g. `ext/standard overflow is:pr`.",
-			Properties:  map[string]any{"query": str("GitHub search query, the repository qualifier is added automatically")},
-			Required:    []string{"query"},
-			Run: func(ctx context.Context, input json.RawMessage) (string, error) {
-				in, err := decode[struct {
-					Query string `json:"query"`
-				}](input)
-				if err != nil {
-					return "", err
-				}
-				issues, err := gh.SearchIssues(ctx, repoName, in.Query)
-				if err != nil {
-					return "", err
-				}
-
-				return marshal(issues)
-			},
-		},
 		{
 			Name:        "grep_code",
 			Description: "Search the repository source with an extended regular expression (git grep -E). Returns file:line:content.",
@@ -146,10 +100,78 @@ func Build(gh GitHub, repoName string, r repo.Repo, others []github.Advisory) []
 	}
 }
 
+// Issues returns the tool searching the public issues and pull requests of repoName.
+func Issues(gh IssueSearcher, repoName string) []Tool {
+	return []Tool{{
+		Name:        "search_issues",
+		Description: "Search public issues and pull requests of the repository with GitHub search syntax, e.g. `ext/standard overflow is:pr`.",
+		Properties:  map[string]any{"query": str("GitHub search query, the repository qualifier is added automatically")},
+		Required:    []string{"query"},
+		Run: func(ctx context.Context, input json.RawMessage) (string, error) {
+			in, err := decode[struct {
+				Query string `json:"query"`
+			}](input)
+			if err != nil {
+				return "", err
+			}
+			issues, err := gh.SearchIssues(ctx, repoName, in.Query)
+			if err != nil {
+				return "", err
+			}
+
+			return marshal(issues)
+		},
+	}}
+}
+
+// Advisories returns the tools reading the other advisories, served from others only so the
+// advisory being triaged, whose text is untrusted, can never be fetched.
+func Advisories(others []github.Advisory) []Tool {
+	byID := make(map[string]github.Advisory, len(others))
+	for _, a := range others {
+		byID[a.GHSAID] = a
+	}
+
+	return []Tool{
+		{
+			Name:        "list_advisories",
+			Description: "List the other security advisories of the repository, in any state (triage, draft, published, closed), with their summary and CWEs.",
+			Run: func(context.Context, json.RawMessage) (string, error) {
+				briefs := make([]advisoryBrief, 0, len(others))
+				for _, a := range others {
+					briefs = append(briefs, advisoryBrief{a.GHSAID, a.State, a.Summary, a.CWEIDs, a.CreatedAt.Format("2006-01-02")})
+				}
+
+				return marshal(briefs)
+			},
+		},
+		{
+			Name:        "get_advisory",
+			Description: "Get the full description of one of the other advisories.",
+			Properties:  map[string]any{"ghsa_id": str("GHSA identifier, e.g. GHSA-xxxx-xxxx-xxxx")},
+			Required:    []string{"ghsa_id"},
+			Run: func(_ context.Context, input json.RawMessage) (string, error) {
+				in, err := decode[struct {
+					GHSAID string `json:"ghsa_id"`
+				}](input)
+				if err != nil {
+					return "", err
+				}
+				a, ok := byID[in.GHSAID]
+				if !ok {
+					return "", errors.New("unknown advisory, use list_advisories")
+				}
+
+				return marshal(a)
+			},
+		},
+	}
+}
+
 // Call runs the named tool. Failures are returned as text for the model, with isError set.
 func Call(ctx context.Context, ts []Tool, name string, input json.RawMessage) (string, bool) {
 	for _, t := range ts {
-		if t.Name != name {
+		if t.Name != name || t.Run == nil {
 			continue
 		}
 		out, err := t.Run(ctx, input)

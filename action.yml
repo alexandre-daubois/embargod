@@ -30,9 +30,6 @@ inputs:
   path:
     description: Path of the repository checkout, relative to the workspace.
     default: .
-  dry-run:
-    description: Write the comments to the job summary instead of posting them.
-    default: "false"
 
 runs:
   using: docker
@@ -46,4 +43,3 @@ runs:
     GH_TOKEN: ${{ inputs.github-token }}
     REPOSITORY: ${{ inputs.repository }}
     REPO_PATH: ${{ inputs.path }}
-    DRY_RUN: ${{ inputs.dry-run }}

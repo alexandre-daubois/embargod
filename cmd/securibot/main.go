@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strconv"
 	"time"
 
 	"github.com/alexandre-daubois/securibot/internal/engine"
@@ -41,34 +40,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Repo:     os.Getenv("REPOSITORY"),
 		Advisory: os.Getenv("ADVISORY"),
 		RepoPath: os.Getenv("REPO_PATH"),
-		Output:   os.Stdout,
 	}
 	if cfg.Repo == "" {
 		cfg.Repo = os.Getenv("GITHUB_REPOSITORY")
 	}
 	if cfg.RepoPath == "" {
 		cfg.RepoPath = "."
-	}
-
-	if v := os.Getenv("DRY_RUN"); v != "" {
-		dry, err := strconv.ParseBool(v)
-		if err != nil {
-			return fmt.Errorf("DRY_RUN: %w", err)
-		}
-		cfg.DryRun = dry
-	}
-	path := os.Getenv("GITHUB_STEP_SUMMARY")
-	if cfg.DryRun && path == "" && os.Getenv("GITHUB_ACTIONS") == "true" {
-		return errors.New("DRY_RUN needs GITHUB_STEP_SUMMARY, comments are never written to the run log")
-	}
-	if cfg.DryRun && path != "" {
-		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		// Never the run log, see "Run it from a private repository" in the README.
-		cfg.Output = f
 	}
 
 	since, err := parseSince(os.Getenv("SINCE"))

@@ -114,8 +114,35 @@ func TestErrors(t *testing.T) {
 func TestNetworkErrorsDoNotLeakTheURL(t *testing.T) {
 	c := &Client{BaseURL: "http://127.0.0.1:1", Token: "tok", HTTP: http.DefaultClient}
 
-	_, err := c.GetAdvisory(context.Background(), "o/r", "GHSA-secret-id")
+	_, err := c.ListComments(context.Background(), "o/r", "GHSA-secret-id")
 	if err == nil || strings.Contains(err.Error(), "GHSA-secret-id") {
 		t.Fatalf("want an error without the advisory, got %v", err)
+	}
+}
+
+func TestPaginationStaysOnTheAPIHost(t *testing.T) {
+	var calls int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Link", `<https://evil.example/steal?after=x>; rel="next"`)
+		fmt.Fprint(w, `[{"ghsa_id":"GHSA-1"}]`)
+	})
+
+	got, err := c.ListAdvisories(context.Background(), "o/r", "")
+	if err != nil || len(got) != 1 || calls != 1 {
+		t.Fatalf("got %v, %v after %d calls", got, err, calls)
+	}
+}
+
+func TestLogin(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/user" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		fmt.Fprint(w, `{"login":"securibot-bot"}`)
+	})
+
+	if got, err := c.Login(context.Background()); err != nil || got != "securibot-bot" {
+		t.Fatalf("got %q, %v", got, err)
 	}
 }

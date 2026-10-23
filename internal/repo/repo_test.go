@@ -61,14 +61,38 @@ func TestReadFileRefusesEscapes(t *testing.T) {
 	}
 }
 
+func TestReadFileOnlyReadsTrackedFiles(t *testing.T) {
+	r := newRepo(t)
+	if err := os.WriteFile(filepath.Join(r.Dir, "untracked.txt"), []byte("token"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".git/config", filepath.Join(r.Dir, "config-link")); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", r.Dir, "add", "config-link").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+
+	for _, path := range []string{".git/config", ".git/HEAD", "untracked.txt", "config-link", ":(glob)**/a.c", "ext"} {
+		if got, err := r.ReadFile(path, 0, 0); err == nil {
+			t.Errorf("%s: expected an error, got %q", path, got)
+		}
+	}
+}
+
 func TestExists(t *testing.T) {
 	r := newRepo(t)
 
 	if !r.Exists("ext/a.c") {
 		t.Error("ext/a.c should exist")
 	}
-	if r.Exists("ext/missing.c") || r.Exists("../") {
-		t.Error("missing or escaping paths should not exist")
+	if !r.Exists("ext") {
+		t.Error("ext holds tracked files")
+	}
+	for _, path := range []string{"ext/missing.c", "../", ".git/config", "", ":(glob)**"} {
+		if r.Exists(path) {
+			t.Errorf("%q should not exist", path)
+		}
 	}
 }
 

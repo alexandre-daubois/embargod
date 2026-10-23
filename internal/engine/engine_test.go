@@ -54,7 +54,7 @@ func TestClaudeRunsToolsUntilSubmit(t *testing.T) {
 	srv, requests := scripted(t,
 		claudeMessage("tool_use", `{"type":"tool_use","id":"tu1","name":"lookup","input":{"q":"x"}}`),
 		claudeMessage("end_turn", `{"type":"text","text":"Done."}`),
-		claudeMessage("tool_use", `{"type":"tool_use","id":"tu2","name":"submit_report","input":{"summary":"ok"}}`),
+		claudeMessage("tool_use", `{"type":"tool_use","id":"tu2","name":"submit","input":{"summary":"ok"}}`),
 	)
 	var calls []string
 
@@ -71,7 +71,7 @@ func TestClaudeRunsToolsUntilSubmit(t *testing.T) {
 		t.Fatalf("tool calls = %v", calls)
 	}
 	first, second, third := (*requests)[0], (*requests)[1], (*requests)[2]
-	for _, want := range []string{"server-side-fallback-2026-07-01", `"fallbacks":"default"`, `"effort":"high"`, `"name":"submit_report"`} {
+	for _, want := range []string{"server-side-fallback-2026-07-01", `"fallbacks":"default"`, `"effort":"high"`, `"name":"submit"`} {
 		if !strings.Contains(first, want) {
 			t.Errorf("first request misses %s: %s", want, first)
 		}
@@ -137,7 +137,7 @@ func TestOpenAIRunsToolsUntilSubmit(t *testing.T) {
 	srv, requests := scripted(t,
 		openaiCompletion(`{"role":"assistant","content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"lookup","arguments":"{\"q\":\"x\"}"}}]}`),
 		openaiCompletion(`{"role":"assistant","content":"Done."}`),
-		openaiCompletion(`{"role":"assistant","content":null,"tool_calls":[{"id":"call2","type":"function","function":{"name":"submit_report","arguments":"{\"summary\":\"ok\"}"}}]}`),
+		openaiCompletion(`{"role":"assistant","content":null,"tool_calls":[{"id":"call2","type":"function","function":{"name":"submit","arguments":"{\"summary\":\"ok\"}"}}]}`),
 	)
 	var calls []string
 

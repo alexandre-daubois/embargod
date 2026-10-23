@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -61,6 +62,9 @@ type Issue struct {
 type Comment struct {
 	ID   int64  `json:"id"`
 	Body string `json:"body"`
+	User struct {
+		Login string `json:"login"`
+	} `json:"user"`
 }
 
 type Client struct {
@@ -70,7 +74,17 @@ type Client struct {
 }
 
 func New(token string) *Client {
-	return &Client{BaseURL: "https://api.github.com", Token: token, HTTP: http.DefaultClient}
+	return &Client{BaseURL: "https://api.github.com", Token: token, HTTP: &http.Client{Timeout: time.Minute}}
+}
+
+// Login returns the login of the account owning the token.
+func (c *Client) Login(ctx context.Context) (string, error) {
+	var user struct {
+		Login string `json:"login"`
+	}
+	_, err := c.do(ctx, http.MethodGet, c.BaseURL+"/user", nil, &user)
+
+	return user.Login, err
 }
 
 // ListAdvisories returns the repository advisories, all states when state is empty.
@@ -81,13 +95,6 @@ func (c *Client) ListAdvisories(ctx context.Context, repo, state string) ([]Advi
 	}
 
 	return list[Advisory](ctx, c, fmt.Sprintf("%s/repos/%s/security-advisories?%s", c.BaseURL, repo, q.Encode()))
-}
-
-func (c *Client) GetAdvisory(ctx context.Context, repo, ghsa string) (Advisory, error) {
-	var a Advisory
-	_, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/repos/%s/security-advisories/%s", c.BaseURL, repo, url.PathEscape(ghsa)), nil, &a)
-
-	return a, err
 }
 
 // ListComments relies on the advisory comments API, in public preview since 2026-10-02.
@@ -130,7 +137,8 @@ func list[T any](ctx context.Context, c *Client, next string) ([]T, error) {
 		}
 		all = append(all, page...)
 		next = ""
-		if m := nextLink.FindStringSubmatch(resp.Header.Get("Link")); m != nil {
+		// The token goes with every request, so pagination never leaves the API host.
+		if m := nextLink.FindStringSubmatch(resp.Header.Get("Link")); m != nil && strings.HasPrefix(m[1], c.BaseURL+"/") {
 			next = m[1]
 		}
 	}

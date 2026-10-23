@@ -20,14 +20,24 @@ type Repo struct {
 	Dir string
 }
 
-// ReadFile returns numbered lines of a file. os.Root refuses paths and symlinks escaping Dir.
+var errNotTracked = errors.New("not a file tracked by git")
+
+// ReadFile returns numbered lines of a tracked file.
 func (r Repo) ReadFile(path string, start, end int) (string, error) {
+	if !r.tracked(path) {
+		return "", errNotTracked
+	}
+
 	root, err := os.OpenRoot(r.Dir)
 	if err != nil {
 		return "", err
 	}
 	defer root.Close()
 
+	// A tracked symlink could point inside .git, where actions/checkout may persist a token.
+	if info, err := root.Lstat(path); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		return "", errNotTracked
+	}
 	data, err := root.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -50,16 +60,19 @@ func (r Repo) ReadFile(path string, start, end int) (string, error) {
 	return b.String(), sc.Err()
 }
 
+// Exists reports whether path is a tracked file or a directory holding tracked files.
 func (r Repo) Exists(path string) bool {
-	root, err := os.OpenRoot(r.Dir)
-	if err != nil {
+	return r.tracked(path)
+}
+
+// tracked keeps the model on the repository content: untracked files include .git and whatever other steps wrote.
+func (r Repo) tracked(path string) bool {
+	if path == "" {
 		return false
 	}
-	defer root.Close()
+	out, err := r.git("ls-files", "--", path)
 
-	_, err = root.Stat(path)
-
-	return err == nil
+	return err == nil && out != ""
 }
 
 // Grep runs an extended regexp search over tracked files, path narrows it when set.
@@ -108,7 +121,8 @@ func (r Repo) Log(path, grep string) (string, error) {
 }
 
 func (r Repo) git(args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", r.Dir}, args...)...)
+	// Literal pathspecs stop paths like ":(glob)**" from being read as patterns.
+	cmd := exec.Command("git", append([]string{"-C", r.Dir, "--literal-pathspecs"}, args...)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 

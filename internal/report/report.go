@@ -23,21 +23,39 @@ var (
 	cvss4 = regexp.MustCompile(`^CVSS:4\.0/AV:[NALP]/AC:[LH]/AT:[NP]/PR:[NLH]/UI:[NPA]/VC:[HLN]/VI:[HLN]/VA:[HLN]/SC:[HLN]/SI:[HLN]/SA:[HLN]$`)
 
 	confidences = []string{"low", "medium", "high"}
+
+	cluePath   = regexp.MustCompile(`^[A-Za-z0-9_./-]{1,200}$`)
+	clueSymbol = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,100}$`)
 )
+
+const maxClues = 10
 
 type Report struct {
 	Summary          string          `json:"summary"`
-	Duplicates       []Duplicate     `json:"duplicates"`
+	Affected         []Location      `json:"affected"`
 	Related          []Related       `json:"related"`
 	CodeReferences   []CodeReference `json:"code_references"`
 	PolicyExclusions []PolicyPoint   `json:"policy_exclusions"`
 	CWE              []CWE           `json:"cwe"`
 	CVSS             CVSS            `json:"cvss"`
 
+	// Duplicates come from the comparator, never from the reader.
+	Duplicates []Duplicate `json:"-"`
 	// Policy is the path of the repository security policy, empty when there is none.
 	Policy string `json:"-"`
 	// Removed counts the model claims dropped because they could not be verified.
 	Removed int `json:"-"`
+}
+
+type Location struct {
+	Path   string `json:"path"`
+	Symbol string `json:"symbol"`
+}
+
+// Comparison is everything the comparator learns about the report being triaged.
+type Comparison struct {
+	Locations []Location `json:"locations"`
+	CWE       []string   `json:"cwe"`
 }
 
 type Duplicate struct {
@@ -76,22 +94,23 @@ type CVSS struct {
 	Reason string `json:"reason"`
 }
 
-// Properties is the JSON schema of the report, used as the submit tool input.
-func Properties() (map[string]any, []string) {
-	str := func(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
-	confidence := map[string]any{"type": "string", "enum": confidences, "description": "How sure you are, after comparing the code"}
-	list := func(desc string, props map[string]any) map[string]any {
-		return map[string]any{"type": "array", "description": desc, "items": map[string]any{
-			"type": "object", "properties": props, "required": slices.Sorted(maps.Keys(props)), "additionalProperties": false,
-		}}
-	}
+func str(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
 
+var confidence = map[string]any{"type": "string", "enum": confidences, "description": "How sure you are, after comparing the code"}
+
+func list(desc string, props map[string]any) map[string]any {
+	return map[string]any{"type": "array", "description": desc, "items": map[string]any{
+		"type": "object", "properties": props, "required": slices.Sorted(maps.Keys(props)), "additionalProperties": false,
+	}}
+}
+
+// ReaderProperties is the JSON schema of what the reader, which sees the report, submits.
+func ReaderProperties() (map[string]any, []string) {
 	return map[string]any{
 		"summary": str("One short sentence, 20 words at most: what the report claims and how credible it looks."),
-		"duplicates": list("Other advisories of this repository describing the same bug. Empty when none.", map[string]any{
-			"ghsa_id":    str("GHSA identifier of the other advisory"),
-			"confidence": confidence,
-			"exact":      map[string]any{"type": "boolean", "description": "True only when both reports describe the very same bug: same root cause in the same code path, so one fix closes both"},
+		"affected": list("Where the bug actually lives, after reading the code: at most 10 locations, used to look for duplicates.", map[string]any{
+			"path":   str("File path relative to the repository root"),
+			"symbol": str("C function, macro or variable name, empty when unknown"),
 		}),
 		"related": list("Public issues or pull requests of this repository already fixing or hardening the same code. Empty when none.", map[string]any{
 			"number":     map[string]any{"type": "integer", "description": "Issue or pull request number"},
@@ -113,7 +132,41 @@ func Properties() (map[string]any, []string) {
 			"vector": str("CVSS 4.0 base vector, e.g. CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"),
 			"reason": str("Short justification of the metrics that drive the score"),
 		}},
-	}, []string{"summary", "duplicates", "related", "code_references", "policy_exclusions", "cwe", "cvss"}
+	}, []string{"summary", "affected", "related", "code_references", "policy_exclusions", "cwe", "cvss"}
+}
+
+// ComparatorProperties is the JSON schema of what the comparator submits. It holds no free text,
+// so the comparator cannot copy anything from the embargoed advisories it reads.
+func ComparatorProperties() (map[string]any, []string) {
+	return map[string]any{
+		"duplicates": list("Other advisories describing the same bug as the given locations. Empty when none.", map[string]any{
+			"ghsa_id":    str("GHSA identifier of the other advisory"),
+			"confidence": confidence,
+			"exact":      map[string]any{"type": "boolean", "description": "True only when the other advisory is the very same bug: same root cause in the same code path, so one fix closes both"},
+		}),
+	}, []string{"duplicates"}
+}
+
+// Clues keeps the affected locations that are plain paths and C identifiers, which leaves no room
+// for instructions to travel from the report to the comparator. CWE identifiers are already validated.
+func Clues(r Report) Comparison {
+	var c Comparison
+	for _, l := range r.Affected {
+		if len(c.Locations) == maxClues {
+			break
+		}
+		if !cluePath.MatchString(l.Path) || (l.Symbol != "" && !clueSymbol.MatchString(l.Symbol)) || slices.Contains(c.Locations, l) {
+			continue
+		}
+		c.Locations = append(c.Locations, l)
+	}
+	for _, w := range r.CWE {
+		if cweID.MatchString(w.ID) && !slices.Contains(c.CWE, w.ID) {
+			c.CWE = append(c.CWE, w.ID)
+		}
+	}
+
+	return c
 }
 
 type IssueGetter interface {
@@ -195,7 +248,7 @@ func Render(r Report) string {
 	var b strings.Builder
 	b.WriteString(Marker + "\n### Automated triage\n\n")
 	b.WriteString("> Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.\n\n")
-	b.WriteString(inline(r.Summary) + "\n")
+	b.WriteString(text(r.Summary) + "\n")
 
 	b.WriteString("\n#### Possible duplicates\n\n")
 	if len(r.Duplicates) == 0 {
@@ -223,21 +276,21 @@ func Render(r Report) string {
 		if rel.PullRequest {
 			kind = "PR"
 		}
-		fmt.Fprintf(&b, "| [%s #%d](%s) | %s | %s |\n", kind, rel.Number, rel.URL, cell(rel.Title), label(rel.Confidence))
+		fmt.Fprintf(&b, "| [%s #%d](%s) | %s | %s |\n", kind, rel.Number, rel.URL, text(rel.Title), label(rel.Confidence))
 	}
 
 	if len(r.CodeReferences) > 0 {
 		b.WriteString("\n#### Code cited by the report\n\n| Reference | Found in the repository |\n|---|---|\n")
 		for _, ref := range r.CodeReferences {
-			name := "`" + inline(ref.Path) + "`"
+			name := code(ref.Path)
 			if ref.Symbol != "" {
-				name += " `" + inline(ref.Symbol) + "`"
+				name += " " + code(ref.Symbol)
 			}
 			found := "no"
 			if ref.Found {
 				found = "yes"
 			}
-			fmt.Fprintf(&b, "| %s | %s |\n", strings.ReplaceAll(name, "|", `\|`), found)
+			fmt.Fprintf(&b, "| %s | %s |\n", name, found)
 		}
 	}
 
@@ -247,16 +300,16 @@ func Render(r Report) string {
 			b.WriteString("Nothing in the policy seems to exclude this report.\n")
 		}
 		for _, p := range r.PolicyExclusions {
-			fmt.Fprintf(&b, "- %s: %s\n", inline(p.Point), inline(p.Reason))
+			fmt.Fprintf(&b, "- %s: %s\n", text(p.Point), text(p.Reason))
 		}
 	}
 
 	b.WriteString("\n#### Weakness and severity\n\n")
 	for _, w := range r.CWE {
-		fmt.Fprintf(&b, "- %s: %s\n", w.ID, inline(w.Reason))
+		fmt.Fprintf(&b, "- %s: %s\n", w.ID, text(w.Reason))
 	}
 	if r.CVSS.Vector != "" {
-		fmt.Fprintf(&b, "- [`%s`](https://www.first.org/cvss/calculator/4.0#%s): %s\n", r.CVSS.Vector, r.CVSS.Vector, inline(r.CVSS.Reason))
+		fmt.Fprintf(&b, "- [`%s`](https://www.first.org/cvss/calculator/4.0#%s): %s\n", r.CVSS.Vector, r.CVSS.Vector, text(r.CVSS.Reason))
 	}
 	if len(r.CWE) == 0 && r.CVSS.Vector == "" {
 		b.WriteString("No estimate.\n")
@@ -277,11 +330,19 @@ func label(confidence string) string {
 	return strings.ToUpper(confidence[:1]) + confidence[1:]
 }
 
-// inline flattens model output on one line and stops it from pinging people: a zero-width space after @ breaks GitHub mentions.
-func inline(s string) string {
-	return strings.Join(strings.Fields(strings.ReplaceAll(s, "@", "@​")), " ")
+// escaper makes model and GitHub text inert: no links, images, HTML, headings or table breaks, so an
+// injected report cannot load a remote image carrying data, and a zero-width space after @ breaks mentions.
+var escaper = strings.NewReplacer(
+	`\`, `\\`, "`", "\\`", "*", `\*`, "_", `\_`, "[", `\[`, "]", `\]`, "(", `\(`, ")", `\)`,
+	"<", `\<`, ">", `\>`, "!", `\!`, "#", `\#`, "|", `\|`, "~", `\~`, "@", "@\u200b",
+)
+
+// text flattens untrusted text on one line and escapes it.
+func text(s string) string {
+	return escaper.Replace(strings.Join(strings.Fields(s), " "))
 }
 
-func cell(s string) string {
-	return strings.ReplaceAll(inline(s), "|", `\|`)
+// code renders untrusted text inside a code span, which cannot hold a backtick.
+func code(s string) string {
+	return "`" + strings.NewReplacer("`", "'", "|", `\|`).Replace(strings.Join(strings.Fields(s), " ")) + "`"
 }

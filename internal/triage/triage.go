@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -27,9 +26,10 @@ const ProfilePath = ".github/securibot.md"
 var errInvalidReport = errors.New("the model submitted an invalid report")
 
 type GitHub interface {
-	tools.GitHub
+	tools.IssueSearcher
 	report.IssueGetter
 	ListAdvisories(ctx context.Context, repo, state string) ([]github.Advisory, error)
+	Login(ctx context.Context) (string, error)
 	ListComments(ctx context.Context, repo, ghsa string) ([]github.Comment, error)
 	PostComment(ctx context.Context, repo, ghsa, body string) error
 }
@@ -40,14 +40,16 @@ type Config struct {
 	Since time.Time
 	// Advisory targets a single advisory and bypasses Since.
 	Advisory string
-	DryRun   bool
 	RepoPath string
-	// Output receives the comments in dry-run mode.
-	Output io.Writer
 }
 
 // Run never logs report content, GHSA identifiers nor raw errors: logs of public repositories are public.
 func Run(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, log *slog.Logger) error {
+	login, err := gh.Login(ctx)
+	if err != nil {
+		return errors.New("identifying the token owner: " + describe(err))
+	}
+
 	all, err := gh.ListAdvisories(ctx, cfg.Repo, "")
 	if err != nil {
 		return errors.New("listing advisories: " + describe(err))
@@ -65,7 +67,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, log *slo
 			failed++
 			continue
 		}
-		if commented(comments) {
+		if commented(comments, login) {
 			skipped++
 			continue
 		}
@@ -119,9 +121,10 @@ func selected(cfg Config, a github.Advisory) bool {
 	return a.State == "triage" && a.CreatedAt.After(cfg.Since)
 }
 
-func commented(comments []github.Comment) bool {
+// commented only trusts the marker in comments of the token owner, a reporter could post it to skip the triage.
+func commented(comments []github.Comment, login string) bool {
 	for _, c := range comments {
-		if strings.Contains(c.Body, report.Marker) {
+		if c.User.Login == login && strings.Contains(c.Body, report.Marker) {
 			return true
 		}
 	}
@@ -129,6 +132,10 @@ func commented(comments []github.Comment) bool {
 	return false
 }
 
+// triage runs two models so that no context holds both the untrusted report and the embargoed
+// advisories: the reader sees the report with public tools only, the comparator sees the other
+// advisories but only gets validated code locations from the reader and can only answer with
+// GHSA identifiers and enums.
 func triage(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, a github.Advisory, all []github.Advisory) error {
 	code := repo.Repo{Dir: cfg.RepoPath}
 	others := make([]github.Advisory, 0, len(all))
@@ -142,27 +149,35 @@ func triage(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, a git
 	}
 	policy := securityPolicy(code)
 
-	properties, required := report.Properties()
-	ts := append(tools.Build(gh, cfg.Repo, code, others), tools.Tool{
-		Name:        tools.Submit,
-		Description: "Submit the final triage report. Call it exactly once, when the investigation is done.",
-		Properties:  properties,
-		Required:    required,
-	})
-
 	system, err := systemPrompt(cfg.RepoPath)
 	if err != nil {
 		return err
 	}
-
-	raw, err := eng.Run(ctx, system, prompt(cfg.Repo, a, policy), ts)
+	properties, required := report.ReaderProperties()
+	readerTools := append(append(tools.Code(code), tools.Issues(gh, cfg.Repo)...), submit("Submit the triage report", properties, required))
+	raw, err := eng.Run(ctx, system, readerPrompt(cfg.Repo, a, policy), readerTools)
 	if err != nil {
 		return err
 	}
-
 	r := report.Report{Policy: policy}
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return errInvalidReport
+	}
+
+	if clues := report.Clues(r); len(others) > 0 && len(clues.Locations) > 0 {
+		properties, required := report.ComparatorProperties()
+		comparatorTools := append(append(tools.Code(code), tools.Advisories(others)...), submit("Submit the duplicates", properties, required))
+		raw, err := eng.Run(ctx, skill.Compare, comparatorPrompt(clues), comparatorTools)
+		if err != nil {
+			return err
+		}
+		var c struct {
+			Duplicates []report.Duplicate `json:"duplicates"`
+		}
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return errInvalidReport
+		}
+		r.Duplicates = c.Duplicates
 	}
 
 	checker := report.Checker{Repo: cfg.Repo, Issues: gh, Code: code, Advisories: byID}
@@ -170,14 +185,16 @@ func triage(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, a git
 		return fmt.Errorf("verifying the report: %w", err)
 	}
 
-	body := report.Render(r)
-	if cfg.DryRun {
-		_, err := fmt.Fprintf(cfg.Output, "## %s\n\n%s\n", a.GHSAID, body)
+	return gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Render(r))
+}
 
-		return err
+func submit(description string, properties map[string]any, required []string) tools.Tool {
+	return tools.Tool{
+		Name:        tools.Submit,
+		Description: description + ". Call it exactly once, when the investigation is done.",
+		Properties:  properties,
+		Required:    required,
 	}
-
-	return gh.PostComment(ctx, cfg.Repo, a.GHSAID, body)
 }
 
 func systemPrompt(repoPath string) (string, error) {
@@ -203,7 +220,7 @@ func securityPolicy(code repo.Repo) string {
 	return ""
 }
 
-func prompt(repoName string, a github.Advisory, policy string) string {
+func readerPrompt(repoName string, a github.Advisory, policy string) string {
 	policyHint := "The repository has no security policy file, leave policy_exclusions empty."
 	if policy != "" {
 		policyHint = fmt.Sprintf("The repository security policy is in %s. Read it and list the points that may exclude this report.", policy)
@@ -211,11 +228,21 @@ func prompt(repoName string, a github.Advisory, policy string) string {
 
 	return fmt.Sprintf(`Triage the security report below, filed on %s as %s.
 
-Use the tools to investigate the repository, its other advisories, issues and pull requests. %s When you are done, call %s with your findings.
+Use the tools to investigate the repository code, its issues and pull requests. %s When you are done, call %s with your findings.
 
 <report>
 Title: %s
 
 %s
 </report>`, repoName, a.GHSAID, policyHint, tools.Submit, a.Summary, a.Description)
+}
+
+func comparatorPrompt(c report.Comparison) string {
+	clues, _ := json.Marshal(c)
+
+	return fmt.Sprintf(`A new security report was filed on this repository. You will not see it. Here are the code locations where its bug lives and its CWE, as JSON:
+
+%s
+
+Find the other advisories that describe the same bug, then call %s.`, clues, tools.Submit)
 }
