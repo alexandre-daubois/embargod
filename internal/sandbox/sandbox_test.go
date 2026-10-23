@@ -2,19 +2,14 @@ package sandbox
 
 import (
 	"errors"
-	"io"
-	"net"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/alpha-omega-security/harness"
 	"github.com/alpha-omega-security/harness/container"
-	"github.com/alpha-omega-security/harness/egress"
 )
 
 func TestSourceMountsHideGitConfig(t *testing.T) {
@@ -67,41 +62,42 @@ func TestErrorHidesTheAgentOutput(t *testing.T) {
 	}
 }
 
-// The host proxy lets the agent reach the model proxy port on the host gateway, and nothing else on the host or off the allowlist.
-func TestHostProxyReachesTheModelProxyOnly(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+func TestAgentContainerUsesOnlyThePrivateProxyAndLimitsResources(t *testing.T) {
+	h, err := harness.ByName("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
-	model := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "model") })}
-	go func() { _ = model.Serve(ln) }()
-	t.Cleanup(func() { _ = model.Close() })
-	modelPort := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-
-	ep := hostProxy(modelPort)
-	port, err := egress.Start(ep)
-	if err != nil {
-		t.Fatal(err)
-	}
-	proxyURL, err := url.Parse(egress.ProxyURL(ep.Token, "127.0.0.1", port))
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
-
-	for target, want := range map[string]int{
-		"http://" + egress.HostGatewayAlias + ":" + modelPort + "/model-proxy/v1/messages": http.StatusOK,
-		"http://" + egress.HostGatewayAlias + ":1/":                                        http.StatusForbidden,
-		"http://evil.example/": http.StatusForbidden,
-	} {
-		resp, err := client.Get(target)
-		if err != nil {
-			t.Fatal(err)
+	run := &isolatedRun{runtime: container.Runtime{Bin: "docker"}, image: "agent", network: "private", proxyIP: "172.20.0.2"}
+	args := run.agentArgs(h, harness.Job{Workspace: container.WorkMount}, "/host/work", "/host/state", "/host/work/report.json", nil, "ANTHROPIC_API_KEY")
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"host.docker.internal:172.20.0.2", "--network private", "--pids-limit 256", "--memory 2g", "--cpus 2", "src=/host/work,dst=/work,readonly"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("container args miss %q: %s", want, joined)
 		}
-		resp.Body.Close()
-		if resp.StatusCode != want {
-			t.Errorf("%s: status %d, want %d", target, resp.StatusCode, want)
-		}
+	}
+	if strings.Contains(joined, "host.docker.internal:host-gateway") {
+		t.Fatalf("the hostile container can reach the host gateway: %s", joined)
+	}
+}
+
+func TestOnlyDockerCanStartAnIsolatedRun(t *testing.T) {
+	if _, err := startIsolatedRun(t.Context(), container.Runtime{Bin: "podman"}, "agent", "1234"); err == nil {
+		t.Fatal("an unsupported runtime must fail closed")
+	}
+}
+
+func TestReadOutputIsBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.json")
+	for name, size := range map[string]int{"valid": 1 << 20, "too large": 1<<20 + 1} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(path, make([]byte, size), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := readOutput(path)
+			if (err != nil) != (name == "too large") {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 
@@ -119,28 +115,31 @@ func TestBackends(t *testing.T) {
 
 func TestWriteConfig(t *testing.T) {
 	for name, tc := range map[string]struct {
-		backend  string
-		daybreak bool
-		want     string
-		wantErr  bool
+		backend    string
+		daybreak   bool
+		wantConfig bool
+		wantErr    bool
 	}{
-		"codex with daybreak":  {"codex", true, "daybreak = true\n", false},
-		"codex without":        {"codex", false, "", false},
-		"claude without":       {"claude", false, "", false},
-		"claude with daybreak": {"claude", true, "", true},
+		"codex with daybreak":  {"codex", true, true, false},
+		"codex without":        {"codex", false, true, false},
+		"claude without":       {"claude", false, false, false},
+		"claude with daybreak": {"claude", true, false, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			state := t.TempDir()
 			r := &Reader{backend: backends[tc.backend], Daybreak: tc.daybreak}
 
-			err := r.writeConfig(state)
+			err := r.writeConfig(state, "http://proxy/model-proxy/v1")
 
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("error = %v", err)
 			}
 			got, _ := os.ReadFile(filepath.Join(state, "config.toml"))
-			if string(got) != tc.want {
-				t.Fatalf("config.toml = %q, want %q", got, tc.want)
+			if (len(got) > 0) != tc.wantConfig {
+				t.Fatalf("config.toml = %q", got)
+			}
+			if tc.wantConfig && (!strings.Contains(string(got), "model_provider = \"embargod\"") || !strings.Contains(string(got), "supports_websockets = false")) {
+				t.Fatalf("unsafe config.toml = %q", got)
 			}
 		})
 	}

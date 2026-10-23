@@ -43,7 +43,7 @@ func (c *Claude) Run(ctx context.Context, system, prompt string, ts []tools.Tool
 
 	params := anthropic.BetaMessageNewParams{
 		Model:        c.model,
-		MaxTokens:    16000,
+		MaxTokens:    maxOutputTokens,
 		System:       []anthropic.BetaTextBlockParam{{Text: system}},
 		Messages:     []anthropic.BetaMessageParam{anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(prompt))},
 		Tools:        defs,
@@ -56,8 +56,14 @@ func (c *Claude) Run(ctx context.Context, system, prompt string, ts []tools.Tool
 	}
 
 	for range maxTurns {
+		if !takeRequest(ctx) {
+			return nil, ErrNoReport
+		}
 		resp, err := c.client.Beta.Messages.New(ctx, params)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			apiErr := &APIError{Provider: "anthropic"}
 			if sdkErr := (*anthropic.Error)(nil); errors.As(err, &sdkErr) {
 				apiErr.Status = sdkErr.StatusCode

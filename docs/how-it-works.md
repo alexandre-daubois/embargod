@@ -19,7 +19,7 @@ The JSON is decoded strictly: an unknown or mistyped field sends the error back 
 
 ## 3. Duplicate search
 
-A second model compares the report with the other advisories without ever reading it. It only gets the faulty statement, the entry points and the CWE, each filtered against strict patterns (paths, identifiers, numbers). It reads the other advisories and the code, and answers with GHSA identifiers, a confidence level and an exact flag, nothing else.
+Potential candidates are selected without a model when their text contains the filtered location, entry points or CWE, with at most ten comparisons. Each candidate is then checked in its own model context: it gets only the filtered clues and that one advisory, so no hostile report can make it read another one. It answers with a confidence level and an exact flag; embargod supplies the identifier itself.
 
 ## 4. Verification and comment
 
@@ -27,7 +27,7 @@ Before posting, embargod checks every claim against GitHub and the checkout:
 
 | Claim | Check |
 |---|---|
-| Duplicates | Must be an existing advisory. Unpublished ones are only kept when they are exact duplicates with high confidence. |
+| Duplicates | Must be a candidate checked in isolation. Unpublished ones are collapsed to a single result without an identifier. |
 | Issues and pull requests | Must exist. Titles and links come from GitHub, not from the model. |
 | Cited code | Only references named in the report are kept, each marked as found in the repository or not. |
 | CWE and CVSS | Must be well-formed. CWE names come from the MITRE catalogue. |

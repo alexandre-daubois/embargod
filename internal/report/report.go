@@ -36,6 +36,12 @@ var (
 const (
 	maxEntryPoints = 10
 	maxLine        = 1_000_000
+	maxRelated     = 10
+	maxCodeRefs    = 30
+	maxPolicy      = 10
+	maxCWE         = 3
+	maxText        = 2_000
+	maxTotalText   = 12_000
 )
 
 type Report struct {
@@ -120,7 +126,7 @@ func list(desc string, props map[string]any) map[string]any {
 
 // ReaderProperties is the JSON schema of what the reader, which sees the report, submits.
 func ReaderProperties() (map[string]any, []string) {
-	return map[string]any{
+	properties := map[string]any{
 		"summary": str("One short sentence, 20 words at most: what the report claims and how credible it looks. Code identifiers in backticks."),
 		"location": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"path", "symbol", "line"}, "description": "The faulty statement this report is about, after reading the code, used to look for duplicates. Not the same pattern found elsewhere.", "properties": map[string]any{
 			"path":   str("File path relative to the repository root, without backticks, empty when the bug could not be located"),
@@ -148,19 +154,67 @@ func ReaderProperties() (map[string]any, []string) {
 			"vector": str("CVSS 4.0 base vector, e.g. CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"),
 			"reason": str("The metrics that drive the score and why, 20 words at most, code identifiers in backticks"),
 		}},
-	}, []string{"summary", "location", "entry_points", "related", "code_references", "policy_exclusions", "cwe", "cvss"}
+	}
+	properties["entry_points"].(map[string]any)["maxItems"] = maxEntryPoints
+	properties["related"].(map[string]any)["maxItems"] = maxRelated
+	properties["code_references"].(map[string]any)["maxItems"] = maxCodeRefs
+	properties["policy_exclusions"].(map[string]any)["maxItems"] = maxPolicy
+	properties["cwe"].(map[string]any)["maxItems"] = maxCWE
+
+	return properties, []string{"summary", "location", "entry_points", "related", "code_references", "policy_exclusions", "cwe", "cvss"}
 }
 
-// ComparatorProperties is the JSON schema of what the comparator submits. It holds no free text,
-// so the comparator cannot copy anything from the embargoed advisories it reads.
-func ComparatorProperties() (map[string]any, []string) {
-	return map[string]any{
-		"duplicates": list("Other advisories describing the same bug as the given locations. Empty when none.", map[string]any{
-			"ghsa_id":    str("GHSA identifier of the other advisory"),
-			"confidence": confidence,
-			"exact":      map[string]any{"type": "boolean", "description": "True only when the other advisory is the very same bug: same root cause in the same code path, so one fix closes both"},
-		}),
-	}, []string{"duplicates"}
+// ValidateReader bounds every model-controlled collection and string before expensive verification.
+func ValidateReader(r Report) error {
+	if len(r.Summary) > maxText || len(r.Location.Path) > maxText || len(r.Location.Symbol) > maxText || len(r.EntryPoints) > maxEntryPoints || len(r.Related) > maxRelated || len(r.CodeReferences) > maxCodeRefs || len(r.PolicyExclusions) > maxPolicy || len(r.CWE) > maxCWE || len(r.CVSS.Vector) > maxText || len(r.CVSS.Reason) > maxText {
+		return errors.New("the report exceeds its limits")
+	}
+	for _, text := range r.EntryPoints {
+		if len(text) > maxText {
+			return errors.New("the report exceeds its limits")
+		}
+	}
+	for _, item := range r.Related {
+		if item.Number < 1 || item.Number > maxLine || len(item.Confidence) > maxText {
+			return errors.New("the report exceeds its limits")
+		}
+	}
+	for _, item := range r.CodeReferences {
+		if len(item.Path) > maxText || len(item.Symbol) > maxText {
+			return errors.New("the report exceeds its limits")
+		}
+	}
+	for _, item := range r.PolicyExclusions {
+		if len(item.Point) > maxText || len(item.Reason) > maxText {
+			return errors.New("the report exceeds its limits")
+		}
+	}
+	for _, item := range r.CWE {
+		if len(item.ID) > maxText || len(item.Reason) > maxText {
+			return errors.New("the report exceeds its limits")
+		}
+	}
+	total := len(r.Summary) + len(r.Location.Path) + len(r.Location.Symbol) + len(r.CVSS.Vector) + len(r.CVSS.Reason)
+	for _, text := range r.EntryPoints {
+		total += len(text)
+	}
+	for _, item := range r.Related {
+		total += len(item.Confidence)
+	}
+	for _, item := range r.CodeReferences {
+		total += len(item.Path) + len(item.Symbol)
+	}
+	for _, item := range r.PolicyExclusions {
+		total += len(item.Point) + len(item.Reason)
+	}
+	for _, item := range r.CWE {
+		total += len(item.ID) + len(item.Reason)
+	}
+	if total > maxTotalText {
+		return errors.New("the report exceeds its limits")
+	}
+
+	return nil
 }
 
 // Clues keeps the location, entry points and CWEs made of plain paths, identifiers and numbers,
@@ -220,16 +274,24 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 	// Dropped duplicates are not counted in Removed: the count would tell the reporter that an
 	// unpublished advisory came close.
 	dups := r.Duplicates[:0]
+	seen := map[string]bool{}
+	unpublished := false
 	for _, d := range r.Duplicates {
 		a, ok := c.Advisories[d.GHSAID]
-		if !ok || !slices.Contains(confidences, d.Confidence) {
+		key := strings.ToLower(d.GHSAID)
+		if !ok || seen[key] || !slices.Contains(confidences, d.Confidence) {
 			continue
 		}
+		seen[key] = true
 		d.URL, d.Published = a.HTMLURL, a.State == "published"
 		// A reporter learns nothing from an exact duplicate of their own bug, a partial match on an
 		// unpublished advisory would reveal another report.
-		if !d.Published && !(d.Exact && d.Confidence == "high") {
-			continue
+		if !d.Published {
+			if unpublished || !(d.Exact && d.Confidence == "high") {
+				continue
+			}
+			unpublished = true
+			d.GHSAID, d.URL = "", ""
 		}
 		dups = append(dups, d)
 	}
@@ -307,7 +369,11 @@ func Render(r Report) string {
 			status = "Published"
 		}
 		// No title: the reporter reads this comment, and other advisories may still be under embargo.
-		fmt.Fprintf(&b, "| [%s](%s) | %s | %s |\n", d.GHSAID, d.URL, status, confidence)
+		name := "Unpublished advisory"
+		if d.Published {
+			name = fmt.Sprintf("[%s](%s)", d.GHSAID, d.URL)
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s |\n", name, status, confidence)
 	}
 	b.WriteString("\n_Unpublished advisories are only listed when they are exact duplicates._\n")
 
@@ -380,6 +446,11 @@ func Render(r Report) string {
 	}
 
 	return b.String()
+}
+
+// Failed prevents a hostile report that never completes from being retried indefinitely.
+func Failed() string {
+	return Marker + "\n### Automated triage\n\nThe automated triage could not complete. A maintainer must review this report manually.\n"
 }
 
 func label(confidence string) string {

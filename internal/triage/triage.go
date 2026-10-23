@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,6 +29,13 @@ import (
 
 // ProfilePath holds project-specific guidance, relative to the repository root.
 const ProfilePath = ".github/embargod.md"
+
+const (
+	maxTriagesPerRun      = 10
+	maxComparisons        = 10
+	maxAdvisoryDuration   = 10 * time.Minute
+	maxComparatorRequests = 64
+)
 
 var errInvalidReport = errors.New("the model submitted an invalid report")
 
@@ -71,28 +79,42 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		return errors.New("listing advisories: " + describe(err))
 	}
 
-	var triaged, skipped, failed int
+	var triaged, skipped, failed, attempted int
 	for _, a := range all {
 		if !selected(cfg, a) {
 			continue
 		}
+		advisoryCtx, cancel := context.WithTimeout(ctx, maxAdvisoryDuration)
 
-		comments, err := gh.ListComments(ctx, cfg.Repo, a.GHSAID)
+		comments, err := gh.ListComments(advisoryCtx, cfg.Repo, a.GHSAID)
 		if err != nil {
+			cancel()
 			log.Error("listing comments failed", "reason", describe(err))
 			failed++
 			continue
 		}
 		if commented(comments, login) {
+			cancel()
 			skipped++
 			continue
 		}
+		if attempted == maxTriagesPerRun {
+			cancel()
+			break
+		}
+		attempted++
+		advisoryCtx = engine.WithRequestLimit(advisoryCtx, maxComparatorRequests)
 
-		if err := triage(ctx, cfg, gh, reader, eng, a, all); err != nil {
+		if err := triage(advisoryCtx, cfg, gh, reader, eng, a, all); err != nil {
+			cancel()
 			log.Error("triage failed", "reason", describe(err))
+			if terminal(err) {
+				_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed())
+			}
 			failed++
 			continue
 		}
+		cancel()
 		triaged++
 	}
 
@@ -102,6 +124,15 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	}
 
 	return nil
+}
+
+func terminal(err error) bool {
+	var (
+		agent   *sandbox.Error
+		refusal *engine.RefusalError
+	)
+
+	return errors.Is(err, engine.ErrNoReport) || errors.Is(err, sandbox.ErrNoReport) || errors.Is(err, errInvalidReport) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &agent) || errors.As(err, &refusal)
 }
 
 // describe turns an error into text that is safe to log, keeping only status codes and known reasons.
@@ -155,8 +186,7 @@ func commented(comments []github.Comment, login string) bool {
 
 // triage runs two models so that no context holds both the untrusted report and the embargoed
 // advisories. The reader sees the report in a sandboxed agent with public data only. The comparator
-// sees the other advisories but only gets validated code locations from the reader, and can only
-// answer with GHSA identifiers and enums.
+// gets one advisory and validated code locations from the reader, and only answers with enums.
 func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory) error {
 	code := repo.Repo{Dir: cfg.RepoPath}
 	others := make([]github.Advisory, 0, len(all))
@@ -185,7 +215,17 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engin
 		Prompt:   readerPrompt(cfg.Repo, a, policies),
 		Report:   "Title: " + a.Summary + "\n\n" + a.Description,
 		Schema:   schema,
-		Validate: strictDecode[report.Report],
+		Validate: func(raw json.RawMessage) error {
+			if err := strictDecode[report.Report](raw); err != nil {
+				return err
+			}
+			var r report.Report
+			if err := json.Unmarshal(raw, &r); err != nil {
+				return err
+			}
+
+			return report.ValidateReader(r)
+		},
 	})
 	if err != nil {
 		return err
@@ -197,17 +237,25 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engin
 	r.KeepCited(a.Summary + "\n" + a.Description)
 
 	if clues := report.Clues(r); len(others) > 0 && clues.Location.Path != "" {
-		properties, required := report.ComparatorProperties()
-		comparatorTools := append(append(tools.Code(code), tools.Advisories(others)...), submit[comparison]("Submit the duplicates", properties, required))
-		raw, err := eng.Run(ctx, skill.Compare, comparatorPrompt(clues), comparatorTools)
-		if err != nil {
-			return err
+		properties := map[string]any{
+			"confidence": map[string]any{"type": "string", "enum": []string{"low", "medium", "high"}},
+			"exact":      map[string]any{"type": "boolean"},
 		}
-		var c comparison
-		if err := json.Unmarshal(raw, &c); err != nil {
-			return errInvalidReport
+		for _, candidate := range comparisonCandidates(others, clues) {
+			comparatorTools := append(tools.Code(code), tools.Advisory(candidate), submit[comparison]("Submit the duplicate decision", properties, []string{"confidence", "exact"}))
+			raw, err := eng.Run(ctx, skill.Compare, comparatorPrompt(clues), comparatorTools)
+			if err != nil {
+				return err
+			}
+			var c comparison
+			if err := strictDecode[comparison](raw); err != nil {
+				return errInvalidReport
+			}
+			if err := json.Unmarshal(raw, &c); err != nil {
+				return errInvalidReport
+			}
+			r.Duplicates = append(r.Duplicates, report.Duplicate{GHSAID: candidate.GHSAID, Confidence: c.Confidence, Exact: c.Exact})
 		}
-		r.Duplicates = c.Duplicates
 	}
 
 	checker := report.Checker{Repo: cfg.Repo, Issues: gh, Code: code, Advisories: byID}
@@ -219,7 +267,41 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engin
 }
 
 type comparison struct {
-	Duplicates []report.Duplicate `json:"duplicates"`
+	Confidence string `json:"confidence"`
+	Exact      bool   `json:"exact"`
+}
+
+func comparisonCandidates(others []github.Advisory, clues report.Comparison) []github.Advisory {
+	needles := []string{clues.Location.Path, path.Base(clues.Location.Path), clues.Location.Symbol}
+	needles = append(needles, clues.EntryPoints...)
+	needles = append(needles, clues.CWE...)
+	type scored struct {
+		advisory github.Advisory
+		score    int
+	}
+	var candidates []scored
+	for _, advisory := range others {
+		haystack := strings.ToLower(advisory.Summary + "\n" + advisory.Description + "\n" + strings.Join(advisory.CWEIDs, " "))
+		var score int
+		for _, needle := range needles {
+			if needle != "" && strings.Contains(haystack, strings.ToLower(needle)) {
+				score++
+			}
+		}
+		if score > 0 {
+			candidates = append(candidates, scored{advisory, score})
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].score > candidates[j].score })
+	if len(candidates) > maxComparisons {
+		candidates = candidates[:maxComparisons]
+	}
+	out := make([]github.Advisory, 0, len(candidates))
+	for _, candidate := range candidates {
+		out = append(out, candidate.advisory)
+	}
+
+	return out
 }
 
 // submit returns the tool ending a run. Its Run decodes the answer into a T, so a malformed answer
@@ -231,9 +313,7 @@ func submit[T any](description string, properties map[string]any, required []str
 		Properties:  properties,
 		Required:    required,
 		Run: func(_ context.Context, input json.RawMessage) (string, error) {
-			var v T
-
-			return "", json.Unmarshal(input, &v)
+			return "", strictDecode[T](input)
 		},
 	}
 }

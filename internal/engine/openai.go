@@ -41,15 +41,22 @@ func (o *OpenAI) Run(ctx context.Context, system, prompt string, ts []tools.Tool
 	}
 
 	params := openai.ChatCompletionNewParams{
-		Model:           o.model,
-		Messages:        []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(system), openai.UserMessage(prompt)},
-		Tools:           defs,
-		ReasoningEffort: shared.ReasoningEffortHigh,
+		Model:               o.model,
+		Messages:            []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(system), openai.UserMessage(prompt)},
+		Tools:               defs,
+		MaxCompletionTokens: openai.Int(maxOutputTokens),
+		ReasoningEffort:     shared.ReasoningEffortHigh,
 	}
 
 	for range maxTurns {
+		if !takeRequest(ctx) {
+			return nil, ErrNoReport
+		}
 		resp, err := o.client.Chat.Completions.New(ctx, params)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			apiErr := &APIError{Provider: "openai"}
 			if sdkErr := (*openai.Error)(nil); errors.As(err, &sdkErr) {
 				apiErr.Status = sdkErr.StatusCode

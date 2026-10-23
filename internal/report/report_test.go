@@ -52,7 +52,7 @@ func checker(t *testing.T) Checker {
 		Repo:       "o/r",
 		Issues:     fakeIssues{12: {Number: 12, Title: "Harden len check", State: "open", HTMLURL: "https://github.com/o/r/pull/12", PullRequest: &struct{}{}}},
 		Code:       codeRepo(t),
-		Advisories: map[string]github.Advisory{"GHSA-real": {GHSAID: "GHSA-real", Summary: "Overflow in real_func", HTMLURL: "https://github.com/o/r/security/advisories/GHSA-real"}},
+		Advisories: map[string]github.Advisory{"GHSA-real": {GHSAID: "GHSA-real", Summary: "Overflow in real_func", State: "published", HTMLURL: "https://github.com/o/r/security/advisories/GHSA-real"}},
 	}
 }
 
@@ -137,7 +137,7 @@ func TestVerifyOnlyKeepsExactUnpublishedDuplicates(t *testing.T) {
 	for _, d := range r.Duplicates {
 		kept = append(kept, d.GHSAID)
 	}
-	if !slices.Equal(kept, []string{"GHSA-pub", "GHSA-exact", "GHSA-closed"}) {
+	if !slices.Equal(kept, []string{"GHSA-pub", ""}) {
 		t.Fatalf("kept %v", kept)
 	}
 	if !r.Duplicates[0].Published || r.Duplicates[1].Published || r.Removed != 0 {
@@ -171,7 +171,7 @@ func TestRender(t *testing.T) {
 		"> Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.",
 		"Heap overflow claimed, cc @\u200bsomeone\n",
 		"| Advisory | Status | Confidence |",
-		"| [GHSA-real](https://x/GHSA-real) | Unpublished | High • Exact duplicate |",
+		"| Unpublished advisory | Unpublished | High • Exact duplicate |",
 		"| [GHSA-near](https://x/GHSA-near) | Published | Low |",
 		"_Unpublished advisories are only listed when they are exact duplicates._",
 		"| Issue or PR | Title | Confidence |",
@@ -373,36 +373,26 @@ func TestReaderSchemaMatchesTheReport(t *testing.T) {
 	}
 }
 
-// The comparator reads embargoed advisories: any free-text field in its answer could carry them out.
-func TestComparatorSchemaHasNoFreeText(t *testing.T) {
-	properties, required := ComparatorProperties()
-	if !slices.Equal(required, []string{"duplicates"}) || len(properties) != 1 {
-		t.Fatalf("unexpected schema %v %v", properties, required)
+func TestValidateReaderBoundsModelOutput(t *testing.T) {
+	if err := ValidateReader(Report{Related: []Related{{Number: 1}}}); err != nil {
+		t.Fatalf("valid report: %v", err)
 	}
-
-	var walk func(name string, schema map[string]any)
-	walk = func(name string, schema map[string]any) {
-		switch schema["type"] {
-		case "string":
-			if _, ok := schema["enum"]; !ok && name != "ghsa_id" {
-				t.Errorf("free-text field %q in the comparator schema", name)
+	for name, r := range map[string]Report{
+		"too many related": {Related: make([]Related, maxRelated+1)},
+		"bad issue":        {Related: []Related{{Number: -1}}},
+		"long text":        {Summary: strings.Repeat("x", maxText+1)},
+		"too much text": {PolicyExclusions: []PolicyPoint{
+			{Point: strings.Repeat("x", maxText), Reason: strings.Repeat("x", maxText)},
+			{Point: strings.Repeat("x", maxText), Reason: strings.Repeat("x", maxText)},
+			{Point: strings.Repeat("x", maxText), Reason: strings.Repeat("x", maxText)},
+			{Point: strings.Repeat("x", maxText), Reason: strings.Repeat("x", maxText)},
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateReader(r); err == nil {
+				t.Fatal("want an error")
 			}
-		case "array":
-			walk(name, schema["items"].(map[string]any))
-		case "object":
-			if schema["additionalProperties"] != false {
-				t.Errorf("object %q must forbid additional properties", name)
-			}
-			for k, v := range schema["properties"].(map[string]any) {
-				walk(k, v.(map[string]any))
-			}
-		}
-	}
-	walk("duplicates", properties["duplicates"].(map[string]any))
-
-	item := properties["duplicates"].(map[string]any)["items"].(map[string]any)
-	if got := slices.Sorted(maps.Keys(item["properties"].(map[string]any))); !slices.Equal(got, jsonFields(t, Duplicate{})) {
-		t.Errorf("duplicate schema %v does not match the Duplicate fields", got)
+		})
 	}
 }
 

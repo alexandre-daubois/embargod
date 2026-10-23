@@ -6,16 +6,13 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/alexandre-daubois/embargod/internal/github"
 	"github.com/alexandre-daubois/embargod/internal/repo"
 )
 
 func build() []Tool {
-	others := []github.Advisory{{GHSAID: "GHSA-1", State: "published", Summary: "UAF", Description: "details", CreatedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)}}
-
-	return append(Code(repo.Repo{Dir: "."}), Advisories(others)...)
+	return append(Code(repo.Repo{Dir: "."}), Advisory(github.Advisory{GHSAID: "GHSA-1", Description: "details"}))
 }
 
 func TestCall(t *testing.T) {
@@ -23,9 +20,7 @@ func TestCall(t *testing.T) {
 	for _, tc := range []struct {
 		name, input, want string
 	}{
-		{"list_advisories", `{}`, `"ghsa_id":"GHSA-1","state":"published","summary":"UAF"`},
-		{"list_advisories", ``, `"created_at":"2026-01-02"`},
-		{"get_advisory", `{"ghsa_id":"GHSA-1"}`, `"description":"details"`},
+		{"get_advisory", `{}`, `"description":"details"`},
 		{"read_file", `{"path":"tools.go","start":1,"end":1}`, "1\t// Package tools"},
 	} {
 		out, isError := Call(context.Background(), ts, tc.name, json.RawMessage(tc.input))
@@ -39,8 +34,6 @@ func TestCallErrors(t *testing.T) {
 	ts := build()
 	for _, tc := range []struct{ name, input string }{
 		{"unknown", `{}`},
-		{"get_advisory", `{"ghsa_id":"GHSA-missing"}`},
-		{"get_advisory", `{}`},
 		{"read_file", `{"path":"../../go.mod"}`},
 		{"read_file", `not json`},
 	} {
@@ -64,7 +57,7 @@ func TestToolSets(t *testing.T) {
 	if public := strings.Join(names(Code(repo.Repo{})), ","); public != "grep_code,read_file,git_log" {
 		t.Errorf("code tools = %s", public)
 	}
-	if private := strings.Join(names(Advisories(nil)), ","); private != "list_advisories,get_advisory" {
+	if private := strings.Join(names([]Tool{Advisory(github.Advisory{})}), ","); private != "get_advisory" {
 		t.Errorf("advisory tools = %s", private)
 	}
 }

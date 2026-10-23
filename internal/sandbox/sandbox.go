@@ -69,7 +69,6 @@ type Reader struct {
 	runtime   container.Runtime
 	models    *modelproxy.Proxy
 	modelPort string
-	proxyURL  string
 	server    *http.Server
 
 	// Daybreak turns on OpenAI's cyber access program in Codex. The API key's org must be approved for it.
@@ -104,24 +103,17 @@ func New(name, model, apiKey, image string) (*Reader, error) {
 		image = Images[name]
 	}
 
-	models, err := modelproxy.New(b.provider, apiKey)
+	models, err := modelproxy.New(b.provider, apiKey, model)
 	if err != nil {
 		return nil, err
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", ":0")
 	if err != nil {
 		return nil, err
 	}
 	server := &http.Server{Handler: models, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = server.Serve(ln) }()
 	modelPort := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-
-	ep := hostProxy(modelPort)
-	egressPort, err := egress.Start(ep)
-	if err != nil {
-		_ = server.Close()
-		return nil, err
-	}
 
 	return &Reader{
 		backend:   b,
@@ -131,15 +123,8 @@ func New(name, model, apiKey, image string) (*Reader, error) {
 		runtime:   rt,
 		models:    models,
 		modelPort: modelPort,
-		proxyURL:  egress.ProxyURL(ep.Token, egress.HostGatewayAlias, egressPort),
 		server:    server,
 	}, nil
-}
-
-// hostProxy is the egress proxy of runtimes without a sidecar. It forwards inspected HTTP to the model proxy, the
-// only host service the agent may reach, and checks the allowlist before that, so the host gateway must be on it.
-func hostProxy(modelPort string) *egress.Proxy {
-	return &egress.Proxy{Allow: append([]string{egress.HostGatewayAlias}, allow...), Token: egress.NewToken(), APIPort: modelPort}
 }
 
 func (r *Reader) Close() error {
@@ -158,14 +143,13 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		return nil, err
 	}
 	defer os.RemoveAll(state)
-	if err := r.writeConfig(state); err != nil {
-		return nil, err
-	}
-
 	for name, content := range map[string][]byte{"report.md": []byte(req.Report), "schema.json": req.Schema} {
 		if err := os.WriteFile(filepath.Join(workspace, name), content, 0o600); err != nil {
 			return nil, err
 		}
+	}
+	if err := os.Mkdir(filepath.Join(workspace, srcDir), 0o700); err != nil {
+		return nil, err
 	}
 	mounts, err := sourceMounts(req.RepoPath, workspace)
 	if err != nil {
@@ -174,19 +158,11 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 
 	token, revoke := r.models.Issue()
 	defer revoke()
-	runner := container.Runner{
-		Runtime:  r.runtime,
-		Image:    r.image,
-		Hardened: true,
-		ProxyURL: r.proxyURL,
-		StateDir: state,
-		Mounts:   mounts,
-		// The agent only ever holds the token, under the name its CLI reads the key from.
-		Env:        []string{r.backend.keyEnv},
-		OmitEnv:    []string{r.backend.keyEnv, "CLAUDE_CODE_OAUTH_TOKEN"},
-		ProcessEnv: []string{r.backend.keyEnv + "=" + token},
-		Sidecar:    container.SidecarConfig{Allow: allow, APIPort: r.modelPort},
+	run, err := startIsolatedRun(ctx, r.runtime, r.image, r.modelPort)
+	if err != nil {
+		return nil, err
 	}
+	defer run.Close()
 	job := harness.Job{
 		Workspace:    workspace,
 		SrcDir:       srcDir,
@@ -197,43 +173,52 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		OutputFile:   outputFile,
 		BaseURL:      "http://" + egress.HostGatewayAlias + ":" + r.modelPort + r.backend.basePath,
 	}
+	if err := r.writeConfig(state, job.BaseURL); err != nil {
+		return nil, err
+	}
 
-	for attempt := 0; ; attempt++ {
-		var session string
+	for attempt := 0; attempt < 2; attempt++ {
 		// Events are not logged: they hold the report and the agent's reasoning about it.
-		err := runner.Run(ctx, r.harness, job, func(e harness.Event) {
-			if e.SessionID != "" {
-				session = e.SessionID
-			}
-		})
+		err := run.Run(ctx, r.harness, job, workspace, state, mounts, r.backend.keyEnv, token, func(harness.Event) {})
 		if err != nil {
 			return nil, &Error{err: err}
 		}
 
-		raw, err := os.ReadFile(filepath.Join(workspace, outputFile))
+		raw, err := readOutput(filepath.Join(workspace, outputFile))
 		if err == nil {
 			if err = req.Validate(raw); err == nil {
 				return raw, nil
 			}
 		}
-		if attempt > 0 || session == "" {
-			return nil, ErrNoReport
-		}
-		job.ResumeSessionID = session
-		job.ResumePrompt = fmt.Sprintf("/work/%s is missing or does not match /work/schema.json: %v. Write it again, fixed.", outputFile, err)
+		job.Prompt = fmt.Sprintf("%s\n\nYour previous attempt did not produce valid output: %v. Write /work/%s again, fixed.", req.Prompt, err, outputFile)
 	}
+
+	return nil, ErrNoReport
+}
+
+func readOutput(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 1<<20 {
+		return nil, errors.New("report is too large")
+	}
+
+	return data, nil
 }
 
 // writeConfig writes the agent CLI configuration into its state directory, which harness points CODEX_HOME at.
-func (r *Reader) writeConfig(state string) error {
-	if !r.Daybreak {
-		return nil
-	}
+func (r *Reader) writeConfig(state, baseURL string) error {
 	if r.backend.harness != "codex" {
+		if !r.Daybreak {
+			return nil
+		}
 		return errors.New("daybreak is only available with codex")
 	}
 
-	return os.WriteFile(filepath.Join(state, "config.toml"), []byte("daybreak = true\n"), 0o600)
+	config := fmt.Sprintf("model_provider = \"embargod\"\ndaybreak = %t\nweb_search = \"disabled\"\n\n[model_providers.embargod]\nname = \"Embargod\"\nbase_url = %q\nenv_key = \"CODEX_API_KEY\"\nwire_api = \"responses\"\nsupports_websockets = false\nsupports_standalone_web_search = false\nrequest_max_retries = 0\nstream_max_retries = 0\n", r.Daybreak, baseURL)
+	return os.WriteFile(filepath.Join(state, "config.toml"), []byte(config), 0o600)
 }
 
 // sourceMounts mounts the repository read-only and hides .git/config, where actions/checkout may persist a token.

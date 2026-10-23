@@ -1,13 +1,12 @@
 // Package tools defines the read-only tools the models can call while triaging.
 //
-// The comparator, which reads embargoed advisories but never the report, gets Code and Advisories.
+// The comparator, which reads one embargoed advisory but never the report, gets Code and Advisory.
 // The reader runs in the sandbox package with its own tools.
 package tools
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/alexandre-daubois/embargod/internal/github"
@@ -23,14 +22,6 @@ type Tool struct {
 	Properties  map[string]any
 	Required    []string
 	Run         func(ctx context.Context, input json.RawMessage) (string, error)
-}
-
-type advisoryBrief struct {
-	GHSAID    string   `json:"ghsa_id"`
-	State     string   `json:"state"`
-	Summary   string   `json:"summary"`
-	CWEIDs    []string `json:"cwe_ids"`
-	CreatedAt string   `json:"created_at"`
 }
 
 func str(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
@@ -96,46 +87,13 @@ func Code(r repo.Repo) []Tool {
 	}
 }
 
-// Advisories returns the tools reading the other advisories, served from others only so the
-// advisory being triaged, whose text is untrusted, can never be fetched.
-func Advisories(others []github.Advisory) []Tool {
-	byID := make(map[string]github.Advisory, len(others))
-	for _, a := range others {
-		byID[a.GHSAID] = a
-	}
-
-	return []Tool{
-		{
-			Name:        "list_advisories",
-			Description: "List the other security advisories of the repository, in any state (triage, draft, published, closed), with their summary and CWEs.",
-			Run: func(context.Context, json.RawMessage) (string, error) {
-				briefs := make([]advisoryBrief, 0, len(others))
-				for _, a := range others {
-					briefs = append(briefs, advisoryBrief{a.GHSAID, a.State, a.Summary, a.CWEIDs, a.CreatedAt.Format("2006-01-02")})
-				}
-
-				return marshal(briefs)
-			},
-		},
-		{
-			Name:        "get_advisory",
-			Description: "Get the full description of one of the other advisories.",
-			Properties:  map[string]any{"ghsa_id": str("GHSA identifier, e.g. GHSA-xxxx-xxxx-xxxx")},
-			Required:    []string{"ghsa_id"},
-			Run: func(_ context.Context, input json.RawMessage) (string, error) {
-				in, err := decode[struct {
-					GHSAID string `json:"ghsa_id"`
-				}](input)
-				if err != nil {
-					return "", err
-				}
-				a, ok := byID[in.GHSAID]
-				if !ok {
-					return "", errors.New("unknown advisory, use list_advisories")
-				}
-
-				return marshal(a)
-			},
+// Advisory returns one candidate without exposing another report in the same model context.
+func Advisory(a github.Advisory) Tool {
+	return Tool{
+		Name:        "get_advisory",
+		Description: "Get the full description of the one candidate advisory.",
+		Run: func(context.Context, json.RawMessage) (string, error) {
+			return marshal(a)
 		},
 	}
 }

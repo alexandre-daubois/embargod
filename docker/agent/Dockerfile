@@ -13,7 +13,7 @@ ARG HARNESS_VERSION=v0.1.16
 
 FROM golang:1.27.3-trixie@sha256:1896654cfc5c2b5ad74c07f29cb36f5d2d1cbed42e3054070fbfe444e521e83c AS proxy
 ARG HARNESS_VERSION
-# The egress proxy sidecar harness starts on Docker Desktop and rootless podman.
+# The egress proxy runs beside every untrusted agent container.
 RUN GOBIN=/out CGO_ENABLED=0 go install -trimpath github.com/alpha-omega-security/harness/cmd/harness-proxy@${HARNESS_VERSION}
 
 FROM debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd AS base

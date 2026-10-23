@@ -112,6 +112,16 @@ func TestClaudeGivesUpWithoutReport(t *testing.T) {
 	}
 }
 
+func TestRequestLimitStopsTheModelLoop(t *testing.T) {
+	srv, requests := scripted(t, claudeMessage("end_turn", `{"type":"text","text":"keep going"}`))
+	ctx := WithRequestLimit(context.Background(), 1)
+	_, err := NewClaude("key", "m", anthropicoption.WithBaseURL(srv.URL), anthropicoption.WithMaxRetries(0)).
+		Run(ctx, "s", "p", testTools(new([]string)))
+	if !errors.Is(err, ErrNoReport) || len(*requests) != 1 {
+		t.Fatalf("error %v after %d requests", err, len(*requests))
+	}
+}
+
 func TestClaudeAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt mentions SECRET-PAYLOAD"}}`, http.StatusBadRequest)

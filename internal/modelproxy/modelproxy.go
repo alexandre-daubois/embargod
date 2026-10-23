@@ -4,15 +4,19 @@
 package modelproxy
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -21,7 +25,9 @@ const (
 	// PathPrefix is where the proxy serves, the agent's base URL ends with it.
 	PathPrefix = "/model-proxy"
 	// maxBody caps a forwarded request so a hostile agent cannot make the host buffer unbounded data.
-	maxBody     = 32 << 20
+	maxBody     = 8 << 20
+	maxRequests = 32
+	maxTokens   = 16_000
 	tokenPrefix = "embargod-"
 )
 
@@ -29,9 +35,12 @@ var errUpstreamRedirect = errors.New("model proxy: upstream redirect refused")
 
 // Provider describes one model API: where it lives, which routes an agent may call and how the key is sent.
 type Provider struct {
-	Upstream string
-	Routes   func(method, route string) bool
-	SetKey   func(h http.Header, key string)
+	Upstream     string
+	Routes       func(method, route string) bool
+	SetKey       func(h http.Header, key string)
+	NoStore      bool
+	UntypedTools bool
+	BetaQuery    bool
 }
 
 var Anthropic = Provider{
@@ -40,13 +49,13 @@ var Anthropic = Provider{
 		switch {
 		case method == http.MethodPost:
 			return route == "/v1/messages" || route == "/v1/messages/count_tokens"
-		case method == http.MethodGet:
-			return route == "/v1/models" || modelRoute(route)
 		default:
 			return false
 		}
 	},
-	SetKey: func(h http.Header, key string) { h.Set("X-Api-Key", key) },
+	SetKey:       func(h http.Header, key string) { h.Set("X-Api-Key", key) },
+	UntypedTools: true,
+	BetaQuery:    true,
 }
 
 var OpenAI = Provider{
@@ -55,19 +64,12 @@ var OpenAI = Provider{
 		switch {
 		case method == http.MethodPost:
 			return route == "/v1/responses"
-		case method == http.MethodGet:
-			return route == "/v1/models" || modelRoute(route)
 		default:
 			return false
 		}
 	},
-	SetKey: func(h http.Header, key string) { h.Set("Authorization", "Bearer "+key) },
-}
-
-func modelRoute(route string) bool {
-	id, ok := strings.CutPrefix(route, "/v1/models/")
-
-	return ok && id != "" && !strings.Contains(id, "/")
+	SetKey:  func(h http.Header, key string) { h.Set("Authorization", "Bearer "+key) },
+	NoStore: true,
 }
 
 type Proxy struct {
@@ -76,24 +78,28 @@ type Proxy struct {
 	proxy    *httputil.ReverseProxy
 
 	mu     sync.RWMutex
-	tokens map[[sha256.Size]byte]bool
+	tokens map[[sha256.Size]byte]int
+	model  string
 }
 
-func New(provider Provider, key string) (*Proxy, error) {
+func New(provider Provider, key, model string) (*Proxy, error) {
 	if key == "" {
 		return nil, errors.New("model proxy: an API key is required")
+	}
+	if model == "" {
+		return nil, errors.New("model proxy: a model is required")
 	}
 	upstream, err := url.Parse(provider.Upstream)
 	if err != nil {
 		return nil, fmt.Errorf("model proxy: %w", err)
 	}
 
-	p := &Proxy{provider: provider, key: key, tokens: map[[sha256.Size]byte]bool{}}
+	p := &Proxy{provider: provider, key: key, model: model, tokens: map[[sha256.Size]byte]int{}}
 	p.proxy = &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL.Scheme, pr.Out.URL.Host, pr.Out.Host = upstream.Scheme, upstream.Host, upstream.Host
 			pr.Out.URL.Path, pr.Out.URL.RawPath = upstream.Path+pr.In.URL.Path, ""
-			for _, h := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Cookie"} {
+			for _, h := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Cookie", "OpenAI-Organization", "OpenAI-Project"} {
 				pr.Out.Header.Del(h)
 			}
 			provider.SetKey(pr.Out.Header, key)
@@ -129,7 +135,7 @@ func (p *Proxy) Issue() (token string, revoke func()) {
 	token = tokenPrefix + hex.EncodeToString(raw[:])
 	sum := sha256.Sum256([]byte(token))
 	p.mu.Lock()
-	p.tokens[sum] = true
+	p.tokens[sum] = maxRequests
 	p.mu.Unlock()
 
 	return token, func() {
@@ -149,11 +155,27 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid or revoked token", http.StatusUnauthorized)
 		return
 	}
-	if r.URL.RawPath != "" || path.Clean(route) != route || !p.provider.Routes(r.Method, route) {
+	if r.URL.RawPath != "" || (r.URL.RawQuery != "" && (!p.provider.BetaQuery || r.URL.RawQuery != "beta=true")) || path.Clean(route) != route || !p.provider.Routes(r.Method, route) {
 		http.Error(w, "route not permitted", http.StatusForbidden)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	if r.Method == http.MethodPost {
+		body, err := p.safeBody(r.Body)
+		if err != nil {
+			if errors.Is(err, errRequestTooLarge) {
+				http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		r.ContentLength = int64(len(body))
+	}
+	if strings.Contains(strings.ToLower(r.Header.Get("Anthropic-Beta")), "mcp") {
+		http.Error(w, "provider capability not permitted", http.StatusForbidden)
+		return
+	}
 	r.URL.Path = route
 	p.proxy.ServeHTTP(w, r)
 }
@@ -167,8 +189,123 @@ func (p *Proxy) authorized(r *http.Request) bool {
 		return false
 	}
 	sum := sha256.Sum256([]byte(token))
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.tokens[sum] <= 0 {
+		return false
+	}
+	p.tokens[sum]--
 
-	return p.tokens[sum]
+	return true
+}
+
+var errRequestTooLarge = errors.New("request too large")
+
+func (p *Proxy) safeBody(body io.Reader) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(body, maxBody+1))
+	if err != nil {
+		return nil, errors.New("invalid provider request")
+	}
+	if len(b) > maxBody {
+		return nil, errRequestTooLarge
+	}
+	var v map[string]any
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	if err := dec.Decode(&v); err != nil {
+		return nil, errors.New("invalid provider request")
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, errors.New("invalid provider request")
+	}
+	model, ok := v["model"].(string)
+	if !ok || model != p.model || unsafeProviderValue(v) || unsafeToolsField(v["tools"], p.provider.UntypedTools) {
+		return nil, errors.New("provider request not permitted")
+	}
+	for _, key := range []string{"previous_response_id", "conversation", "prompt"} {
+		if _, ok := v[key]; ok {
+			return nil, errors.New("provider request not permitted")
+		}
+	}
+	for _, key := range []string{"max_tokens", "max_output_tokens"} {
+		if raw, ok := v[key]; ok {
+			n, ok := raw.(json.Number)
+			if !ok {
+				return nil, errors.New("provider request not permitted")
+			}
+			value, err := n.Int64()
+			if err != nil || value < 1 {
+				return nil, errors.New("provider request not permitted")
+			}
+			if value > maxTokens {
+				v[key] = maxTokens
+			}
+		}
+	}
+	if p.provider.NoStore {
+		v["store"] = false
+		v["background"] = false
+		if _, ok := v["max_output_tokens"]; !ok {
+			v["max_output_tokens"] = maxTokens
+		}
+	}
+
+	return json.Marshal(v)
+}
+
+func unsafeProviderValue(v any) bool {
+	switch value := v.(type) {
+	case []any:
+		for _, item := range value {
+			if unsafeProviderValue(item) {
+				return true
+			}
+		}
+	case map[string]any:
+		for key, item := range value {
+			switch key {
+			case "mcp_servers", "server_url", "image_url", "file_url", "file_id", "vector_store_ids":
+				return true
+			case "type":
+				if kind, ok := item.(string); ok {
+					for _, forbidden := range []string{"mcp", "web", "computer", "code_interpreter", "file_search", "image_generation"} {
+						if strings.Contains(strings.ToLower(kind), forbidden) {
+							return true
+						}
+					}
+				}
+			}
+			if kind, _ := value["type"].(string); key == "url" && kind == "url" {
+				return true
+			}
+			if unsafeProviderValue(item) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func unsafeTools(v any, untyped bool) bool {
+	tools, ok := v.([]any)
+	if !ok {
+		return true
+	}
+	for _, value := range tools {
+		tool, ok := value.(map[string]any)
+		if !ok {
+			return true
+		}
+		kind, ok := tool["type"].(string)
+		if (!ok && !untyped) || (ok && !slices.Contains([]string{"function", "custom", "tool_search", "local_shell", "apply_patch"}, kind)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func unsafeToolsField(v any, untyped bool) bool {
+	return v != nil && unsafeTools(v, untyped)
 }
