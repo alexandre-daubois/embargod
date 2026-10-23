@@ -554,3 +554,19 @@ func TestSubmitToolsValidateTheirSchema(t *testing.T) {
 		t.Error("a non boolean exact flag was accepted")
 	}
 }
+
+func TestRunWithBotLoginSkipsTheTokenOwnerLookup(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.loginErr = &github.HTTPError{Status: 403}
+	app := github.Comment{Body: report.Marker}
+	app.User.Login = "embargod[bot]"
+	gh.comments["GHSA-done"] = []github.Comment{app}
+
+	if err := run(t, Config{Since: since, BotLogin: "embargod[bot]"}, gh, eng); err != nil {
+		t.Fatal(err)
+	}
+
+	if gh.posted["GHSA-new"] == "" || gh.posted["GHSA-done"] != "" {
+		t.Fatalf("the App's own comment must mark GHSA-done as triaged: %v", gh.posted)
+	}
+}

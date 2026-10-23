@@ -2,7 +2,9 @@
 package report
 
 import (
+	"bufio"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"maps"
@@ -13,6 +15,23 @@ import (
 	"github.com/alexandre-daubois/embargod/internal/github"
 	"github.com/alexandre-daubois/embargod/internal/repo"
 )
+
+// cweTSV maps CWE weakness numbers to their name, one "number<TAB>name" per line.
+//
+//go:embed cwe.tsv
+var cweTSV string
+
+var cweNames = func() map[string]string {
+	names := map[string]string{}
+	sc := bufio.NewScanner(strings.NewReader(cweTSV))
+	for sc.Scan() {
+		if id, name, ok := strings.Cut(sc.Text(), "\t"); ok && !strings.HasPrefix(id, "#") {
+			names["CWE-"+id] = name
+		}
+	}
+
+	return names
+}()
 
 // Marker identifies comments posted by embargod.
 const Marker = "<!-- embargod -->"
@@ -341,7 +360,12 @@ func Render(r Report) string {
 		b.WriteString("| | Estimate | Why |\n|---|---|---|\n")
 	}
 	for _, w := range r.CWE {
-		fmt.Fprintf(&b, "| CWE | [%s](https://cwe.mitre.org/data/definitions/%s.html) | %s |\n", w.ID, strings.TrimPrefix(w.ID, "CWE-"), cell(w.Reason))
+		estimate := fmt.Sprintf("[%s](https://cwe.mitre.org/data/definitions/%s.html)", w.ID, strings.TrimPrefix(w.ID, "CWE-"))
+		// The embedded list can lag behind MITRE, an unknown but well-formed CWE keeps its number only.
+		if name, ok := cweNames[w.ID]; ok {
+			estimate += " " + cell(name)
+		}
+		fmt.Fprintf(&b, "| CWE | %s | %s |\n", estimate, cell(w.Reason))
 	}
 	if r.CVSS.Vector != "" {
 		fmt.Fprintf(&b, "| CVSS 4.0 | [`%s`](https://www.first.org/cvss/calculator/4.0#%s) | %s |\n", strings.TrimPrefix(r.CVSS.Vector, "CVSS:4.0/"), r.CVSS.Vector, cell(r.CVSS.Reason))

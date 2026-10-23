@@ -44,13 +44,19 @@ type Config struct {
 	// Advisory targets a single advisory and bypasses Since.
 	Advisory string
 	RepoPath string
+	// BotLogin is the account the comments are posted as. GitHub App tokens cannot call GET /user,
+	// so it must be set with them, e.g. "embargod[bot]". Left empty, it is asked to GitHub.
+	BotLogin string
 }
 
 // Run never logs report content, GHSA identifiers nor raw errors: logs of public repositories are public.
 func Run(ctx context.Context, cfg Config, gh GitHub, eng engine.Engine, log *slog.Logger) error {
-	login, err := gh.Login(ctx)
-	if err != nil {
-		return errors.New("identifying the token owner: " + describe(err))
+	login := cfg.BotLogin
+	if login == "" {
+		var err error
+		if login, err = gh.Login(ctx); err != nil {
+			return errors.New("identifying the token owner: " + describe(err))
+		}
 	}
 
 	all, err := gh.ListAdvisories(ctx, cfg.Repo, "")

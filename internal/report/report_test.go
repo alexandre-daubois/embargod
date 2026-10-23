@@ -182,7 +182,7 @@ func TestRender(t *testing.T) {
 		"| `a.c` `f` | yes |",
 		"| `b\\|c.c` | no |",
 		"| | Estimate | Why |",
-		"| CWE | [CWE-787](https://cwe.mitre.org/data/definitions/787.html) | write |",
+		"| CWE | [CWE-787](https://cwe.mitre.org/data/definitions/787.html) Out-of-bounds Write | write |",
 		"| CVSS 4.0 | [`AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N`](https://www.first.org/cvss/calculator/4.0#CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N) | remote |",
 		"2 suggestion(s) removed",
 	} {
@@ -211,7 +211,7 @@ func TestRenderNeutralisesMarkup(t *testing.T) {
 		`\!\[x\]\(https://evil.example/?d=SECRET\) \<img src=x\> \[link\]\(https://evil.example\) \# Heading`,
 		`| \<script\>alert\(1\)\</script\> |`,
 		"| `a'b.c` `f') [x](y` | no |",
-		"| CWE | [CWE-787](https://cwe.mitre.org/data/definitions/787.html) | \\~\\~strike\\~\\~ \\| pipe |",
+		"| CWE | [CWE-787](https://cwe.mitre.org/data/definitions/787.html) Out-of-bounds Write | \\~\\~strike\\~\\~ \\| pipe |",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -467,4 +467,28 @@ func FuzzClues(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestCWENames(t *testing.T) {
+	if len(cweNames) < 900 {
+		t.Fatalf("only %d CWE names loaded", len(cweNames))
+	}
+	for id, want := range map[string]string{"CWE-787": "Out-of-bounds Write", "CWE-194": "Unexpected Sign Extension", "CWE-20": "Improper Input Validation"} {
+		if got := cweNames[id]; got != want {
+			t.Errorf("%s = %q, want %q", id, got, want)
+		}
+	}
+}
+
+func TestRenderCWEWithoutKnownName(t *testing.T) {
+	got := Render(Report{CWE: []CWE{{ID: "CWE-99999", Reason: "r"}, {ID: "CWE-79", Reason: "r"}}})
+
+	for _, want := range []string{
+		"| CWE | [CWE-99999](https://cwe.mitre.org/data/definitions/99999.html) | r |",
+		"| CWE | [CWE-79](https://cwe.mitre.org/data/definitions/79.html) Improper Neutralization of Input During Web Page Generation \\('Cross-site Scripting'\\) | r |",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
 }

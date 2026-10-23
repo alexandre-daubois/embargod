@@ -35,6 +35,13 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          client-id: ${{ vars.EMBARGOD_CLIENT_ID }}
+          private-key: ${{ secrets.EMBARGOD_PRIVATE_KEY }}
+          owner: your-org
+          repositories: your-project
       - uses: actions/checkout@v4
         with:
           repository: your-org/your-project
@@ -47,7 +54,8 @@ jobs:
           advisory: ${{ inputs.advisory }}
           engine: claude
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github-token: ${{ secrets.EMBARGOD_TOKEN }}
+          github-token: ${{ steps.app.outputs.token }}
+          bot-login: your-app-slug[bot]
 ```
 
 GitHub Actions has no trigger for security advisories, hence the schedule. Set `since` to the day you install the action so the existing backlog is left alone.
@@ -59,7 +67,8 @@ GitHub Actions has no trigger for security advisories, hence the schedule. Set `
 | `engine` | `claude` | `claude` or `openai`. |
 | `model` | `claude-opus-5-5` / `gpt-5.5` | Model id. |
 | `api-key` | | API key of the LLM provider. |
-| `github-token` | | Personal access token of a security manager of the repository, with the repository security advisories scope. A dedicated bot account is best, embargod recognises its own comments by its login. |
+| `github-token` | | Token able to read and comment the advisories. Best is a GitHub App installed on the repository only, with the "Repository security advisories" permission in read and write, so comments are posted as the App. A personal access token of a security manager works too. |
+| `bot-login` | owner of the token | Login the comments are posted as, used to recognise them. Required with a GitHub App token, which cannot look it up: `your-app-slug[bot]`. |
 | `repository` | current repository | Repository owning the advisories. |
 | `path` | `.` | Path of the repository checkout. |
 

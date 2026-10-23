@@ -21,6 +21,9 @@ inputs:
   api-key:
     description: API key of the LLM provider.
     required: true
+  bot-login:
+    description: Login the comments are posted as, required with a GitHub App token, e.g. `my-app[bot]`. Found through the token otherwise.
+    required: false
   github-token:
     description: Token able to read and comment the repository advisories.
     required: true
@@ -41,5 +44,6 @@ runs:
     MODEL: ${{ inputs.model }}
     LLM_API_KEY: ${{ inputs.api-key }}
     GH_TOKEN: ${{ inputs.github-token }}
+    BOT_LOGIN: ${{ inputs.bot-login }}
     REPOSITORY: ${{ inputs.repository }}
     REPO_PATH: ${{ inputs.path }}

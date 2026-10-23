@@ -52,7 +52,7 @@ func TestRunValidatesConfiguration(t *testing.T) {
 		"api key required": {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t"}, "LLM_API_KEY is required"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			for _, k := range []string{"REPOSITORY", "GITHUB_REPOSITORY", "ADVISORY", "REPO_PATH", "SINCE", "GH_TOKEN", "ENGINE", "MODEL", "LLM_API_KEY"} {
+			for _, k := range []string{"REPOSITORY", "GITHUB_REPOSITORY", "ADVISORY", "REPO_PATH", "BOT_LOGIN", "SINCE", "GH_TOKEN", "ENGINE", "MODEL", "LLM_API_KEY"} {
 				t.Setenv(k, tc.env[k])
 			}
 
