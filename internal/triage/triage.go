@@ -240,7 +240,7 @@ Title: %s
 func comparatorPrompt(c report.Comparison) string {
 	clues, _ := json.Marshal(c)
 
-	return fmt.Sprintf(`A new security report was filed on this repository. You will not see it. Here are the code locations where its bug lives and its CWE, as JSON:
+	return fmt.Sprintf(`A new security report was filed on this repository. You will not see it. Here is where its bug lives (files, symbols and lines, 0 when unknown), the PHP entry points it goes through and its CWE, as JSON:
 
 %s
 

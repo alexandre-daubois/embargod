@@ -26,13 +26,19 @@ var (
 
 	cluePath   = regexp.MustCompile(`^[A-Za-z0-9_./-]{1,200}$`)
 	clueSymbol = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,100}$`)
+	// A PHP function or method, e.g. http_build_query or SplFixedArray::offsetSet.
+	clueEntryPoint = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,100}(::[A-Za-z_][A-Za-z0-9_]{0,100})?$`)
 )
 
-const maxClues = 10
+const (
+	maxClues = 10
+	maxLine  = 1_000_000
+)
 
 type Report struct {
 	Summary          string          `json:"summary"`
 	Affected         []Location      `json:"affected"`
+	EntryPoints      []string        `json:"entry_points"`
 	Related          []Related       `json:"related"`
 	CodeReferences   []CodeReference `json:"code_references"`
 	PolicyExclusions []PolicyPoint   `json:"policy_exclusions"`
@@ -50,12 +56,15 @@ type Report struct {
 type Location struct {
 	Path   string `json:"path"`
 	Symbol string `json:"symbol"`
+	Line   int    `json:"line"`
 }
 
-// Comparison is everything the comparator learns about the report being triaged.
+// Comparison is everything the comparator learns about the report being triaged: identifiers,
+// numbers and CWEs only, the comparator reads the code at these locations to understand the bug.
 type Comparison struct {
-	Locations []Location `json:"locations"`
-	CWE       []string   `json:"cwe"`
+	Locations   []Location `json:"locations"`
+	EntryPoints []string   `json:"entry_points"`
+	CWE         []string   `json:"cwe"`
 }
 
 type Duplicate struct {
@@ -63,6 +72,7 @@ type Duplicate struct {
 	Confidence string `json:"confidence"`
 	Exact      bool   `json:"exact"`
 	URL        string `json:"-"`
+	Published  bool   `json:"-"`
 }
 
 type Related struct {
@@ -111,7 +121,9 @@ func ReaderProperties() (map[string]any, []string) {
 		"affected": list("Where the bug actually lives, after reading the code: at most 10 locations, used to look for duplicates.", map[string]any{
 			"path":   str("File path relative to the repository root"),
 			"symbol": str("C function, macro or variable name, empty when unknown"),
+			"line":   map[string]any{"type": "integer", "description": "Line of the faulty statement in the current code, 0 when unknown"},
 		}),
+		"entry_points": map[string]any{"type": "array", "description": "PHP functions or methods the report goes through to reach the bug, e.g. http_build_query or SplFixedArray::offsetSet. At most 10.", "items": map[string]any{"type": "string"}},
 		"related": list("Public issues or pull requests of this repository already fixing or hardening the same code. Empty when none.", map[string]any{
 			"number":     map[string]any{"type": "integer", "description": "Issue or pull request number"},
 			"confidence": confidence,
@@ -132,7 +144,7 @@ func ReaderProperties() (map[string]any, []string) {
 			"vector": str("CVSS 4.0 base vector, e.g. CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"),
 			"reason": str("Short justification of the metrics that drive the score"),
 		}},
-	}, []string{"summary", "affected", "related", "code_references", "policy_exclusions", "cwe", "cvss"}
+	}, []string{"summary", "affected", "entry_points", "related", "code_references", "policy_exclusions", "cwe", "cvss"}
 }
 
 // ComparatorProperties is the JSON schema of what the comparator submits. It holds no free text,
@@ -147,18 +159,26 @@ func ComparatorProperties() (map[string]any, []string) {
 	}, []string{"duplicates"}
 }
 
-// Clues keeps the affected locations that are plain paths and C identifiers, which leaves no room
-// for instructions to travel from the report to the comparator. CWE identifiers are already validated.
+// Clues keeps the affected locations, entry points and CWEs made of plain paths, identifiers and
+// numbers, which leaves no room for instructions to travel from the report to the comparator.
 func Clues(r Report) Comparison {
 	var c Comparison
 	for _, l := range r.Affected {
 		if len(c.Locations) == maxClues {
 			break
 		}
-		if !cluePath.MatchString(l.Path) || (l.Symbol != "" && !clueSymbol.MatchString(l.Symbol)) || slices.Contains(c.Locations, l) {
+		if !cluePath.MatchString(l.Path) || (l.Symbol != "" && !clueSymbol.MatchString(l.Symbol)) || l.Line < 0 || l.Line > maxLine || slices.Contains(c.Locations, l) {
 			continue
 		}
 		c.Locations = append(c.Locations, l)
+	}
+	for _, e := range r.EntryPoints {
+		if len(c.EntryPoints) == maxClues {
+			break
+		}
+		if clueEntryPoint.MatchString(e) && !slices.Contains(c.EntryPoints, e) {
+			c.EntryPoints = append(c.EntryPoints, e)
+		}
 	}
 	for _, w := range r.CWE {
 		if cweID.MatchString(w.ID) && !slices.Contains(c.CWE, w.ID) {
@@ -183,14 +203,20 @@ type Checker struct {
 
 // Verify drops claims pointing at things that do not exist and fills the facts from GitHub.
 func (c Checker) Verify(ctx context.Context, r *Report) error {
+	// Dropped duplicates are not counted in Removed: the count would tell the reporter that an
+	// unpublished advisory came close.
 	dups := r.Duplicates[:0]
 	for _, d := range r.Duplicates {
 		a, ok := c.Advisories[d.GHSAID]
 		if !ok || !slices.Contains(confidences, d.Confidence) {
-			r.Removed++
 			continue
 		}
-		d.URL = a.HTMLURL
+		d.URL, d.Published = a.HTMLURL, a.State == "published"
+		// A reporter learns nothing from an exact duplicate of their own bug, a partial match on an
+		// unpublished advisory would reveal another report.
+		if !d.Published && !(d.Exact && d.Confidence == "high") {
+			continue
+		}
 		dups = append(dups, d)
 	}
 	r.Duplicates = dups
@@ -254,16 +280,21 @@ func Render(r Report) string {
 	if len(r.Duplicates) == 0 {
 		b.WriteString("None found among the repository advisories.\n")
 	} else {
-		b.WriteString("| Advisory | Confidence |\n|---|---|\n")
+		b.WriteString("| Advisory | Status | Confidence |\n|---|---|---|\n")
 	}
 	for _, d := range r.Duplicates {
 		confidence := label(d.Confidence)
 		if d.Exact {
 			confidence += " • Exact duplicate"
 		}
+		status := "Unpublished"
+		if d.Published {
+			status = "Published"
+		}
 		// No title: the reporter reads this comment, and other advisories may still be under embargo.
-		fmt.Fprintf(&b, "| [%s](%s) | %s |\n", d.GHSAID, d.URL, confidence)
+		fmt.Fprintf(&b, "| [%s](%s) | %s | %s |\n", d.GHSAID, d.URL, status, confidence)
 	}
+	b.WriteString("\n_Unpublished advisories are only listed when they are exact duplicates._\n")
 
 	b.WriteString("\n#### Related issues and pull requests\n\n")
 	if len(r.Related) == 0 {
