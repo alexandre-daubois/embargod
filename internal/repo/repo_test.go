@@ -227,3 +227,76 @@ func TestFiles(t *testing.T) {
 		t.Fatalf("got %q, %v", got, err)
 	}
 }
+
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v %s", args, err, out)
+	}
+
+	return strings.TrimSpace(string(out))
+}
+
+func TestHead(t *testing.T) {
+	r := newRepo(t)
+	sha, branch := gitIn(t, r.Dir, "rev-parse", "HEAD"), gitIn(t, r.Dir, "branch", "--show-current")
+
+	commit, got, err := r.Head()
+	if err != nil || commit != sha || got != branch || branch == "" {
+		t.Fatalf("got %q %q %v, want %q %q", commit, got, err, sha, branch)
+	}
+
+	gitIn(t, r.Dir, "checkout", "-q", "--detach")
+	if commit, got, err := r.Head(); err != nil || commit != sha || got != "" {
+		t.Fatalf("detached: got %q %q %v", commit, got, err)
+	}
+}
+
+func TestHeadOutsideARepository(t *testing.T) {
+	if _, _, err := (Repo{Dir: t.TempDir()}).Head(); err == nil {
+		t.Fatal("want an error outside a repository")
+	}
+}
+
+func TestLines(t *testing.T) {
+	r := newRepo(t)
+
+	lines, ok, err := r.Lines("ext/a.c")
+	if err != nil || !ok || len(lines) != 3 || lines[1] != "\treturn len * 2;" {
+		t.Fatalf("got %q %v %v", lines, ok, err)
+	}
+	for _, path := range []string{"", "ext", "ext/missing.c", "../secret"} {
+		if lines, ok, err := r.Lines(path); err != nil || ok || lines != nil {
+			t.Errorf("%q: got %q %v %v", path, lines, ok, err)
+		}
+	}
+}
+
+func TestLinesReadsTheCommittedFile(t *testing.T) {
+	r := newRepo(t)
+	if err := os.WriteFile(filepath.Join(r.Dir, "ext", "a.c"), []byte("uncommitted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if lines, _, _ := r.Lines("ext/a.c"); len(lines) != 3 {
+		t.Fatalf("got %q, want the committed lines", lines)
+	}
+}
+
+func TestLastChange(t *testing.T) {
+	r := newRepo(t)
+	if err := os.WriteFile(filepath.Join(r.Dir, "ext", "a.c"), []byte("int php_overflow(int len) {\n\treturn len;\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, r.Dir, "commit", "-q", "-am", "Stop doubling")
+	sha := gitIn(t, r.Dir, "rev-parse", "HEAD")
+
+	commit, date, err := r.LastChange("ext/a.c", "return len * 2;")
+	if err != nil || commit != sha || len(date) != len("2026-10-24") {
+		t.Fatalf("got %q %q %v, want %q", commit, date, err, sha)
+	}
+	if commit, date, err := r.LastChange("ext/a.c", "never written"); err != nil || commit != "" || date != "" {
+		t.Fatalf("got %q %q %v, want nothing", commit, date, err)
+	}
+}

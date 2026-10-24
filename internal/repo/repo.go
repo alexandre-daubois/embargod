@@ -130,6 +130,47 @@ func (r Repo) Log(path, grep string) (string, error) {
 	return r.git(args...)
 }
 
+// Head returns the checked-out commit and its branch, empty when HEAD is detached.
+func (r Repo) Head() (commit, branch string, err error) {
+	out, err := r.git("rev-parse", "HEAD", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", "", err
+	}
+	commit, branch, _ = strings.Cut(strings.TrimSpace(out), "\n")
+	if branch == "HEAD" {
+		branch = ""
+	}
+
+	return commit, branch, nil
+}
+
+// Lines returns the lines of path at HEAD, and false when path is not a file there.
+func (r Repo) Lines(path string) ([]string, bool, error) {
+	if path == "" {
+		return nil, false, nil
+	}
+	if kind, err := r.git("cat-file", "-t", "HEAD:"+path); err != nil || strings.TrimSpace(kind) != "blob" {
+		return nil, false, nil
+	}
+	out, err := r.git("cat-file", "blob", "HEAD:"+path)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return strings.Split(strings.TrimSuffix(out, "\n"), "\n"), true, nil
+}
+
+// LastChange returns the latest commit that added or removed text in path, with its date, empty when none did.
+func (r Repo) LastChange(path, text string) (commit, date string, err error) {
+	out, err := r.git("log", "-n", "1", "--date=short", "--format=%H %ad", "-S"+text, "HEAD", "--", path)
+	if err != nil {
+		return "", "", err
+	}
+	commit, date, _ = strings.Cut(strings.TrimSpace(out), " ")
+
+	return commit, date, nil
+}
+
 func (r Repo) git(args ...string) (string, error) {
 	// Literal pathspecs stop paths like ":(glob)**" from being read as patterns.
 	cmd := exec.Command("git", append([]string{"-C", r.Dir, "--literal-pathspecs"}, args...)...)

@@ -187,6 +187,7 @@ func attempts(comments []github.Comment, login string) (done bool, failures int)
 // advisories. The reader sees the report in a sandboxed agent with public data only. The comparator
 // gets one advisory and validated code locations from the reader, and only answers with enums.
 func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory) error {
+	scannedAt := time.Now().UTC()
 	code := repo.Repo{Dir: cfg.RepoPath}
 	others := make([]github.Advisory, 0, len(all))
 	byID := make(map[string]github.Advisory, len(all))
@@ -229,7 +230,7 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engin
 	if err != nil {
 		return err
 	}
-	r := report.Report{Policies: policies}
+	r := report.Report{Policies: policies, ScannedAt: scannedAt}
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return errInvalidReport
 	}

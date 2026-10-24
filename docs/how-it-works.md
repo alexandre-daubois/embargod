@@ -33,7 +33,7 @@ Before posting, embargod checks every claim against GitHub and the checkout:
 |---|---|
 | Duplicates | Must be a candidate checked in isolation. Unpublished ones are only listed when they are exact duplicates, with their identifier and link, never their title. |
 | Issues and pull requests | Must exist. Titles and links come from GitHub, not from the model. |
-| Cited code | Only references named in the report are kept, each marked as found in the repository or not. |
+| Cited code | Only references named in the report are kept, each marked as found in the repository or not. A cited line and the code the report quotes there are kept only when the report contains them. The quote is looked up in the file at the scanned commit, nearest the cited line, and when it is gone, `git log -S` names the commit that last changed it, since reports often target another version. |
 | CWE and CVSS | Must be well-formed. CWE names come from the MITRE catalogue. |
 
 Claims that fail a check are dropped, and the comment counts them. Dropped duplicates are not counted, so the comment never hints at an unpublished advisory.
@@ -45,6 +45,8 @@ Claims that fail a check are dropped, and the comment counts them. Dropped dupli
 
 > Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.
 
+Scanned on 2026-10-24 at 14:32 UTC on `main` at `21a7561`.
+
 Plausible signed `char` passed to `isxdigit()` in `php_url_decode_ex()`, the given reproducer never reaches it.
 
 #### Possible duplicates
@@ -54,9 +56,25 @@ Plausible signed `char` passed to `isxdigit()` in `php_url_decode_ex()`, the giv
 | GHSA-xxxx-xxxx-xxxx | Unpublished | High • Exact duplicate |
 
 #### Related issues and pull requests
+
+<details>
+<summary>Show more details from the analysis</summary>
+
 #### Code cited by the report
+
+| Cited | In the repository on `main` at `21a7561` |
+|---|---|
+| `ext/standard/url.c:592` `php_url_decode_ex` | Same line, [L592](https://github.com/php/php-src/blob/21a7561/ext/standard/url.c#L592) |
+| `ext/standard/url.c:480` | Moved to [L512](https://github.com/php/php-src/blob/21a7561/ext/standard/url.c#L512) |
+| `main/streams.c:1200` | Quoted code changed by [`9f3c2ab`](https://github.com/php/php-src/commit/9f3c2ab) on 2026-09-01 |
+| `ext/foo/bar.c` | Not found |
+
 #### Security policy
 #### Weakness and severity
+
+</details>
 ```
 
-Every piece of model text is escaped, so the comment cannot contain links, images, HTML or mentions coming from the model.
+The duplicates and related issues stay visible. The cited code, the security policy and the weakness estimate are folded so the comment scans quickly.
+
+Every piece of model text is escaped, so the comment cannot contain links, images, HTML or mentions coming from the model. The links to cited lines are built from the repository name, the commit hash and the tracked path, and the quoted code itself is never shown.
