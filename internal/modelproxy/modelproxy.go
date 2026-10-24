@@ -6,6 +6,7 @@ package modelproxy
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,6 +21,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/alexandre-daubois/embargod/internal/usage"
 )
 
 const (
@@ -33,6 +36,9 @@ const (
 )
 
 var errUpstreamRedirect = errors.New("model proxy: upstream redirect refused")
+
+// runKey carries the hash of the token a request came with, so its response is counted for that run.
+type runKey struct{}
 
 // Provider describes one model API: where it lives, which routes an agent may call and how the key is sent.
 type Provider struct {
@@ -112,6 +118,7 @@ type Proxy struct {
 
 	mu        sync.RWMutex
 	tokens    map[[sha256.Size]byte]int
+	spent     map[[sha256.Size]byte]usage.Usage
 	model     string
 	accountID string
 }
@@ -139,7 +146,7 @@ func New(provider Provider, key, model string) (*Proxy, error) {
 		upstreams[""] = u
 	}
 
-	p := &Proxy{provider: provider, key: key, model: model, tokens: map[[sha256.Size]byte]int{}}
+	p := &Proxy{provider: provider, key: key, model: model, tokens: map[[sha256.Size]byte]int{}, spent: map[[sha256.Size]byte]usage.Usage{}}
 	p.proxy = &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			// ServeHTTP only forwards permitted routes, each under exactly one prefix.
@@ -180,6 +187,14 @@ func New(provider Provider, key, model string) (*Proxy, error) {
 					return replaceBody(resp, []byte(`{"config_toml":{"enterprise_managed":[]},"requirements_toml":{"enterprise_managed":[]}}`))
 				}
 			}
+			if resp.Request.Method == http.MethodPost && resp.StatusCode < http.StatusMultipleChoices && !strings.HasSuffix(resp.Request.URL.Path, "/count_tokens") {
+				sum, _ := resp.Request.Context().Value(runKey{}).([sha256.Size]byte)
+				resp.Body = &usageReader{
+					ReadCloser: resp.Body,
+					stream:     strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream"),
+					done:       func(u usage.Usage) { p.record(sum, u) },
+				}
+			}
 
 			return nil
 		},
@@ -197,8 +212,8 @@ func New(provider Provider, key, model string) (*Proxy, error) {
 	return p, nil
 }
 
-// Issue mints a token for one agent run, revoke invalidates it. Only its hash is kept.
-func (p *Proxy) Issue() (token string, revoke func()) {
+// Issue mints a token for one agent run, revoke invalidates it and returns what the run spent. Only its hash is kept.
+func (p *Proxy) Issue() (token string, revoke func() usage.Usage) {
 	var raw [32]byte
 	_, _ = rand.Read(raw[:])
 	token = cmp.Or(p.provider.TokenPrefix, tokenPrefix) + hex.EncodeToString(raw[:])
@@ -207,10 +222,22 @@ func (p *Proxy) Issue() (token string, revoke func()) {
 	p.tokens[sum] = maxRequests
 	p.mu.Unlock()
 
-	return token, func() {
+	return token, func() usage.Usage {
 		p.mu.Lock()
+		defer p.mu.Unlock()
+		spent := p.spent[sum]
 		delete(p.tokens, sum)
-		p.mu.Unlock()
+		delete(p.spent, sum)
+
+		return spent
+	}
+}
+
+func (p *Proxy) record(sum [sha256.Size]byte, u usage.Usage) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, issued := p.tokens[sum]; issued {
+		p.spent[sum] = p.spent[sum].Plus(u)
 	}
 }
 
@@ -220,10 +247,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if !p.authorized(r) {
+	sum, ok := p.authorized(r)
+	if !ok {
 		http.Error(w, "invalid or revoked token", http.StatusUnauthorized)
 		return
 	}
+	r = r.WithContext(context.WithValue(r.Context(), runKey{}, sum))
 	if r.URL.RawPath != "" || (r.URL.RawQuery != "" && (!p.provider.BetaQuery || r.URL.RawQuery != "beta=true")) || path.Clean(route) != route || !p.provider.Routes(r.Method, route) {
 		http.Error(w, "route not permitted", http.StatusForbidden)
 		return
@@ -249,23 +278,23 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.proxy.ServeHTTP(w, r)
 }
 
-func (p *Proxy) authorized(r *http.Request) bool {
+func (p *Proxy) authorized(r *http.Request) ([sha256.Size]byte, bool) {
 	token := r.Header.Get("X-Api-Key")
 	if bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); token == "" && ok {
 		token = bearer
 	}
 	if token == "" {
-		return false
+		return [sha256.Size]byte{}, false
 	}
 	sum := sha256.Sum256([]byte(token))
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.tokens[sum] <= 0 {
-		return false
+		return sum, false
 	}
 	p.tokens[sum]--
 
-	return true
+	return sum, true
 }
 
 func (p *Proxy) redactIdentity(resp *http.Response) error {

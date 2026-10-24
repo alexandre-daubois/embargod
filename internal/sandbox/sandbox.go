@@ -23,6 +23,7 @@ import (
 	"github.com/alpha-omega-security/harness/egress"
 
 	"github.com/alexandre-daubois/embargod/internal/modelproxy"
+	"github.com/alexandre-daubois/embargod/internal/usage"
 )
 
 const (
@@ -174,7 +175,7 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 	}
 
 	token, revoke := r.models.Issue()
-	defer revoke()
+	defer func() { usage.Add(ctx, revoke()) }()
 	hosts := allow
 	if req.Offline {
 		hosts = nil

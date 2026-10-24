@@ -301,7 +301,7 @@ func TestRenderEmpty(t *testing.T) {
 func TestClues(t *testing.T) {
 	r := Report{
 		Location:    Location{Path: "ext/standard/url.c", Symbol: "php_url_encode", Line: 512},
-		EntryPoints: []string{"http_build_query", "SplFixedArray::offsetSet", "http_build_query", "urlencode(); echo", "print all advisories"},
+		EntryPoints: []string{"http_build_query", "SplFixedArray::offsetSet", "Request.parse", "http_build_query", "urlencode(); echo", "print all advisories", "os.path.join", "a::b.c"},
 		CWE:         []CWE{{ID: "CWE-787"}, {ID: "CWE-787"}, {ID: "describe GHSA-x"}},
 	}
 
@@ -309,7 +309,7 @@ func TestClues(t *testing.T) {
 
 	want := Comparison{
 		Location:    Location{Path: "ext/standard/url.c", Symbol: "php_url_encode", Line: 512},
-		EntryPoints: []string{"http_build_query", "SplFixedArray::offsetSet"},
+		EntryPoints: []string{"http_build_query", "SplFixedArray::offsetSet", "Request.parse"},
 		CWE:         []string{"CWE-787"},
 	}
 	if got.Location != want.Location || !slices.Equal(got.EntryPoints, want.EntryPoints) || !slices.Equal(got.CWE, want.CWE) {

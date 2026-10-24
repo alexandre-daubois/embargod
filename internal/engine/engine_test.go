@@ -14,6 +14,7 @@ import (
 	openaioption "github.com/openai/openai-go/v3/option"
 
 	"github.com/alexandre-daubois/embargod/internal/tools"
+	"github.com/alexandre-daubois/embargod/internal/usage"
 )
 
 // scripted serves the given responses in order and records the request bodies.
@@ -47,7 +48,7 @@ func testTools(calls *[]string) []tools.Tool {
 }
 
 func claudeMessage(stop, content string) string {
-	return `{"id":"msg","type":"message","role":"assistant","model":"m","stop_reason":"` + stop + `","content":[` + content + `],"usage":{"input_tokens":1,"output_tokens":1}}`
+	return `{"id":"msg","type":"message","role":"assistant","model":"m","stop_reason":"` + stop + `","content":[` + content + `],"usage":{"input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"output_tokens":4}}`
 }
 
 func TestClaudeRunsToolsUntilSubmit(t *testing.T) {
@@ -57,11 +58,15 @@ func TestClaudeRunsToolsUntilSubmit(t *testing.T) {
 		claudeMessage("tool_use", `{"type":"tool_use","id":"tu2","name":"submit","input":{"summary":"ok"}}`),
 	)
 	var calls []string
+	ctx, spent := usage.Track(context.Background())
 
 	got, err := NewClaude("key", "claude-opus-5-5", anthropicoption.WithBaseURL(srv.URL), anthropicoption.WithMaxRetries(0)).
-		Run(context.Background(), "system", "prompt", testTools(&calls))
+		Run(ctx, "system", "prompt", testTools(&calls))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := spent(); got != (usage.Usage{Requests: 3, InputTokens: 18, OutputTokens: 12}) {
+		t.Errorf("usage = %+v", got)
 	}
 
 	if string(got) != `{"summary":"ok"}` {
@@ -127,9 +132,13 @@ func TestClaudeAPIError(t *testing.T) {
 		http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt mentions SECRET-PAYLOAD"}}`, http.StatusBadRequest)
 	}))
 	t.Cleanup(srv.Close)
+	ctx, spent := usage.Track(context.Background())
 
 	_, err := NewClaude("key", "m", anthropicoption.WithBaseURL(srv.URL), anthropicoption.WithMaxRetries(0)).
-		Run(context.Background(), "s", "p", testTools(new([]string)))
+		Run(ctx, "s", "p", testTools(new([]string)))
+	if got := spent(); got != (usage.Usage{}) {
+		t.Errorf("a failed request was counted: %+v", got)
+	}
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadRequest || apiErr.Provider != "anthropic" {
 		t.Fatalf("want an anthropic HTTP 400, got %v", err)
@@ -140,7 +149,7 @@ func TestClaudeAPIError(t *testing.T) {
 }
 
 func openaiCompletion(message string) string {
-	return `{"id":"c","object":"chat.completion","created":0,"model":"m","choices":[{"index":0,"finish_reason":"stop","message":` + message + `}]}`
+	return `{"id":"c","object":"chat.completion","created":0,"model":"m","choices":[{"index":0,"finish_reason":"stop","message":` + message + `}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`
 }
 
 func TestOpenAIRunsToolsUntilSubmit(t *testing.T) {
@@ -150,11 +159,15 @@ func TestOpenAIRunsToolsUntilSubmit(t *testing.T) {
 		openaiCompletion(`{"role":"assistant","content":null,"tool_calls":[{"id":"call2","type":"function","function":{"name":"submit","arguments":"{\"summary\":\"ok\"}"}}]}`),
 	)
 	var calls []string
+	ctx, spent := usage.Track(context.Background())
 
 	got, err := NewOpenAI("key", "gpt-5.5", openaioption.WithBaseURL(srv.URL), openaioption.WithMaxRetries(0)).
-		Run(context.Background(), "system", "prompt", testTools(&calls))
+		Run(ctx, "system", "prompt", testTools(&calls))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := spent(); got != (usage.Usage{Requests: 3, InputTokens: 15, OutputTokens: 6}) {
+		t.Errorf("usage = %+v", got)
 	}
 
 	if string(got) != `{"summary":"ok"}` {

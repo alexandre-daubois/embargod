@@ -20,6 +20,9 @@ import (
 // Marker identifies comments posted by embargod.
 const Marker = "<!-- embargod -->"
 
+// FailedMarker identifies the comments of failed attempts, which do not count as a triage.
+const FailedMarker = "<!-- embargod failed -->"
+
 var (
 	cweID = regexp.MustCompile(`^CWE-[1-9][0-9]*$`)
 	// Base metrics only, in the order mandated by the CVSS 4.0 specification.
@@ -29,8 +32,8 @@ var (
 
 	cluePath   = regexp.MustCompile(`^[A-Za-z0-9_./-]{1,200}$`)
 	clueSymbol = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,100}$`)
-	// A PHP function or method, e.g. http_build_query or SplFixedArray::offsetSet.
-	clueEntryPoint = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,100}(::[A-Za-z_][A-Za-z0-9_]{0,100})?$`)
+	// A public function or method, e.g. http_build_query, SplFixedArray::offsetSet or Request.parse.
+	clueEntryPoint = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,100}((::|\.)[A-Za-z_][A-Za-z0-9_]{0,100})?$`)
 )
 
 const (
@@ -130,10 +133,10 @@ func ReaderProperties() (map[string]any, []string) {
 		"summary": str("One short sentence, 20 words at most: what the report claims and how credible it looks. Code identifiers in backticks."),
 		"location": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"path", "symbol", "line"}, "description": "The faulty statement this report is about, after reading the code, used to look for duplicates. Not the same pattern found elsewhere.", "properties": map[string]any{
 			"path":   str("File path relative to the repository root, without backticks, empty when the bug could not be located"),
-			"symbol": str("Bare name of the C function or macro holding the faulty statement, without backticks nor parentheses, empty when unknown"),
+			"symbol": str("Bare name of the function, method or macro holding the faulty statement, without backticks nor parentheses, empty when unknown"),
 			"line":   map[string]any{"type": "integer", "description": "Line of the faulty statement in the current code, 0 when unknown"},
 		}},
-		"entry_points": map[string]any{"type": "array", "description": "PHP functions or methods the report goes through to reach the bug, e.g. http_build_query or SplFixedArray::offsetSet. At most 10.", "items": map[string]any{"type": "string"}},
+		"entry_points": map[string]any{"type": "array", "description": "Public functions or methods of the project the report goes through to reach the bug, e.g. http_build_query, SplFixedArray::offsetSet or Request.parse. At most 10.", "items": map[string]any{"type": "string"}},
 		"related": list("Public issues or pull requests of this repository already fixing or hardening the same code. Empty when none.", map[string]any{
 			"number":     map[string]any{"type": "integer", "description": "Issue or pull request number"},
 			"confidence": confidence,
@@ -439,9 +442,13 @@ func Render(r Report) string {
 	return b.String()
 }
 
-// Failed prevents a hostile report that never completes from being retried indefinitely.
-func Failed() string {
-	return Marker + "\n### Automated triage\n\nThe automated triage could not complete. A maintainer must review this report manually.\n"
+// Failed records a failed attempt, so a hostile report that never completes is not retried indefinitely.
+func Failed(retry bool) string {
+	if retry {
+		return FailedMarker + "\n### Automated triage\n\nThe automated triage could not complete. It will be retried.\n"
+	}
+
+	return FailedMarker + "\n### Automated triage\n\nThe automated triage could not complete. A maintainer must review this report manually.\n"
 }
 
 func label(confidence string) string {
