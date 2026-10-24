@@ -22,16 +22,13 @@ import (
 
 	"github.com/alpha-omega-security/harness/container"
 	"github.com/alpha-omega-security/harness/egress"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIsolatedNetworkReachesTheModelButNotOtherHostServices(t *testing.T) {
-	if os.Getenv("TAMIS_TEST_IMAGE") == "" {
-		t.Fatal("TAMIS_TEST_IMAGE is required")
-	}
+	require.NotEmpty(t, os.Getenv("TAMIS_TEST_IMAGE"), "TAMIS_TEST_IMAGE is required")
 	runtime, ok := container.DetectRuntime("")
-	if !ok {
-		t.Fatal("Docker is unavailable")
-	}
+	require.True(t, ok, "Docker is unavailable")
 	model, modelPort := testServer(t, "model")
 	secret, secretPort := testServer(t, "SECRET-PAYLOAD")
 	t.Cleanup(func() { _ = model.Close() })
@@ -40,25 +37,20 @@ func TestIsolatedNetworkReachesTheModelButNotOtherHostServices(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	run, err := startIsolatedRun(ctx, runtime, os.Getenv("TAMIS_TEST_IMAGE"), modelPort, false, allow)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(run.Close)
 	out, err := exec.CommandContext(ctx, runtime.Bin, "exec", "--", run.proxy, "getent", "hosts", egress.HostGatewayAlias).Output()
-	if err != nil || len(strings.Fields(string(out))) < 1 {
-		t.Fatalf("resolving the real host gateway: %v", err)
-	}
+	require.NoError(t, err, "resolving the real host gateway")
+	require.NotEmpty(t, strings.Fields(string(out)), "resolving the real host gateway")
 	hostIP := strings.Fields(string(out))[0]
 	out, err = exec.CommandContext(ctx, runtime.Bin, "network", "inspect", "--format", `{{.Internal}} {{.EnableIPv6}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv6"}}`, "--", run.network).Output()
-	if err != nil || strings.TrimSpace(string(out)) != "true false isolated isolated" {
-		t.Fatalf("unexpected network policy: %q, %v", out, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "true false isolated isolated", strings.TrimSpace(string(out)))
 	proxyURL := egress.EndpointURL(run.token, net.JoinHostPort(run.proxyIP, proxyPort))
 	cmd := exec.CommandContext(ctx, runtime.Bin, "run", "--rm", "--network", run.network, "--add-host", egress.HostGatewayAlias+":"+run.proxyIP, "-e", "http_proxy", "-e", "NO_PROXY", "-e", "MODEL_URL", "-e", "SECRET_URL", "-e", "PROXIED_SECRET_URL", "--", os.Getenv("TAMIS_TEST_IMAGE"), "sh", "-c", `test "$(curl -fsS --connect-timeout 5 "$MODEL_URL")" = model && ! curl -fsS --noproxy '*' --connect-timeout 2 "$SECRET_URL" && ! curl -fsS --connect-timeout 2 "$PROXIED_SECRET_URL" && ! curl -fsS --noproxy '*' --connect-timeout 2 'https://1.1.1.1' && ! curl -gfsS --noproxy '*' --connect-timeout 2 'https://[2606:4700:4700::1111]' && ! getent hosts example.com`)
 	cmd.Env = append(os.Environ(), "http_proxy="+proxyURL, "NO_PROXY=", "MODEL_URL=http://"+egress.HostGatewayAlias+":"+modelPort, "SECRET_URL=http://"+net.JoinHostPort(hostIP, secretPort), "PROXIED_SECRET_URL=http://"+egress.HostGatewayAlias+":"+secretPort)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("isolation probe: %v: %s", err, strings.TrimSpace(string(out)))
-	}
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, "isolation probe: %s", strings.TrimSpace(string(out)))
 }
 
 func TestClaudeCanReachTheFilteredModelProxy(t *testing.T) {
@@ -125,9 +117,7 @@ func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuff
 	t.Cleanup(func() { backends[name] = original })
 
 	reader, err := New(name, model, "test-key", image)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Close() })
 	reader.server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -181,9 +171,7 @@ func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuff
 		_, _ = w.Write(recorder.Body.Bytes())
 	})
 	_, readErr := reader.Read(t.Context(), Request{RepoPath: gitRepo(t), Prompt: "Answer", System: "System", Report: "Report", Schema: []byte(`{}`), Validate: func(json.RawMessage) error { return nil }})
-	if calls.Load() < 2 {
-		t.Fatalf("the legitimate %s request was blocked before the model provider: %v", name, errors.Unwrap(readErr))
-	}
+	require.GreaterOrEqual(t, calls.Load(), int32(2), "the legitimate %s request was blocked before the model provider: %v", name, errors.Unwrap(readErr))
 }
 
 func testServer(t *testing.T, response string) (*http.Server, string) {
@@ -194,9 +182,7 @@ func testServer(t *testing.T, response string) (*http.Server, string) {
 func testServerHandler(t *testing.T, handler http.HandlerFunc) (*http.Server, string) {
 	t.Helper()
 	listener, err := net.Listen("tcp4", ":0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	server := &http.Server{Handler: handler}
 	go func() { _ = server.Serve(listener) }()
 

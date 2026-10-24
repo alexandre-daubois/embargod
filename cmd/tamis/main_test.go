@@ -4,9 +4,11 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseSince(t *testing.T) {
@@ -16,38 +18,39 @@ func TestParseSince(t *testing.T) {
 		"2026-10-22T14:00:00Z": time.Date(2026, 10, 22, 14, 0, 0, 0, time.UTC),
 	} {
 		got, err := parseSince(in)
-		if err != nil || !got.Equal(want) {
-			t.Errorf("%q: got %v, %v", in, got, err)
-		}
+		assert.NoError(t, err, "%q", in)
+		assert.WithinDuration(t, want, got, 0, "%q", in)
 	}
 
-	if _, err := parseSince("yesterday"); err == nil {
-		t.Error("an invalid date should fail")
-	}
+	_, err := parseSince("yesterday")
+	assert.Error(t, err, "an invalid date should fail")
 }
 
 func TestNewEngine(t *testing.T) {
 	for name, want := range map[string]string{"": "claude", "claude": "claude", "openai": "codex"} {
-		if _, agent, model, err := newEngine(name, "", "key"); err != nil || agent != want || model == "" {
-			t.Errorf("%q: agent %q, model %q, %v", name, agent, model, err)
-		}
-	}
-	if eng, agent, model, err := newEngine("openai", "", "at-token"); err != nil || eng != nil || agent != "codex-token" || model != defaultCodexTokenModel {
-		t.Errorf("a Codex access token: engine %v, agent %q, model %q, %v", eng, agent, model, err)
-	}
-	if eng, agent, _, _ := newEngine("claude", "", "at-key"); eng == nil || agent != "claude" {
-		t.Errorf("only the openai engine reads a Codex access token, got agent %q", agent)
-	}
-	if _, _, model, _ := newEngine("claude", "claude-sonnet-5-5", "key"); model != "claude-sonnet-5-5" {
-		t.Errorf("an explicit model should be kept, got %q", model)
+		_, agent, model, err := newEngine(name, "", "key")
+		assert.NoError(t, err, "%q", name)
+		assert.Equal(t, want, agent, "%q", name)
+		assert.NotEmpty(t, model, "%q", name)
 	}
 
-	if _, _, _, err := newEngine("gemini", "", "key"); err == nil {
-		t.Error("an unknown engine should fail")
-	}
-	if _, _, _, err := newEngine("claude", "", ""); err == nil {
-		t.Error("a missing API key should fail")
-	}
+	eng, agent, model, err := newEngine("openai", "", "at-token")
+	assert.NoError(t, err, "a Codex access token")
+	assert.Nil(t, eng, "a Codex access token")
+	assert.Equal(t, "codex-token", agent, "a Codex access token")
+	assert.Equal(t, defaultCodexTokenModel, model, "a Codex access token")
+
+	eng, agent, _, _ = newEngine("claude", "", "at-key")
+	assert.NotNil(t, eng, "only the openai engine reads a Codex access token")
+	assert.Equal(t, "claude", agent, "only the openai engine reads a Codex access token")
+
+	_, _, model, _ = newEngine("claude", "claude-sonnet-5-5", "key")
+	assert.Equal(t, "claude-sonnet-5-5", model, "an explicit model should be kept")
+
+	_, _, _, err = newEngine("gemini", "", "key")
+	assert.Error(t, err, "an unknown engine should fail")
+	_, _, _, err = newEngine("claude", "", "")
+	assert.Error(t, err, "a missing API key should fail")
 }
 
 func TestRunValidatesConfiguration(t *testing.T) {
@@ -69,10 +72,7 @@ func TestRunValidatesConfiguration(t *testing.T) {
 				t.Setenv(k, tc.env[k])
 			}
 
-			err := run(context.Background(), log)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("want %q, got %v", tc.want, err)
-			}
+			require.ErrorContains(t, run(context.Background(), log), tc.want)
 		})
 	}
 }

@@ -7,84 +7,63 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/alpha-omega-security/harness"
 	"github.com/alpha-omega-security/harness/container"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSnapshotSourceCopiesOnlyTrackedContentAndHistory(t *testing.T) {
 	repo := gitRepo(t)
-	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("tracked"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("tracked"), 0o600))
 	git(t, repo, "add", "--", "tracked.txt")
 	git(t, repo, "commit", "--quiet", "--no-gpg-sign", "-m", "tracked")
-	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("SECRET"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("SECRET"), 0o600))
 	configPath := filepath.Join(repo, ".git", "config")
 	config, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(configPath, append(config, []byte("\n[http]\nextraheader = AUTHORIZATION: basic SECRET\n")...), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, append(config, []byte("\n[http]\nextraheader = AUTHORIZATION: basic SECRET\n")...), 0o600))
 
 	target := filepath.Join(t.TempDir(), "src")
-	if err := snapshotSource(t.Context(), repo, target); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := os.ReadFile(filepath.Join(target, "tracked.txt")); err != nil || string(got) != "tracked" {
-		t.Errorf("tracked file = %q, %v", got, err)
-	}
+	require.NoError(t, snapshotSource(t.Context(), repo, target))
+	got, err := os.ReadFile(filepath.Join(target, "tracked.txt"))
+	assert.NoError(t, err)
+	assert.Equal(t, "tracked", string(got))
 	for _, path := range []string{"untracked.txt", filepath.Join(".git", "modules")} {
-		if _, err := os.Stat(filepath.Join(target, path)); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("untracked path %q reached the snapshot", path)
-		}
+		_, err := os.Stat(filepath.Join(target, path))
+		assert.ErrorIs(t, err, os.ErrNotExist, "untracked path %q reached the snapshot", path)
 	}
-	if config, err := os.ReadFile(filepath.Join(target, ".git", "config")); err != nil || len(config) != 0 {
-		t.Errorf("snapshot config = %q, %v", config, err)
-	}
+	config, err = os.ReadFile(filepath.Join(target, ".git", "config"))
+	assert.NoError(t, err)
+	assert.Empty(t, config)
 	git(t, target, "log", "-1", "--format=%s")
 }
 
 func TestSnapshotSourceRejectsADirectoryWithoutGit(t *testing.T) {
-	if err := snapshotSource(t.Context(), t.TempDir(), filepath.Join(t.TempDir(), "src")); err == nil {
-		t.Fatal("a source without git must be refused")
-	}
+	require.Error(t, snapshotSource(t.Context(), t.TempDir(), filepath.Join(t.TempDir(), "src")), "a source without git must be refused")
 }
 
 func TestSnapshotSourceStopsWithItsContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := snapshotSource(ctx, gitRepo(t), filepath.Join(t.TempDir(), "src")); err == nil {
-		t.Fatal("a canceled snapshot must fail")
-	}
+	require.Error(t, snapshotSource(ctx, gitRepo(t), filepath.Join(t.TempDir(), "src")), "a canceled snapshot must fail")
 }
 
 func TestSnapshotSourceUsesTheConfiguredBranch(t *testing.T) {
 	source := gitRepo(t)
 	git(t, source, "branch", "stable")
-	if err := os.WriteFile(filepath.Join(source, "new.txt"), []byte("HEAD-only"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(source, "new.txt"), []byte("HEAD-only"), 0o600))
 	git(t, source, "add", "--", "new.txt")
 	git(t, source, "commit", "--quiet", "--no-gpg-sign", "-m", "new branch code")
 	target := filepath.Join(t.TempDir(), "src")
-	if err := SnapshotSource(t.Context(), source, target, "stable"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(target, "new.txt")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("HEAD code reached the stable snapshot")
-	}
+	require.NoError(t, SnapshotSource(t.Context(), source, target, "stable"))
+	_, err := os.Stat(filepath.Join(target, "new.txt"))
+	require.ErrorIs(t, err, os.ErrNotExist, "HEAD code reached the stable snapshot")
 	for _, ref := range []string{"missing", "--upload-pack=malicious"} {
-		if err := SnapshotSource(t.Context(), source, filepath.Join(t.TempDir(), "src"), ref); err == nil {
-			t.Fatal("invalid reference accepted")
-		}
+		require.Error(t, SnapshotSource(t.Context(), source, filepath.Join(t.TempDir(), "src"), ref), "invalid reference accepted")
 	}
 }
 
@@ -102,94 +81,81 @@ func gitRepo(t *testing.T) string {
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
-	}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git %v: %s", args, out)
 }
 
 func TestNewRejectsUnknownAgents(t *testing.T) {
-	if _, err := New("gemini", "m", "key", ""); err == nil || !strings.Contains(err.Error(), "unknown agent") {
-		t.Fatalf("got %v", err)
-	}
+	_, err := New("gemini", "m", "key", "")
+	require.ErrorContains(t, err, "unknown agent")
 }
 
 func TestErrorHidesTheAgentOutput(t *testing.T) {
 	err := &Error{err: errors.New("exit status 1: stderr quoting SECRET-PAYLOAD")}
 
-	if err.Error() != "the agent run failed" || !strings.Contains(errors.Unwrap(err).Error(), "SECRET-PAYLOAD") {
-		t.Fatalf("got %q", err.Error())
-	}
+	require.EqualError(t, err, "the agent run failed")
+	require.ErrorContains(t, errors.Unwrap(err), "SECRET-PAYLOAD")
 }
 
 func TestBoundedWriterRetainsOnlyTheOutputLimit(t *testing.T) {
 	var w boundedWriter
 	want := strings.Repeat("a", maxAgentOutput)
-	if n, err := w.Write([]byte(want)); err != nil || n != len(want) || w.String() != want {
-		t.Fatalf("bounded output: %d, %v, %d bytes", n, err, len(w.String()))
-	}
+	n, err := w.Write([]byte(want))
+	require.NoError(t, err)
+	require.Equal(t, len(want), n)
+	require.Equal(t, want, w.String())
 }
 
 func TestBoundedWriterDiscardsOutputPastTheLimit(t *testing.T) {
 	var w boundedWriter
 	overflow := strings.Repeat("a", maxAgentOutput+1)
-	if n, err := w.Write([]byte(overflow)); err != nil || n != len(overflow) || len(w.String()) != maxAgentOutput {
-		t.Fatalf("bounded output: %d, %v, %d bytes", n, err, len(w.String()))
-	}
+	n, err := w.Write([]byte(overflow))
+	require.NoError(t, err)
+	require.Equal(t, len(overflow), n)
+	require.Len(t, w.String(), maxAgentOutput)
 }
 
 func TestAgentContainerUsesOnlyThePrivateProxyAndLimitsResources(t *testing.T) {
 	h, err := harness.ByName("claude")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	run := &isolatedRun{runtime: container.Runtime{Bin: "docker"}, image: "agent", network: "private", proxyIP: "172.20.0.2", agent: "work"}
 	args := run.agentArgs(h, harness.Job{Workspace: container.WorkMount}, "/host/work", "/host/state", "/host/work/report.json", "ANTHROPIC_API_KEY")
 	joined := strings.Join(args, " ")
 	for _, want := range []string{"host.docker.internal:172.20.0.2", "--network private", "--pids-limit 256", "--memory 2g", "--cpus 2", "src=/host/work,dst=/work,readonly", "--name work", "--log-driver none"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("container args miss %q: %s", want, joined)
-		}
+		assert.Contains(t, joined, want)
 	}
-	if strings.Contains(joined, "host.docker.internal:host-gateway") {
-		t.Fatalf("the hostile container can reach the host gateway: %s", joined)
-	}
+	require.NotContains(t, joined, "host.docker.internal:host-gateway", "the hostile container can reach the host gateway")
 }
 
 func TestAccessTokenContainerGetsNoAmbientAPIKey(t *testing.T) {
 	t.Setenv("CODEX_API_KEY", "ambient-secret")
 	h, err := harness.ByName("codex")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	run := &isolatedRun{image: "agent", network: "private", proxyIP: "172.20.0.2", agent: "work"}
 	args := run.agentArgs(h, harness.Job{Workspace: container.WorkMount}, "/host/work", "/host/state", "/host/work/report.json", "CODEX_ACCESS_TOKEN")
 	for i, arg := range args {
-		if arg == "CODEX_API_KEY" || strings.HasPrefix(arg, "CODEX_API_KEY=") {
-			t.Fatalf("ambient API key reached argument %d: %s", i, arg)
-		}
+		require.NotEqual(t, "CODEX_API_KEY", arg, "ambient API key reached argument %d", i)
+		require.False(t, strings.HasPrefix(arg, "CODEX_API_KEY="), "ambient API key reached argument %d: %s", i, arg)
 	}
-	if !slices.Contains(args, "CODEX_ACCESS_TOKEN") {
-		t.Fatal("access token key was not injected")
-	}
+	require.Contains(t, args, "CODEX_ACCESS_TOKEN", "access token key was not injected")
 }
 
 func TestOnlyDockerCanStartAnIsolatedRun(t *testing.T) {
-	if _, err := startIsolatedRun(t.Context(), container.Runtime{Bin: "podman"}, "agent", "1234", false, allow); err == nil {
-		t.Fatal("an unsupported runtime must fail closed")
-	}
+	_, err := startIsolatedRun(t.Context(), container.Runtime{Bin: "podman"}, "agent", "1234", false, allow)
+	require.Error(t, err, "an unsupported runtime must fail closed")
 }
 
 func TestReadOutputIsBounded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "report.json")
 	for name, size := range map[string]int{"valid": 1 << 20, "too large": 1<<20 + 1} {
 		t.Run(name, func(t *testing.T) {
-			if err := os.WriteFile(path, make([]byte, size), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(path, make([]byte, size), 0o600))
 			_, err := readOutput(path)
-			if (err != nil) != (name == "too large") {
-				t.Fatalf("error = %v", err)
+			if name == "too large" {
+				require.Error(t, err)
+				return
 			}
+			require.NoError(t, err)
 		})
 	}
 }
@@ -201,9 +167,11 @@ func TestBackends(t *testing.T) {
 		"codex-token": {"codex", "CODEX_ACCESS_TOKEN", "/model-proxy/backend-api/codex"},
 	} {
 		b, ok := backends[name]
-		if !ok || b.harness != want.harness || b.keyEnv != want.keyEnv || b.basePath != want.basePath || b.accessToken != (name == "codex-token") {
-			t.Errorf("%s: %+v", name, b)
-		}
+		assert.True(t, ok, name)
+		assert.Equal(t, want.harness, b.harness, name)
+		assert.Equal(t, want.keyEnv, b.keyEnv, name)
+		assert.Equal(t, want.basePath, b.basePath, name)
+		assert.Equal(t, name == "codex-token", b.accessToken, name)
 	}
 }
 
@@ -226,23 +194,26 @@ func TestWriteConfig(t *testing.T) {
 
 			err := r.writeConfig(state, "https://proxy:1")
 
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("error = %v", err)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
 			got, _ := os.ReadFile(filepath.Join(state, "config.toml"))
-			if (len(got) > 0) != tc.wantConfig {
-				t.Fatalf("config.toml = %q", got)
+			if tc.wantConfig {
+				require.NotEmpty(t, got)
+			} else {
+				require.Empty(t, got)
 			}
 			for _, want := range []string{"model_provider = \"tamis\"", "supports_websockets = false", "plugins = false", "[analytics]\nenabled = false", "chatgpt_base_url = \"https://proxy:1/model-proxy/backend-api\"", "base_url = \"https://proxy:1" + backends[tc.backend].basePath + "\""} {
-				if tc.wantConfig && !strings.Contains(string(got), want) {
-					t.Fatalf("config.toml misses %q: %q", want, got)
+				if tc.wantConfig {
+					require.Contains(t, string(got), want)
 				}
 			}
 			ca, _ := os.ReadFile(filepath.Join(state, caFile))
 			tokenAuth := strings.Contains(string(got), "requires_openai_auth = true") && !strings.Contains(string(got), "env_key")
-			if tokenAuth != (tc.backend == "codex-token") || (string(ca) == "CA") != tokenAuth {
-				t.Fatalf("access token config = %q, CA = %q", got, ca)
-			}
+			require.Equal(t, tc.backend == "codex-token", tokenAuth, "access token config = %q, CA = %q", got, ca)
+			require.Equal(t, tokenAuth, string(ca) == "CA", "access token config = %q, CA = %q", got, ca)
 		})
 	}
 }
@@ -252,11 +223,8 @@ func TestImagesArePinnedByDigest(t *testing.T) {
 	agents := map[string]bool{}
 	for _, b := range backends {
 		agents[b.harness] = true
-		if image := Images[b.harness]; !pinned.MatchString(image) {
-			t.Errorf("%s: %q is not pinned by digest", b.harness, image)
-		}
+		image := Images[b.harness]
+		assert.Regexp(t, pinned, image, "%s: %q is not pinned by digest", b.harness, image)
 	}
-	if len(Images) != len(agents) {
-		t.Errorf("images.json lists %d images for %d agents", len(Images), len(agents))
-	}
+	assert.Len(t, Images, len(agents))
 }

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/alexandre-daubois/tamis/internal/usage"
 )
 
@@ -21,9 +23,7 @@ func spend(t *testing.T, p Provider, route string, status int, contentType, body
 	t.Cleanup(up.Close)
 	p.Upstream = up.URL
 	mp, err := New(p, "real-key", "allowed")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	token, revoke := mp.Issue(t.Context())
 	srv := httptest.NewServer(mp)
 	t.Cleanup(srv.Close)
@@ -61,9 +61,7 @@ func TestUsageOfAResponse(t *testing.T) {
 		"token count": {Anthropic, "/v1/messages/count_tokens", "application/json", `{"input_tokens":10}`, usage.Usage{}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := spend(t, tc.provider, tc.route, http.StatusOK, tc.contentType, tc.body); got != tc.want {
-				t.Fatalf("got %+v, want %+v", got, tc.want)
-			}
+			require.Equal(t, tc.want, spend(t, tc.provider, tc.route, http.StatusOK, tc.contentType, tc.body))
 		})
 	}
 }
@@ -78,9 +76,7 @@ func TestUsageReaderKeepsAnUnterminatedLastEvent(t *testing.T) {
 
 	io.Copy(io.Discard, r)
 
-	if got != (usage.Usage{Requests: 1, InputTokens: 3, OutputTokens: 2}) {
-		t.Fatalf("got %+v", got)
-	}
+	require.Equal(t, usage.Usage{Requests: 1, InputTokens: 3, OutputTokens: 2}, got)
 }
 
 func TestUsageReaderCountsAStreamClosedEarly(t *testing.T) {
@@ -96,17 +92,14 @@ func TestUsageReaderCountsAStreamClosedEarly(t *testing.T) {
 	r.Close()
 	r.Close()
 
-	if len(calls) != 1 || calls[0] != (usage.Usage{Requests: 1, InputTokens: 10, OutputTokens: 1}) {
-		t.Fatalf("got %+v", calls)
-	}
+	require.Len(t, calls, 1)
+	require.Equal(t, usage.Usage{Requests: 1, InputTokens: 10, OutputTokens: 1}, calls[0])
 }
 
 func TestUsageSkipsFailedRequests(t *testing.T) {
 	got := spend(t, Anthropic, "/v1/messages", http.StatusTooManyRequests, "application/json", `{"usage":{"input_tokens":10,"output_tokens":5}}`)
 
-	if got != (usage.Usage{}) {
-		t.Fatalf("a failed request was counted: %+v", got)
-	}
+	require.Zero(t, got, "a failed request was counted")
 }
 
 func TestUsageIsCountedPerToken(t *testing.T) {
@@ -118,9 +111,7 @@ func TestUsageIsCountedPerToken(t *testing.T) {
 	p := Anthropic
 	p.Upstream = up.URL
 	mp, err := New(p, "real-key", "allowed")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	srv := httptest.NewServer(mp)
 	t.Cleanup(srv.Close)
 	first, revokeFirst := mp.Issue(t.Context())
@@ -132,13 +123,7 @@ func TestUsageIsCountedPerToken(t *testing.T) {
 		resp.Body.Close()
 	}
 
-	if got := revokeSecond(); got != (usage.Usage{}) {
-		t.Fatalf("the second run was charged: %+v", got)
-	}
-	if got := revokeFirst(); got != (usage.Usage{Requests: 2, InputTokens: 20, OutputTokens: 10}) {
-		t.Fatalf("got %+v", got)
-	}
-	if got := revokeFirst(); got != (usage.Usage{}) {
-		t.Fatalf("a revoked token still reports usage: %+v", got)
-	}
+	require.Zero(t, revokeSecond(), "the second run was charged")
+	require.Equal(t, usage.Usage{Requests: 2, InputTokens: 20, OutputTokens: 10}, revokeFirst())
+	require.Zero(t, revokeFirst(), "a revoked token still reports usage")
 }

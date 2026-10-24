@@ -3,15 +3,15 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
 	openaioption "github.com/openai/openai-go/v3/option"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/alexandre-daubois/tamis/internal/tools"
 	"github.com/alexandre-daubois/tamis/internal/usage"
@@ -25,7 +25,7 @@ func scripted(t *testing.T, responses ...string) (*httptest.Server, *[]string) {
 		body, _ := io.ReadAll(r.Body)
 		requests = append(requests, r.Header.Get("anthropic-beta")+" "+string(body))
 		if len(requests) > len(responses) {
-			t.Errorf("unexpected request %d: %s", len(requests), body)
+			assert.Failf(t, "unexpected request", "%d: %s", len(requests), body)
 			http.Error(w, "no more responses", http.StatusInternalServerError)
 			return
 		}
@@ -62,34 +62,20 @@ func TestClaudeRunsToolsUntilSubmit(t *testing.T) {
 
 	got, err := NewClaude("key", "claude-opus-5-5", anthropicoption.WithBaseURL(srv.URL), anthropicoption.WithMaxRetries(0)).
 		Run(ctx, "system", "prompt", testTools(&calls))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := spent(); got != (usage.Usage{Requests: 3, InputTokens: 18, OutputTokens: 12}) {
-		t.Errorf("usage = %+v", got)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, usage.Usage{Requests: 3, InputTokens: 18, OutputTokens: 12}, spent())
 
-	if string(got) != `{"summary":"ok"}` {
-		t.Fatalf("report = %s", got)
-	}
-	if len(calls) != 1 || calls[0] != `{"q":"x"}` {
-		t.Fatalf("tool calls = %v", calls)
-	}
+	require.Equal(t, `{"summary":"ok"}`, string(got))
+	require.Len(t, calls, 1)
+	require.Equal(t, `{"q":"x"}`, calls[0])
 	first, second, third := (*requests)[0], (*requests)[1], (*requests)[2]
 	for _, want := range []string{`"effort":"high"`, `"name":"submit"`, `"cache_control":{"type":"ephemeral"}`, `"input_schema":{"properties":{},`} {
-		if !strings.Contains(first, want) {
-			t.Errorf("first request misses %s: %s", want, first)
-		}
+		assert.Contains(t, first, want)
 	}
-	if strings.Contains(first, "fallback") {
-		t.Fatalf("an unapproved fallback was enabled: %s", first)
-	}
-	if !strings.Contains(second, `"tool_use_id":"tu1"`) || !strings.Contains(second, "lookup result") {
-		t.Errorf("second request misses the tool result: %s", second)
-	}
-	if !strings.Contains(third, nudge) {
-		t.Errorf("third request misses the nudge: %s", third)
-	}
+	require.NotContains(t, first, "fallback", "an unapproved fallback was enabled")
+	assert.Contains(t, second, `"tool_use_id":"tu1"`, "second request misses the tool result")
+	assert.Contains(t, second, "lookup result", "second request misses the tool result")
+	assert.Contains(t, third, nudge, "third request misses the nudge")
 }
 
 func TestClaudeRefusal(t *testing.T) {
@@ -98,12 +84,9 @@ func TestClaudeRefusal(t *testing.T) {
 	_, err := NewClaude("key", "m", anthropicoption.WithBaseURL(srv.URL), anthropicoption.WithMaxRetries(0)).
 		Run(context.Background(), "s", "p", testTools(new([]string)))
 	var refusal *RefusalError
-	if !errors.As(err, &refusal) || refusal.Category != "cyber" {
-		t.Fatalf("want a cyber refusal, got %v", err)
-	}
-	if strings.Contains(err.Error(), "SECRET-PAYLOAD") {
-		t.Fatalf("the explanation leaked: %v", err)
-	}
+	require.ErrorAs(t, err, &refusal, "want a cyber refusal")
+	require.Equal(t, "cyber", refusal.Category, "want a cyber refusal")
+	require.NotContains(t, err.Error(), "SECRET-PAYLOAD", "the explanation leaked")
 }
 
 func TestClaudeGivesUpWithoutReport(t *testing.T) {
@@ -115,9 +98,7 @@ func TestClaudeGivesUpWithoutReport(t *testing.T) {
 
 	_, err := NewClaude("key", "m", anthropicoption.WithBaseURL(srv.URL), anthropicoption.WithMaxRetries(0)).
 		Run(context.Background(), "s", "p", testTools(new([]string)))
-	if !errors.Is(err, ErrNoReport) {
-		t.Fatalf("want ErrNoReport, got %v", err)
-	}
+	require.ErrorIs(t, err, ErrNoReport)
 }
 
 func TestRequestLimitStopsTheModelLoop(t *testing.T) {
@@ -125,9 +106,8 @@ func TestRequestLimitStopsTheModelLoop(t *testing.T) {
 	ctx := WithRequestLimit(context.Background(), 1)
 	_, err := NewClaude("key", "m", anthropicoption.WithBaseURL(srv.URL), anthropicoption.WithMaxRetries(0)).
 		Run(ctx, "s", "p", testTools(new([]string)))
-	if !errors.Is(err, ErrNoReport) || len(*requests) != 1 {
-		t.Fatalf("error %v after %d requests", err, len(*requests))
-	}
+	require.ErrorIs(t, err, ErrNoReport)
+	require.Len(t, *requests, 1)
 }
 
 func TestClaudeAPIError(t *testing.T) {
@@ -139,16 +119,13 @@ func TestClaudeAPIError(t *testing.T) {
 
 	_, err := NewClaude("key", "m", anthropicoption.WithBaseURL(srv.URL), anthropicoption.WithMaxRetries(0)).
 		Run(ctx, "s", "p", testTools(new([]string)))
-	if got := spent(); got != (usage.Usage{}) {
-		t.Errorf("a failed request was counted: %+v", got)
-	}
+	assert.Zero(t, spent(), "a failed request was counted")
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadRequest || apiErr.Provider != "anthropic" {
-		t.Fatalf("want an anthropic HTTP 400, got %v", err)
-	}
-	if strings.Contains(err.Error(), "SECRET-PAYLOAD") || strings.Contains(err.Error(), srv.URL) {
-		t.Fatalf("the response body or URL leaked: %v", err)
-	}
+	require.ErrorAs(t, err, &apiErr, "want an anthropic HTTP 400")
+	require.Equal(t, http.StatusBadRequest, apiErr.Status, "want an anthropic HTTP 400")
+	require.Equal(t, "anthropic", apiErr.Provider, "want an anthropic HTTP 400")
+	require.NotContains(t, err.Error(), "SECRET-PAYLOAD", "the response body or URL leaked")
+	require.NotContains(t, err.Error(), srv.URL, "the response body or URL leaked")
 }
 
 func openaiCompletion(message string) string {
@@ -166,29 +143,18 @@ func TestOpenAIRunsToolsUntilSubmit(t *testing.T) {
 
 	got, err := NewOpenAI("key", "gpt-5.5", openaioption.WithBaseURL(srv.URL), openaioption.WithMaxRetries(0)).
 		Run(ctx, "system", "prompt", testTools(&calls))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := spent(); got != (usage.Usage{Requests: 3, InputTokens: 15, OutputTokens: 6}) {
-		t.Errorf("usage = %+v", got)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, usage.Usage{Requests: 3, InputTokens: 15, OutputTokens: 6}, spent())
 
-	if string(got) != `{"summary":"ok"}` {
-		t.Fatalf("report = %s", got)
-	}
-	if len(calls) != 1 || calls[0] != `{"q":"x"}` {
-		t.Fatalf("tool calls = %v", calls)
-	}
+	require.Equal(t, `{"summary":"ok"}`, string(got))
+	require.Len(t, calls, 1)
+	require.Equal(t, `{"q":"x"}`, calls[0])
 	first, second, third := (*requests)[0], (*requests)[1], (*requests)[2]
-	if !strings.Contains(first, `"reasoning_effort":"high"`) || !strings.Contains(first, `"required":[]`) {
-		t.Errorf("unexpected first request: %s", first)
-	}
-	if !strings.Contains(second, `"tool_call_id":"call1"`) || !strings.Contains(second, "lookup result") {
-		t.Errorf("second request misses the tool result: %s", second)
-	}
-	if !strings.Contains(third, nudge) {
-		t.Errorf("third request misses the nudge: %s", third)
-	}
+	assert.Contains(t, first, `"reasoning_effort":"high"`, "unexpected first request")
+	assert.Contains(t, first, `"required":[]`, "unexpected first request")
+	assert.Contains(t, second, `"tool_call_id":"call1"`, "second request misses the tool result")
+	assert.Contains(t, second, "lookup result", "second request misses the tool result")
+	assert.Contains(t, third, nudge, "third request misses the nudge")
 }
 
 func TestOpenAIRefusal(t *testing.T) {
@@ -197,9 +163,8 @@ func TestOpenAIRefusal(t *testing.T) {
 	_, err := NewOpenAI("key", "m", openaioption.WithBaseURL(srv.URL), openaioption.WithMaxRetries(0)).
 		Run(context.Background(), "s", "p", testTools(new([]string)))
 	var refusal *RefusalError
-	if !errors.As(err, &refusal) || strings.Contains(err.Error(), "SECRET-PAYLOAD") {
-		t.Fatalf("want a refusal error without its text, got %v", err)
-	}
+	require.ErrorAs(t, err, &refusal, "want a refusal error without its text")
+	require.NotContains(t, err.Error(), "SECRET-PAYLOAD", "want a refusal error without its text")
 }
 
 func TestOpenAIAPIError(t *testing.T) {
@@ -211,12 +176,10 @@ func TestOpenAIAPIError(t *testing.T) {
 	_, err := NewOpenAI("key", "m", openaioption.WithBaseURL(srv.URL), openaioption.WithMaxRetries(0)).
 		Run(context.Background(), "s", "p", testTools(new([]string)))
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadRequest || apiErr.Provider != "openai" {
-		t.Fatalf("want an openai HTTP 400, got %v", err)
-	}
-	if strings.Contains(err.Error(), "SECRET-PAYLOAD") {
-		t.Fatalf("the response body leaked: %v", err)
-	}
+	require.ErrorAs(t, err, &apiErr, "want an openai HTTP 400")
+	require.Equal(t, http.StatusBadRequest, apiErr.Status, "want an openai HTTP 400")
+	require.Equal(t, "openai", apiErr.Provider, "want an openai HTTP 400")
+	require.NotContains(t, err.Error(), "SECRET-PAYLOAD", "the response body leaked")
 }
 
 func TestNetworkErrorsKeepNoDetail(t *testing.T) {
@@ -230,9 +193,10 @@ func TestNetworkErrorsKeepNoDetail(t *testing.T) {
 	} {
 		_, err := eng.Run(context.Background(), "s", "SECRET-PAYLOAD", testTools(new([]string)))
 		var apiErr *APIError
-		if !errors.As(err, &apiErr) || apiErr.Provider != name || apiErr.Status != 0 || err.Error() != name+": request failed" {
-			t.Errorf("%s: got %v", name, err)
-		}
+		require.ErrorAs(t, err, &apiErr, "%s", name)
+		assert.Equal(t, name, apiErr.Provider, "%s", name)
+		assert.Zero(t, apiErr.Status, "%s", name)
+		assert.EqualError(t, err, name+": request failed", "%s", name)
 	}
 }
 
@@ -241,9 +205,7 @@ func TestOpenAIEmptyCompletion(t *testing.T) {
 
 	_, err := NewOpenAI("key", "m", openaioption.WithBaseURL(srv.URL), openaioption.WithMaxRetries(0)).
 		Run(context.Background(), "s", "p", testTools(new([]string)))
-	if err == nil || err.Error() != "empty completion" {
-		t.Fatalf("got %v", err)
-	}
+	require.EqualError(t, err, "empty completion")
 }
 
 func TestErrorMessages(t *testing.T) {
@@ -253,9 +215,7 @@ func TestErrorMessages(t *testing.T) {
 		&RefusalError{}:                               "the model refused",
 		&RefusalError{Category: "bio"}:                `the model refused (category "bio")`,
 	} {
-		if err.Error() != want {
-			t.Errorf("got %q, want %q", err.Error(), want)
-		}
+		assert.EqualError(t, err, want)
 	}
 }
 
@@ -281,13 +241,12 @@ func TestClaudeRetriesAnInvalidSubmission(t *testing.T) {
 
 	got, err := NewClaude("key", "m", anthropicoption.WithBaseURL(srv.URL), anthropicoption.WithMaxRetries(0)).
 		Run(context.Background(), "s", "p", validatingTools())
-	if err != nil || string(got) != `{"summary":"ok"}` {
-		t.Fatalf("got %s, %v", got, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, `{"summary":"ok"}`, string(got))
 	second := (*requests)[1]
-	if !strings.Contains(second, `"tool_use_id":"tu1"`) || !strings.Contains(second, `"is_error":true`) || !strings.Contains(second, "does not match the schema") {
-		t.Errorf("the model should get the validation error: %s", second)
-	}
+	assert.Contains(t, second, `"tool_use_id":"tu1"`, "the model should get the validation error")
+	assert.Contains(t, second, `"is_error":true`, "the model should get the validation error")
+	assert.Contains(t, second, "does not match the schema", "the model should get the validation error")
 }
 
 func TestOpenAIRetriesAnInvalidSubmission(t *testing.T) {
@@ -298,10 +257,9 @@ func TestOpenAIRetriesAnInvalidSubmission(t *testing.T) {
 
 	got, err := NewOpenAI("key", "m", openaioption.WithBaseURL(srv.URL), openaioption.WithMaxRetries(0)).
 		Run(context.Background(), "s", "p", validatingTools())
-	if err != nil || string(got) != `{"summary":"ok"}` {
-		t.Fatalf("got %s, %v", got, err)
-	}
-	if second := (*requests)[1]; !strings.Contains(second, `"tool_call_id":"call1"`) || !strings.Contains(second, "does not match the schema") {
-		t.Errorf("the model should get the validation error: %s", second)
-	}
+	require.NoError(t, err)
+	require.Equal(t, `{"summary":"ok"}`, string(got))
+	second := (*requests)[1]
+	assert.Contains(t, second, `"tool_call_id":"call1"`, "the model should get the validation error")
+	assert.Contains(t, second, "does not match the schema", "the model should get the validation error")
 }

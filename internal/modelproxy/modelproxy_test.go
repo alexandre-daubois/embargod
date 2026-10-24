@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/alexandre-daubois/tamis/internal/budget"
 )
 
@@ -49,9 +52,7 @@ func setup(t *testing.T, p Provider, status int) (*httptest.Server, *[]upstreamC
 	}
 
 	mp, err := New(p, "real-key", "allowed")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	token, revoke := mp.Issue(t.Context())
 	srv := httptest.NewServer(mp)
 	t.Cleanup(srv.Close)
@@ -68,14 +69,10 @@ func call(t *testing.T, srv *httptest.Server, method, path string, header http.H
 func callBody(t *testing.T, srv *httptest.Server, method, path, body string, header http.Header) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	req.Header = header
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { resp.Body.Close() })
 
 	return resp
@@ -94,16 +91,14 @@ func TestAnthropicSwapsTheToken(t *testing.T) {
 
 	resp := call(t, srv, http.MethodPost, PathPrefix+"/v1/messages?beta=true", withKey("X-Api-Key", token))
 
-	if resp.StatusCode != http.StatusOK || resp.Header.Get("Set-Cookie") != "" {
-		t.Fatalf("status %d, set-cookie %q", resp.StatusCode, resp.Header.Get("Set-Cookie"))
-	}
-	if len(*calls) != 1 {
-		t.Fatalf("calls = %+v", *calls)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, resp.Header.Get("Set-Cookie"))
+	require.Len(t, *calls, 1)
 	got := (*calls)[0]
-	if got.path != "/v1/messages" || got.apiKey != "real-key" || got.auth != "" || got.cookie != "" {
-		t.Fatalf("upstream got %+v", got)
-	}
+	require.Equal(t, "/v1/messages", got.path)
+	require.Equal(t, "real-key", got.apiKey)
+	require.Empty(t, got.auth)
+	require.Empty(t, got.cookie)
 }
 
 func TestOpenAISwapsTheBearerToken(t *testing.T) {
@@ -112,19 +107,17 @@ func TestOpenAISwapsTheBearerToken(t *testing.T) {
 	body := `{"model":"allowed","input":[{"type":"message","id":"msg_current","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`
 	resp := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", body, withKey("Authorization", "Bearer "+token))
 
-	if resp.StatusCode != http.StatusOK || len(*calls) != 1 || (*calls)[0].auth != "Bearer real-key" || (*calls)[0].apiKey != "" {
-		t.Fatalf("status %d, calls %+v", resp.StatusCode, *calls)
-	}
-	if !strings.Contains((*calls)[0].body, `"store":false`) || !strings.Contains((*calls)[0].body, `"background":false`) {
-		t.Fatalf("unsafe OpenAI defaults were not overridden: %s", (*calls)[0].body)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, *calls, 1)
+	require.Equal(t, "Bearer real-key", (*calls)[0].auth)
+	require.Empty(t, (*calls)[0].apiKey)
+	require.Contains(t, (*calls)[0].body, `"store":false`, "unsafe OpenAI defaults were not overridden")
+	require.Contains(t, (*calls)[0].body, `"background":false`, "unsafe OpenAI defaults were not overridden")
 }
 
 func TestChatGPTSwapsTheAccessTokenOnBothUpstreams(t *testing.T) {
 	srv, calls, token := setup(t, ChatGPT, http.StatusOK)
-	if !strings.HasPrefix(token, "at-tamis-") {
-		t.Fatalf("Codex only reads a token starting with at- as an access token: %q", token)
-	}
+	require.True(t, strings.HasPrefix(token, "at-tamis-"), "Codex only reads a token starting with at- as an access token: %q", token)
 
 	whoami := call(t, srv, http.MethodGet, PathPrefix+"/auth/v1/user-auth-credential/whoami", withKey("Authorization", "Bearer "+token))
 	identity, _ := io.ReadAll(whoami.Body)
@@ -134,23 +127,28 @@ func TestChatGPTSwapsTheAccessTokenOnBothUpstreams(t *testing.T) {
 	managed, _ := io.ReadAll(bundle.Body)
 	responses := call(t, srv, http.MethodPost, PathPrefix+"/backend-api/codex/responses", backendKey)
 
-	if whoami.StatusCode != http.StatusOK || bundle.StatusCode != http.StatusOK || responses.StatusCode != http.StatusOK || len(*calls) != 3 {
-		t.Fatalf("statuses %d, %d and %d, calls %+v", whoami.StatusCode, bundle.StatusCode, responses.StatusCode, *calls)
-	}
+	require.Equal(t, http.StatusOK, whoami.StatusCode)
+	require.Equal(t, http.StatusOK, bundle.StatusCode)
+	require.Equal(t, http.StatusOK, responses.StatusCode)
+	require.Len(t, *calls, 3)
 	for i, want := range []string{"/api/accounts/v1/user-auth-credential/whoami", "/backend-api/wham/config/bundle", "/backend-api/codex/responses"} {
-		if got := (*calls)[i]; got.path != want || got.auth != "Bearer real-key" || got.cookie != "" {
-			t.Errorf("upstream got %+v, want path %s", got, want)
-		}
+		got := (*calls)[i]
+		assert.Equal(t, want, got.path)
+		assert.Equal(t, "Bearer real-key", got.auth, want)
+		assert.Empty(t, got.cookie, want)
 	}
-	if (*calls)[0].accountID != "" || (*calls)[1].accountID != "account-secret" || (*calls)[2].accountID != "account-secret" {
-		t.Errorf("workspace identity was not applied server-side only: %+v", *calls)
-	}
-	if strings.Contains(string(identity), "secret") || strings.Contains(string(identity), "security@example.com") || !strings.Contains(string(identity), `"chatgpt_account_id":"tamis"`) || strings.Contains(string(managed), "internal") || !strings.Contains(string(managed), `"enterprise_managed":[]`) {
-		t.Errorf("private workspace response reached the agent: identity %s, bundle %s", identity, managed)
-	}
-	if body := (*calls)[2].body; !strings.Contains(body, `"store":false`) || strings.Contains(body, "background") || strings.Contains(body, "max_output_tokens") {
-		t.Errorf("the ChatGPT backend only accepts store set to false: %s", body)
-	}
+	assert.Empty(t, (*calls)[0].accountID, "workspace identity was not applied server-side only")
+	assert.Equal(t, "account-secret", (*calls)[1].accountID, "workspace identity was not applied server-side only")
+	assert.Equal(t, "account-secret", (*calls)[2].accountID, "workspace identity was not applied server-side only")
+	assert.NotContains(t, string(identity), "secret", "private workspace response reached the agent")
+	assert.NotContains(t, string(identity), "security@example.com", "private workspace response reached the agent")
+	assert.Contains(t, string(identity), `"chatgpt_account_id":"tamis"`, "private workspace response reached the agent")
+	assert.NotContains(t, string(managed), "internal", "private workspace response reached the agent")
+	assert.Contains(t, string(managed), `"enterprise_managed":[]`, "private workspace response reached the agent")
+	body := (*calls)[2].body
+	assert.Contains(t, body, `"store":false`, "the ChatGPT backend only accepts store set to false")
+	assert.NotContains(t, body, "background", "the ChatGPT backend only accepts store set to false")
+	assert.NotContains(t, body, "max_output_tokens", "the ChatGPT backend only accepts store set to false")
 }
 
 func TestChatGPTRefusesAnIdentityWithoutAccount(t *testing.T) {
@@ -161,9 +159,7 @@ func TestChatGPTRefusesAnIdentityWithoutAccount(t *testing.T) {
 	p := ChatGPT
 	p.Upstreams = map[string]string{"/auth": up.URL + "/api/accounts", "/backend-api": up.URL + "/backend-api"}
 	mp, err := New(p, "real-key", "allowed")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	token, revoke := mp.Issue(t.Context())
 	t.Cleanup(func() { revoke() })
 	srv := httptest.NewServer(mp)
@@ -172,9 +168,8 @@ func TestChatGPTRefusesAnIdentityWithoutAccount(t *testing.T) {
 	resp := call(t, srv, http.MethodGet, PathPrefix+"/auth/v1/user-auth-credential/whoami", withKey("Authorization", "Bearer "+token))
 	body, _ := io.ReadAll(resp.Body)
 
-	if resp.StatusCode != http.StatusBadGateway || strings.Contains(string(body), "security@example.com") {
-		t.Fatalf("status %d, body %s", resp.StatusCode, body)
-	}
+	require.Equal(t, http.StatusBadGateway, resp.StatusCode)
+	require.NotContains(t, string(body), "security@example.com")
 }
 
 func TestChatGPTRefusesTheOtherBackendRoutes(t *testing.T) {
@@ -188,13 +183,9 @@ func TestChatGPTRefusesTheOtherBackendRoutes(t *testing.T) {
 		{http.MethodGet, "/backend-api/codex/responses"},
 		{http.MethodPost, "/v1/responses"},
 	} {
-		if resp := call(t, srv, tc.method, PathPrefix+tc.path, withKey("Authorization", "Bearer "+token)); resp.StatusCode != http.StatusForbidden {
-			t.Errorf("%s %s: status %d", tc.method, tc.path, resp.StatusCode)
-		}
+		assert.Equal(t, http.StatusForbidden, call(t, srv, tc.method, PathPrefix+tc.path, withKey("Authorization", "Bearer "+token)).StatusCode, "%s %s", tc.method, tc.path)
 	}
-	if len(*calls) != 0 {
-		t.Fatalf("refused routes reached the upstream: %+v", *calls)
-	}
+	require.Empty(t, *calls, "refused routes reached the upstream")
 }
 
 func TestRefusals(t *testing.T) {
@@ -218,30 +209,22 @@ func TestRefusals(t *testing.T) {
 		"openai route":   {http.MethodPost, PathPrefix + "/v1/responses", withKey("X-Api-Key", token), http.StatusForbidden},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if resp := call(t, srv, tc.method, tc.path, tc.header); resp.StatusCode != tc.status {
-				t.Fatalf("status %d, want %d", resp.StatusCode, tc.status)
-			}
+			require.Equal(t, tc.status, call(t, srv, tc.method, tc.path, tc.header).StatusCode)
 		})
 	}
-	if len(*calls) != 0 {
-		t.Fatalf("nothing should reach the upstream: %+v", *calls)
-	}
+	require.Empty(t, *calls, "nothing should reach the upstream")
 }
 
 func TestRevokedTokenIsRefused(t *testing.T) {
 	mp, err := New(Anthropic, "real-key", "allowed")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	token, revoke := mp.Issue(t.Context())
 	srv := httptest.NewServer(mp)
 	t.Cleanup(srv.Close)
 
 	revoke()
 
-	if resp := call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", withKey("X-Api-Key", token)); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status %d", resp.StatusCode)
-	}
+	require.Equal(t, http.StatusUnauthorized, call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", withKey("X-Api-Key", token)).StatusCode)
 }
 
 func TestUpstreamRedirectIsNotRelayed(t *testing.T) {
@@ -249,21 +232,18 @@ func TestUpstreamRedirectIsNotRelayed(t *testing.T) {
 
 	resp := call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", withKey("X-Api-Key", token))
 
-	if resp.StatusCode != http.StatusBadGateway || resp.Header.Get("Location") != "" {
-		t.Fatalf("status %d, location %q", resp.StatusCode, resp.Header.Get("Location"))
-	}
+	require.Equal(t, http.StatusBadGateway, resp.StatusCode)
+	require.Empty(t, resp.Header.Get("Location"))
 }
 
 func TestNewRequiresAKey(t *testing.T) {
-	if _, err := New(Anthropic, "", "allowed"); err == nil {
-		t.Fatal("want an error")
-	}
+	_, err := New(Anthropic, "", "allowed")
+	require.Error(t, err)
 }
 
 func TestNewRequiresAModel(t *testing.T) {
-	if _, err := New(Anthropic, "real-key", ""); err == nil {
-		t.Fatal("want an error")
-	}
+	_, err := New(Anthropic, "real-key", "")
+	require.Error(t, err)
 }
 
 func TestProviderCapabilitiesAndOtherModelsAreRefused(t *testing.T) {
@@ -281,14 +261,10 @@ func TestProviderCapabilitiesAndOtherModelsAreRefused(t *testing.T) {
 		"untyped tool":            `{"model":"allowed","tools":[{"name":"remote"}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if resp := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", body, withKey("Authorization", "Bearer "+token)); resp.StatusCode != http.StatusForbidden {
-				t.Fatalf("status %d", resp.StatusCode)
-			}
+			require.Equal(t, http.StatusForbidden, callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", body, withKey("Authorization", "Bearer "+token)).StatusCode)
 		})
 	}
-	if len(*calls) != 0 {
-		t.Fatalf("nothing should reach the upstream: %+v", *calls)
-	}
+	require.Empty(t, *calls, "nothing should reach the upstream")
 }
 
 func TestAnthropicFallbacksAreRefused(t *testing.T) {
@@ -297,20 +273,16 @@ func TestAnthropicFallbacksAreRefused(t *testing.T) {
 	header := withKey("X-Api-Key", token)
 	header.Set("Anthropic-Beta", "server-side-fallback-2026-07-01")
 
-	if resp := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/messages?beta=true", body, header); resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status %d", resp.StatusCode)
-	}
-	if len(*calls) != 0 {
-		t.Fatalf("the fallback reached the upstream: %+v", *calls)
-	}
+	require.Equal(t, http.StatusForbidden, callBody(t, srv, http.MethodPost, PathPrefix+"/v1/messages?beta=true", body, header).StatusCode)
+	require.Empty(t, *calls, "the fallback reached the upstream")
 }
 
 func TestProviderTokenLimitIsClamped(t *testing.T) {
 	srv, calls, token := setup(t, OpenAI, http.StatusOK)
 	resp := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", `{"model":"allowed","max_output_tokens":16001}`, withKey("Authorization", "Bearer "+token))
-	if resp.StatusCode != http.StatusOK || len(*calls) != 1 || !strings.Contains((*calls)[0].body, `"max_output_tokens":16000`) {
-		t.Fatalf("status %d, calls %+v", resp.StatusCode, *calls)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, *calls, 1)
+	require.Contains(t, (*calls)[0].body, `"max_output_tokens":16000`)
 }
 
 func TestEveryAccessTokenRequestSpendsTheQuota(t *testing.T) {
@@ -319,30 +291,18 @@ func TestEveryAccessTokenRequestSpendsTheQuota(t *testing.T) {
 	for range maxRequests {
 		call(t, srv, http.MethodGet, whoami, withKey("Authorization", "Bearer "+token))
 	}
-	if resp := call(t, srv, http.MethodPost, PathPrefix+"/backend-api/codex/responses", withKey("Authorization", "Bearer "+token)); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("request after token checks: status %d", resp.StatusCode)
-	}
-	if resp := call(t, srv, http.MethodGet, whoami, withKey("Authorization", "Bearer at-tamis-guess")); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("token check with an unknown token: status %d", resp.StatusCode)
-	}
-	if len(*calls) != maxRequests {
-		t.Fatalf("upstream calls = %d", len(*calls))
-	}
+	require.Equal(t, http.StatusUnauthorized, call(t, srv, http.MethodPost, PathPrefix+"/backend-api/codex/responses", withKey("Authorization", "Bearer "+token)).StatusCode, "request after token checks")
+	require.Equal(t, http.StatusUnauthorized, call(t, srv, http.MethodGet, whoami, withKey("Authorization", "Bearer at-tamis-guess")).StatusCode, "token check with an unknown token")
+	require.Len(t, *calls, maxRequests)
 }
 
 func TestProviderRequestQuota(t *testing.T) {
 	srv, calls, token := setup(t, Anthropic, http.StatusOK)
 	for i := 0; i < maxRequests; i++ {
-		if resp := call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", withKey("X-Api-Key", token)); resp.StatusCode != http.StatusOK {
-			t.Fatalf("request %d: status %d", i+1, resp.StatusCode)
-		}
+		require.Equal(t, http.StatusOK, call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", withKey("X-Api-Key", token)).StatusCode, "request %d", i+1)
 	}
-	if resp := call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", withKey("X-Api-Key", token)); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("request after quota: status %d", resp.StatusCode)
-	}
-	if len(*calls) != maxRequests {
-		t.Fatalf("upstream calls = %d", len(*calls))
-	}
+	require.Equal(t, http.StatusUnauthorized, call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", withKey("X-Api-Key", token)).StatusCode, "request after quota")
+	require.Len(t, *calls, maxRequests)
 }
 
 func TestNestedToolsAndUnknownProtocolCapabilitiesFailClosed(t *testing.T) {
@@ -363,9 +323,8 @@ func TestNestedToolsAndUnknownProtocolCapabilitiesFailClosed(t *testing.T) {
 				if provider.PrivateWorkspace {
 					route = "/backend-api/codex/responses"
 				}
-				if response := callBody(t, srv, http.MethodPost, PathPrefix+route, body, withKey("Authorization", "Bearer "+token)); response.StatusCode != http.StatusForbidden || len(*calls) != 0 {
-					t.Fatalf("unsafe request reached upstream: %s (HTTP %d)", body, response.StatusCode)
-				}
+				require.Equal(t, http.StatusForbidden, callBody(t, srv, http.MethodPost, PathPrefix+route, body, withKey("Authorization", "Bearer "+token)).StatusCode, "unsafe request reached upstream: %s", body)
+				require.Empty(t, *calls, "unsafe request reached upstream: %s", body)
 			}
 		})
 	}
@@ -374,9 +333,8 @@ func TestNestedToolsAndUnknownProtocolCapabilitiesFailClosed(t *testing.T) {
 func TestLocalToolConversationPasses(t *testing.T) {
 	srv, calls, token := setup(t, OpenAI, http.StatusOK)
 	body := `{"model":"allowed","tools":[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"read","parameters":{"type":"object","properties":{"type":{"type":"string"}}}}]},{"type":"tool_search","execution":"client"}],"input":[{"role":"user","content":[{"type":"input_text","text":"report"}]},{"type":"reasoning","id":"rs_1","encrypted_content":"opaque","summary":[]},{"type":"function_call","call_id":"c","name":"read","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"source"},{"type":"additional_tools","role":"developer","tools":[{"type":"custom","name":"local","format":{"type":"text"}}]}],"include":["reasoning.encrypted_content"]}`
-	if response := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", body, withKey("Authorization", "Bearer "+token)); response.StatusCode != http.StatusOK || len(*calls) != 1 {
-		t.Fatalf("local tools rejected: %d", response.StatusCode)
-	}
+	require.Equal(t, http.StatusOK, callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", body, withKey("Authorization", "Bearer "+token)).StatusCode, "local tools rejected")
+	require.Len(t, *calls, 1, "local tools rejected")
 }
 
 func TestTokensShareTheAdvisoryBudgetAndStopOnCancellation(t *testing.T) {
@@ -385,9 +343,7 @@ func TestTokensShareTheAdvisoryBudgetAndStopOnCancellation(t *testing.T) {
 	provider := OpenAI
 	provider.Upstream = upstream.URL
 	mp, err := New(provider, "key", "allowed")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	srv := httptest.NewServer(mp)
 	defer srv.Close()
 	ctx, cancel := context.WithCancel(budget.WithLimit(t.Context(), 1, 1<<20))
@@ -396,28 +352,20 @@ func TestTokensShareTheAdvisoryBudgetAndStopOnCancellation(t *testing.T) {
 	defer revokeA()
 	b, revokeB := mp.Issue(ctx)
 	defer revokeB()
-	if response := call(t, srv, http.MethodPost, PathPrefix+"/v1/responses", withKey("Authorization", "Bearer "+a)); response.StatusCode != http.StatusOK {
-		t.Fatal(response.StatusCode)
-	}
-	if response := call(t, srv, http.MethodPost, PathPrefix+"/v1/responses", withKey("Authorization", "Bearer "+b)); response.StatusCode != http.StatusTooManyRequests {
-		t.Fatal(response.StatusCode)
-	}
+	require.Equal(t, http.StatusOK, call(t, srv, http.MethodPost, PathPrefix+"/v1/responses", withKey("Authorization", "Bearer "+a)).StatusCode)
+	require.Equal(t, http.StatusTooManyRequests, call(t, srv, http.MethodPost, PathPrefix+"/v1/responses", withKey("Authorization", "Bearer "+b)).StatusCode)
 	cancel()
-	if response := call(t, srv, http.MethodPost, PathPrefix+"/v1/responses", withKey("Authorization", "Bearer "+a)); response.StatusCode != http.StatusUnauthorized {
-		t.Fatal(response.StatusCode)
-	}
+	require.Equal(t, http.StatusUnauthorized, call(t, srv, http.MethodPost, PathPrefix+"/v1/responses", withKey("Authorization", "Bearer "+a)).StatusCode)
 }
 
 func TestAnthropicLocalToolsAndContextEdits(t *testing.T) {
 	srv, calls, token := setup(t, Anthropic, http.StatusOK)
 	body := `{"model":"allowed","messages":[{"role":"user","content":[{"type":"text","text":"report"}]},{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Read","input":{"path":"a.c"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"text","text":"source"},{"type":"tool_reference","tool_name":"Read"}]}]}],"tools":[{"name":"Read","description":"read","defer_loading":true,"input_schema":{"type":"object"}}],"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}}`
-	if response := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/messages", body, withKey("X-Api-Key", token)); response.StatusCode != http.StatusOK || len(*calls) != 1 {
-		t.Fatal("valid local Anthropic conversation rejected")
-	}
+	require.Equal(t, http.StatusOK, callBody(t, srv, http.MethodPost, PathPrefix+"/v1/messages", body, withKey("X-Api-Key", token)).StatusCode, "valid local Anthropic conversation rejected")
+	require.Len(t, *calls, 1, "valid local Anthropic conversation rejected")
 	body = strings.ReplaceAll(body, "clear_thinking_20251015", "future_remote_compaction")
-	if response := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/messages", body, withKey("X-Api-Key", token)); response.StatusCode != http.StatusForbidden || len(*calls) != 1 {
-		t.Fatal("unknown context capability reached Anthropic")
-	}
+	require.Equal(t, http.StatusForbidden, callBody(t, srv, http.MethodPost, PathPrefix+"/v1/messages", body, withKey("X-Api-Key", token)).StatusCode, "unknown context capability reached Anthropic")
+	require.Len(t, *calls, 1, "unknown context capability reached Anthropic")
 }
 
 func TestCapabilityHeadersAreNotForwarded(t *testing.T) {
@@ -427,9 +375,7 @@ func TestCapabilityHeadersAreNotForwarded(t *testing.T) {
 	provider := Anthropic
 	provider.Upstream = up.URL
 	mp, err := New(provider, "key", "allowed")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	token, revoke := mp.Issue(t.Context())
 	defer revoke()
 	srv := httptest.NewServer(mp)
@@ -438,12 +384,10 @@ func TestCapabilityHeadersAreNotForwarded(t *testing.T) {
 	h.Set("Anthropic-Beta", "context-management-2025-06-27,future-hosted-tools-2026-01-01")
 	h.Set("OpenAI-Beta", "agents=enabled")
 	h.Set("X-Unknown-Provider-Capability", "enabled")
-	if response := call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", h); response.StatusCode != http.StatusOK {
-		t.Fatal(response.StatusCode)
-	}
-	if got.Get("Anthropic-Beta") != "context-management-2025-06-27" || got.Get("OpenAI-Beta") != "" || got.Get("X-Unknown-Provider-Capability") != "" {
-		t.Fatal("unreviewed capability header reached upstream")
-	}
+	require.Equal(t, http.StatusOK, call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", h).StatusCode)
+	require.Equal(t, "context-management-2025-06-27", got.Get("Anthropic-Beta"), "unreviewed capability header reached upstream")
+	require.Empty(t, got.Get("OpenAI-Beta"), "unreviewed capability header reached upstream")
+	require.Empty(t, got.Get("X-Unknown-Provider-Capability"), "unreviewed capability header reached upstream")
 }
 
 func FuzzProviderRequest(f *testing.F) {
@@ -453,9 +397,7 @@ func FuzzProviderRequest(f *testing.F) {
 	f.Fuzz(func(t *testing.T, body string) {
 		for _, provider := range []Provider{Anthropic, OpenAI, ChatGPT} {
 			proxy, err := New(provider, "fixture", "allowed")
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			_, _ = proxy.safeBody(strings.NewReader(body))
 		}
 	})

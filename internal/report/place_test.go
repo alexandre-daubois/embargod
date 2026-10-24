@@ -9,15 +9,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/alexandre-daubois/tamis/internal/repo"
 )
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v %s", args, err, out)
-	}
+	require.NoError(t, err, "git %v: %s", args, out)
 
 	return strings.TrimSpace(string(out))
 }
@@ -28,12 +29,8 @@ func historyRepo(t *testing.T) (repo.Repo, string) {
 	t.Helper()
 	dir := t.TempDir()
 	write := func(content string) {
-		if err := os.MkdirAll(filepath.Join(dir, "ext", "std dir"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "ext", "std dir", "url.c"), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "ext", "std dir"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "ext", "std dir", "url.c"), []byte(content), 0o644))
 	}
 	write("int decode(char *s, int len) {\n\tif (len > MAX_LEN) return -1;\n\treturn s[len];\n}\n")
 	git(t, dir, "init", "-q")
@@ -69,16 +66,14 @@ func TestVerifyPlacesCitedLines(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := Report{CodeReferences: []CodeReference{tc.ref}}
 
-			if err := (Checker{Repo: "o/r", Issues: fakeIssues{}, Code: code}).Verify(context.Background(), &r); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, (Checker{Repo: "o/r", Issues: fakeIssues{}, Code: code}).Verify(context.Background(), &r))
 
 			got := r.CodeReferences[0]
-			if got.Place != tc.place || got.Current != tc.current || got.Commit != tc.commit {
-				t.Fatalf("got %+v", got)
-			}
-			if tc.commit != "" && len(got.Date) != len("2026-10-24") {
-				t.Fatalf("missing date: %+v", got)
+			require.Equal(t, tc.place, got.Place)
+			require.Equal(t, tc.current, got.Current)
+			require.Equal(t, tc.commit, got.Commit)
+			if tc.commit != "" {
+				require.Len(t, got.Date, len("2026-10-24"), "missing date: %+v", got)
 			}
 		})
 	}
@@ -88,25 +83,22 @@ func TestVerifyRecordsTheScannedCommit(t *testing.T) {
 	code, head := historyRepo(t)
 	r := Report{}
 
-	if err := (Checker{Repo: "o/r", Issues: fakeIssues{}, Code: code}).Verify(context.Background(), &r); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, (Checker{Repo: "o/r", Issues: fakeIssues{}, Code: code}).Verify(context.Background(), &r))
 
-	if r.Repo != "o/r" || r.Commit != head || r.Branch == "" {
-		t.Fatalf("got repo %q commit %q branch %q", r.Repo, r.Commit, r.Branch)
-	}
+	require.Equal(t, "o/r", r.Repo)
+	require.Equal(t, head, r.Commit)
+	require.NotEmpty(t, r.Branch)
 }
 
 func TestVerifyDoesNotPlaceWithoutCommit(t *testing.T) {
 	r := Report{CodeReferences: []CodeReference{{Path: "a.c", Line: 1, Snippet: "void real_func(void) {}"}}}
 
-	if err := checker(t).Verify(context.Background(), &r); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, checker(t).Verify(context.Background(), &r))
 
-	if got := r.CodeReferences[0]; !got.Found || got.Place != "" || r.Commit != "" {
-		t.Fatalf("got %+v, commit %q", got, r.Commit)
-	}
+	got := r.CodeReferences[0]
+	require.True(t, got.Found)
+	require.Empty(t, got.Place)
+	require.Empty(t, r.Commit)
 }
 
 func TestKeepCitedDropsLinesAndQuotesNotInTheReport(t *testing.T) {
@@ -124,9 +116,7 @@ func TestKeepCitedDropsLinesAndQuotesNotInTheReport(t *testing.T) {
 		{Path: "ext/url.c", Line: 592},
 	}
 	for i := range want {
-		if r.CodeReferences[i] != want[i] {
-			t.Errorf("reference %d: got %+v, want %+v", i, r.CodeReferences[i], want[i])
-		}
+		assert.Equal(t, want[i], r.CodeReferences[i], "reference %d", i)
 	}
 }
 
@@ -141,14 +131,10 @@ func TestRenderScanHeader(t *testing.T) {
 		"no commit": {Report{ScannedAt: at}, "Scanned on 2026-10-24 at 14:32 UTC.\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := Render(tc.r); !strings.Contains(got, tc.want) {
-				t.Fatalf("missing %q in:\n%s", tc.want, got)
-			}
+			require.Contains(t, Render(tc.r), tc.want)
 		})
 	}
-	if strings.Contains(Render(Report{}), "Scanned on") {
-		t.Fatal("a report without a scan time must not show one")
-	}
+	require.NotContains(t, Render(Report{}), "Scanned on", "a report without a scan time must not show one")
 }
 
 func TestRenderPlaces(t *testing.T) {
@@ -177,16 +163,12 @@ func TestRenderPlaces(t *testing.T) {
 		"| `ext/url.c:9999` | Past the end of the file (812 lines) |",
 		"| `ext/gone.c:3` | Not found |",
 	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in:\n%s", want, got)
-		}
+		assert.Contains(t, got, want)
 	}
 }
 
 func TestLineLinkEscapesThePath(t *testing.T) {
 	got := Report{Repo: "o/r", Commit: "abc"}.lineLink("a/b) [x](y#z.c", 1)
 
-	if got != "[L1](https://github.com/o/r/blob/abc/a/b%29%20%5Bx%5D%28y%23z.c#L1)" {
-		t.Fatalf("got %s", got)
-	}
+	require.Equal(t, "[L1](https://github.com/o/r/blob/abc/a/b%29%20%5Bx%5D%28y%23z.c#L1)", got)
 }

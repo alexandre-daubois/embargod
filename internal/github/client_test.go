@@ -3,12 +3,13 @@ package github
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newTestClient(t *testing.T, h http.HandlerFunc) *Client {
@@ -22,9 +23,7 @@ func newTestClient(t *testing.T, h http.HandlerFunc) *Client {
 func TestListAdvisoriesFollowsPagination(t *testing.T) {
 	var c *Client
 	c = newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer tok" {
-			t.Errorf("missing token")
-		}
+		assert.Equal(t, "Bearer tok", r.Header.Get("Authorization"), "missing token")
 		if r.URL.Query().Get("after") == "" {
 			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/o/r/security-advisories?after=x>; rel="next"`, c.BaseURL))
 			fmt.Fprint(w, `[{"ghsa_id":"GHSA-1"}]`)
@@ -34,42 +33,33 @@ func TestListAdvisoriesFollowsPagination(t *testing.T) {
 	})
 
 	got, err := c.ListAdvisories(context.Background(), "o/r", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 2 || got[0].GHSAID != "GHSA-1" || got[1].GHSAID != "GHSA-2" {
-		t.Fatalf("got %+v", got)
-	}
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, "GHSA-1", got[0].GHSAID)
+	require.Equal(t, "GHSA-2", got[1].GHSAID)
 }
 
 func TestListAdvisoriesFiltersState(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("state"); got != "triage" {
-			t.Errorf("state = %q", got)
-		}
+		assert.Equal(t, "triage", r.URL.Query().Get("state"))
 		fmt.Fprint(w, `[]`)
 	})
 
-	if _, err := c.ListAdvisories(context.Background(), "o/r", "triage"); err != nil {
-		t.Fatal(err)
-	}
+	_, err := c.ListAdvisories(context.Background(), "o/r", "triage")
+	require.NoError(t, err)
 }
 
 func TestPostComment(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/repos/o/r/security-advisories/GHSA-1/comments" {
-			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
-		}
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/repos/o/r/security-advisories/GHSA-1/comments", r.URL.Path)
 		var body map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["body"] != "hello" {
-			t.Errorf("body = %v, %v", body, err)
-		}
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "hello", body["body"])
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	if err := c.PostComment(context.Background(), "o/r", "GHSA-1", "hello"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.PostComment(context.Background(), "o/r", "GHSA-1", "hello"))
 }
 
 func TestErrors(t *testing.T) {
@@ -81,26 +71,23 @@ func TestErrors(t *testing.T) {
 		http.Error(w, `{"message":"SECRET-PAYLOAD"}`, http.StatusUnprocessableEntity)
 	})
 
-	if _, err := c.GetIssue(context.Background(), "o/r", 404); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("want ErrNotFound, got %v", err)
-	}
-	err := c.PostComment(context.Background(), "o/r", "GHSA-secret-id", "SECRET-PAYLOAD")
+	_, err := c.GetIssue(context.Background(), "o/r", 404)
+	require.ErrorIs(t, err, ErrNotFound)
+	err = c.PostComment(context.Background(), "o/r", "GHSA-secret-id", "SECRET-PAYLOAD")
 	var httpErr *HTTPError
-	if !errors.As(err, &httpErr) || httpErr.Status != http.StatusUnprocessableEntity || errors.Is(err, ErrNotFound) {
-		t.Fatalf("want an HTTP 422, got %v", err)
-	}
-	if strings.Contains(err.Error(), "SECRET-PAYLOAD") || strings.Contains(err.Error(), "GHSA-secret-id") {
-		t.Fatalf("the body or the advisory leaked: %v", err)
-	}
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, http.StatusUnprocessableEntity, httpErr.Status)
+	require.NotErrorIs(t, err, ErrNotFound)
+	require.NotContains(t, err.Error(), "SECRET-PAYLOAD", "the body or the advisory leaked")
+	require.NotContains(t, err.Error(), "GHSA-secret-id", "the body or the advisory leaked")
 }
 
 func TestNetworkErrorsDoNotLeakTheURL(t *testing.T) {
 	c := &Client{BaseURL: "http://127.0.0.1:1", Token: "tok", HTTP: http.DefaultClient}
 
 	_, err := c.ListComments(context.Background(), "o/r", "GHSA-secret-id")
-	if err == nil || strings.Contains(err.Error(), "GHSA-secret-id") {
-		t.Fatalf("want an error without the advisory, got %v", err)
-	}
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "GHSA-secret-id")
 }
 
 func TestPaginationStaysOnTheAPIHost(t *testing.T) {
@@ -112,22 +99,20 @@ func TestPaginationStaysOnTheAPIHost(t *testing.T) {
 	})
 
 	got, err := c.ListAdvisories(context.Background(), "o/r", "")
-	if err != nil || len(got) != 1 || calls != 1 {
-		t.Fatalf("got %v, %v after %d calls", got, err, calls)
-	}
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, 1, calls)
 }
 
 func TestLogin(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/user" {
-			t.Errorf("path = %s", r.URL.Path)
-		}
+		assert.Equal(t, "/user", r.URL.Path)
 		fmt.Fprint(w, `{"login":"tamis-bot"}`)
 	})
 
-	if got, err := c.Login(context.Background()); err != nil || got != "tamis-bot" {
-		t.Fatalf("got %q, %v", got, err)
-	}
+	got, err := c.Login(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "tamis-bot", got)
 }
 
 func TestInvalidJSONResponse(t *testing.T) {
@@ -136,38 +121,35 @@ func TestInvalidJSONResponse(t *testing.T) {
 	})
 
 	_, err := c.GetIssue(context.Background(), "o/r", 1)
-	if err == nil || err.Error() != "github: invalid response" {
-		t.Fatalf("got %v", err)
-	}
+	require.EqualError(t, err, "github: invalid response")
 }
 
 func TestNew(t *testing.T) {
 	c := New("tok")
 
-	if c.BaseURL != "https://api.github.com" || c.Token != "tok" || c.HTTP.Timeout <= 0 {
-		t.Fatalf("unexpected client %+v", c)
-	}
+	require.Equal(t, "https://api.github.com", c.BaseURL)
+	require.Equal(t, "tok", c.Token)
+	require.Positive(t, c.HTTP.Timeout)
 }
 
 func TestGetAdvisoryReadsTheCurrentReportAndReporter(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/repos/o/r/security-advisories/GHSA-1" {
-			t.Fatalf("unexpected request: %s", r.URL)
-		}
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/repos/o/r/security-advisories/GHSA-1", r.URL.Path)
 		fmt.Fprint(w, `{"ghsa_id":"GHSA-1","description":"current revision","author":{"login":"reporter"}}`)
 	})
 	a, err := c.GetAdvisory(t.Context(), "o/r", "GHSA-1")
-	if err != nil || a.Description != "current revision" || a.Author.Login != "reporter" {
-		t.Fatalf("advisory: %+v, %v", a, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "current revision", a.Description)
+	require.Equal(t, "reporter", a.Author.Login)
 	c = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) })
-	if _, err := c.GetAdvisory(t.Context(), "o/r", "missing"); !errors.Is(err, ErrNotFound) {
-		t.Fatal("missing advisory accepted")
-	}
+	_, err = c.GetAdvisory(t.Context(), "o/r", "missing")
+	require.ErrorIs(t, err, ErrNotFound, "missing advisory accepted")
 }
 
 func TestHTTPErrorUnwrapsOnlyNotFoundAndGone(t *testing.T) {
-	if !errors.Is(&HTTPError{Status: 404}, ErrNotFound) || !errors.Is(&HTTPError{Status: 410}, ErrNotFound) || errors.Is(&HTTPError{Status: 403}, ErrNotFound) || errors.Is(&HTTPError{}, ErrNotFound) {
-		t.Fatal("only a 404 or a 410 is ErrNotFound")
-	}
+	require.ErrorIs(t, &HTTPError{Status: 404}, ErrNotFound, "only a 404 or a 410 is ErrNotFound")
+	require.ErrorIs(t, &HTTPError{Status: 410}, ErrNotFound, "only a 404 or a 410 is ErrNotFound")
+	require.NotErrorIs(t, &HTTPError{Status: 403}, ErrNotFound, "only a 404 or a 410 is ErrNotFound")
+	require.NotErrorIs(t, &HTTPError{}, ErrNotFound, "only a 404 or a 410 is ErrNotFound")
 }

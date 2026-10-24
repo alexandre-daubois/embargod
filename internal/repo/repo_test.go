@@ -5,39 +5,35 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGitCommandsStopWithTheirContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	r := Repo{Dir: t.TempDir(), Context: ctx}
-	if _, err := r.Commit(); err == nil {
-		t.Fatal("a canceled command ran")
-	}
+	_, err := r.Commit()
+	require.Error(t, err, "a canceled command ran")
 }
 
 // newRepo creates a git repository with one committed C file.
 func newRepo(t testing.TB) Repo {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "ext"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "ext"), 0o755))
 	src := "int php_overflow(int len) {\n\treturn len * 2;\n}\n"
-	if err := os.WriteFile(filepath.Join(dir, "ext", "a.c"), []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "ext", "a.c"), []byte(src), 0o644))
 	for _, args := range [][]string{
 		{"init", "-q"},
 		{"add", "."},
 		{"-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "Fix overflow in php_overflow"},
 	} {
-		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v %s", args, err, out)
-		}
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
 	}
 
 	return Repo{Dir: dir}
@@ -47,63 +43,42 @@ func TestReadFile(t *testing.T) {
 	r := newRepo(t)
 
 	got, err := r.ReadFile("ext/a.c", 2, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "2\t\treturn len * 2;\n" {
-		t.Fatalf("got %q", got)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "2\t\treturn len * 2;\n", got)
 }
 
 func TestReadFileRefusesEscapes(t *testing.T) {
 	r := newRepo(t)
 	outside := filepath.Join(t.TempDir(), "secret")
-	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, filepath.Join(r.Dir, "link")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(outside, []byte("secret"), 0o644))
+	require.NoError(t, os.Symlink(outside, filepath.Join(r.Dir, "link")))
 
 	for _, path := range []string{"../secret", outside, "link"} {
-		if _, err := r.ReadFile(path, 0, 0); err == nil {
-			t.Errorf("%s: expected an error", path)
-		}
+		_, err := r.ReadFile(path, 0, 0)
+		assert.Error(t, err, "%s: expected an error", path)
 	}
 }
 
 func TestReadFileOnlyReadsTrackedFiles(t *testing.T) {
 	r := newRepo(t)
-	if err := os.WriteFile(filepath.Join(r.Dir, "untracked.txt"), []byte("token"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(".git/config", filepath.Join(r.Dir, "config-link")); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command("git", "-C", r.Dir, "add", "config-link").CombinedOutput(); err != nil {
-		t.Fatalf("git add: %v %s", err, out)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(r.Dir, "untracked.txt"), []byte("token"), 0o644))
+	require.NoError(t, os.Symlink(".git/config", filepath.Join(r.Dir, "config-link")))
+	out, err := exec.Command("git", "-C", r.Dir, "add", "config-link").CombinedOutput()
+	require.NoError(t, err, "git add: %s", out)
 
 	for _, path := range []string{".git/config", ".git/HEAD", "untracked.txt", "config-link", ":(glob)**/a.c", "ext"} {
-		if got, err := r.ReadFile(path, 0, 0); err == nil {
-			t.Errorf("%s: expected an error, got %q", path, got)
-		}
+		got, err := r.ReadFile(path, 0, 0)
+		assert.Error(t, err, "%s: expected an error, got %q", path, got)
 	}
 }
 
 func TestExists(t *testing.T) {
 	r := newRepo(t)
 
-	if !r.Exists("ext/a.c") {
-		t.Error("ext/a.c should exist")
-	}
-	if !r.Exists("ext") {
-		t.Error("ext holds tracked files")
-	}
+	assert.True(t, r.Exists("ext/a.c"), "ext/a.c should exist")
+	assert.True(t, r.Exists("ext"), "ext holds tracked files")
 	for _, path := range []string{"ext/missing.c", "../", ".git/config", "", ":(glob)**"} {
-		if r.Exists(path) {
-			t.Errorf("%q should not exist", path)
-		}
+		assert.False(t, r.Exists(path), "%q should not exist", path)
 	}
 }
 
@@ -111,21 +86,15 @@ func TestGrep(t *testing.T) {
 	r := newRepo(t)
 
 	got, err := r.Grep(`php_[a-z]+\(`, "ext")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(got, "ext/a.c:1:int php_overflow") {
-		t.Fatalf("got %q", got)
-	}
+	require.NoError(t, err)
+	require.Contains(t, got, "ext/a.c:1:int php_overflow")
 
 	got, err = r.Grep("nothing_like_this", "")
-	if err != nil || got != "no match" {
-		t.Fatalf("got %q, %v", got, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "no match", got)
 
-	if _, err := r.Grep("(", ""); err == nil {
-		t.Fatal("an invalid pattern should fail")
-	}
+	_, err = r.Grep("(", "")
+	require.Error(t, err, "an invalid pattern should fail")
 }
 
 func TestHasSymbol(t *testing.T) {
@@ -133,12 +102,8 @@ func TestHasSymbol(t *testing.T) {
 
 	for symbol, want := range map[string]bool{"php_overflow": true, "php_over": false, "--version": false} {
 		got, err := r.HasSymbol("ext/a.c", symbol)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != want {
-			t.Errorf("%s: got %v", symbol, got)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, want, got, "%s", symbol)
 	}
 }
 
@@ -146,57 +111,42 @@ func TestLog(t *testing.T) {
 	r := newRepo(t)
 
 	got, err := r.Log("ext/a.c", "OVERFLOW")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(got, "Fix overflow in php_overflow") {
-		t.Fatalf("got %q", got)
-	}
+	require.NoError(t, err)
+	require.Contains(t, got, "Fix overflow in php_overflow")
 
 	got, err = r.Log("", "unrelated")
-	if err != nil || got != "" {
-		t.Fatalf("got %q, %v", got, err)
-	}
+	require.NoError(t, err)
+	require.Empty(t, got)
 }
 
 func TestTruncateLines(t *testing.T) {
 	got := truncateLines("a\nb\nc\n", 2)
-	if got != "a\nb\n... 2 more lines, narrow the search\n" {
-		t.Fatalf("got %q", got)
-	}
+	require.Equal(t, "a\nb\n... 2 more lines, narrow the search\n", got)
 }
 
 func TestMissingRepository(t *testing.T) {
 	r := Repo{Dir: filepath.Join(t.TempDir(), "missing")}
 
-	if _, err := r.ReadFile("a.c", 0, 0); err == nil {
-		t.Error("ReadFile should fail")
-	}
-	if r.Exists("a.c") {
-		t.Error("Exists should be false")
-	}
-	if _, err := r.Grep("a", ""); err == nil {
-		t.Error("Grep should fail")
-	}
-	if _, err := r.Log("", ""); err == nil {
-		t.Error("Log should fail")
-	}
-	if _, err := r.HasSymbol("", "a"); err == nil {
-		t.Error("HasSymbol should fail")
-	}
+	_, err := r.ReadFile("a.c", 0, 0)
+	assert.Error(t, err, "ReadFile should fail")
+	assert.False(t, r.Exists("a.c"), "Exists should be false")
+	_, err = r.Grep("a", "")
+	assert.Error(t, err, "Grep should fail")
+	_, err = r.Log("", "")
+	assert.Error(t, err, "Log should fail")
+	_, err = r.HasSymbol("", "a")
+	assert.Error(t, err, "HasSymbol should fail")
 }
 
 func TestReadFileClampsTheRange(t *testing.T) {
 	r := newRepo(t)
 
 	got, err := r.ReadFile("ext/a.c", 3, 1)
-	if err != nil || got != "3\t}\n" {
-		t.Fatalf("got %q, %v", got, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "3\t}\n", got)
 	got, err = r.ReadFile("ext/a.c", 0, 0)
-	if err != nil || !strings.HasPrefix(got, "1\tint php_overflow") {
-		t.Fatalf("got %q, %v", got, err)
-	}
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(got, "1\tint php_overflow"))
 }
 
 func FuzzReadFileStaysInTrackedFiles(f *testing.F) {
@@ -217,33 +167,25 @@ func FuzzReadFileStaysInTrackedFiles(f *testing.F) {
 			_, text, _ := strings.Cut(l, "\t")
 			lines = append(lines, text)
 		}
-		if strings.Join(lines, "\n")+"\n" != tracked {
-			t.Fatalf("ReadFile(%q) read %q", path, got)
-		}
+		require.Equal(t, tracked, strings.Join(lines, "\n")+"\n", "ReadFile(%q) read %q", path, got)
 	})
 }
 
 func TestFiles(t *testing.T) {
 	r := newRepo(t)
-	if err := os.WriteFile(filepath.Join(r.Dir, "with space.md"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command("git", "-C", r.Dir, "add", "with space.md").CombinedOutput(); err != nil {
-		t.Fatalf("git add: %v %s", err, out)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(r.Dir, "with space.md"), nil, 0o644))
+	out, err := exec.Command("git", "-C", r.Dir, "add", "with space.md").CombinedOutput()
+	require.NoError(t, err, "git add: %s", out)
 
 	got, err := r.Files()
-	if err != nil || !slices.Equal(got, []string{"ext/a.c", "with space.md"}) {
-		t.Fatalf("got %q, %v", got, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, []string{"ext/a.c", "with space.md"}, got)
 }
 
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v %s", args, err, out)
-	}
+	require.NoError(t, err, "git %v: %s", args, out)
 
 	return strings.TrimSpace(string(out))
 }
@@ -253,60 +195,59 @@ func TestHead(t *testing.T) {
 	sha, branch := gitIn(t, r.Dir, "rev-parse", "HEAD"), gitIn(t, r.Dir, "branch", "--show-current")
 
 	commit, got, err := r.Head()
-	if err != nil || commit != sha || got != branch || branch == "" {
-		t.Fatalf("got %q %q %v, want %q %q", commit, got, err, sha, branch)
-	}
+	require.NoError(t, err)
+	require.Equal(t, sha, commit)
+	require.Equal(t, branch, got)
+	require.NotEmpty(t, branch)
 
 	gitIn(t, r.Dir, "checkout", "-q", "--detach")
-	if commit, got, err := r.Head(); err != nil || commit != sha || got != "" {
-		t.Fatalf("detached: got %q %q %v", commit, got, err)
-	}
+	commit, got, err = r.Head()
+	require.NoError(t, err, "detached")
+	require.Equal(t, sha, commit, "detached")
+	require.Empty(t, got, "detached")
 }
 
 func TestHeadOutsideARepository(t *testing.T) {
-	if _, _, err := (Repo{Dir: t.TempDir()}).Head(); err == nil {
-		t.Fatal("want an error outside a repository")
-	}
+	_, _, err := (Repo{Dir: t.TempDir()}).Head()
+	require.Error(t, err, "want an error outside a repository")
 }
 
 func TestLines(t *testing.T) {
 	r := newRepo(t)
 
 	lines, ok, err := r.Lines("ext/a.c")
-	if err != nil || !ok || len(lines) != 3 || lines[1] != "\treturn len * 2;" {
-		t.Fatalf("got %q %v %v", lines, ok, err)
-	}
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, lines, 3)
+	require.Equal(t, "\treturn len * 2;", lines[1])
 	for _, path := range []string{"", "ext", "ext/missing.c", "../secret"} {
-		if lines, ok, err := r.Lines(path); err != nil || ok || lines != nil {
-			t.Errorf("%q: got %q %v %v", path, lines, ok, err)
-		}
+		lines, ok, err := r.Lines(path)
+		assert.NoError(t, err, "%q", path)
+		assert.False(t, ok, "%q", path)
+		assert.Nil(t, lines, "%q", path)
 	}
 }
 
 func TestLinesReadsTheCommittedFile(t *testing.T) {
 	r := newRepo(t)
-	if err := os.WriteFile(filepath.Join(r.Dir, "ext", "a.c"), []byte("uncommitted\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(r.Dir, "ext", "a.c"), []byte("uncommitted\n"), 0o644))
 
-	if lines, _, _ := r.Lines("ext/a.c"); len(lines) != 3 {
-		t.Fatalf("got %q, want the committed lines", lines)
-	}
+	lines, _, _ := r.Lines("ext/a.c")
+	require.Len(t, lines, 3, "want the committed lines")
 }
 
 func TestLastChange(t *testing.T) {
 	r := newRepo(t)
-	if err := os.WriteFile(filepath.Join(r.Dir, "ext", "a.c"), []byte("int php_overflow(int len) {\n\treturn len;\n}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(r.Dir, "ext", "a.c"), []byte("int php_overflow(int len) {\n\treturn len;\n}\n"), 0o644))
 	gitIn(t, r.Dir, "commit", "-q", "-am", "Stop doubling")
 	sha := gitIn(t, r.Dir, "rev-parse", "HEAD")
 
 	commit, date, err := r.LastChange("ext/a.c", "return len * 2;")
-	if err != nil || commit != sha || len(date) != len("2026-10-24") {
-		t.Fatalf("got %q %q %v, want %q", commit, date, err, sha)
-	}
-	if commit, date, err := r.LastChange("ext/a.c", "never written"); err != nil || commit != "" || date != "" {
-		t.Fatalf("got %q %q %v, want nothing", commit, date, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, sha, commit)
+	require.Len(t, date, len("2026-10-24"))
+	commit, date, err = r.LastChange("ext/a.c", "never written")
+	require.NoError(t, err)
+	require.Empty(t, commit)
+	require.Empty(t, date)
 }

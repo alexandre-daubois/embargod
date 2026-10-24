@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/alexandre-daubois/tamis/internal/usage"
 )
 
@@ -48,13 +50,9 @@ func liveRun(t *testing.T, provider Provider, env, model string, cmd func(url, t
 		t.Skip(env + " is not set")
 	}
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	mp, err := New(provider, strings.TrimSpace(string(raw)), model)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		mp.ServeHTTP(rec, r)
@@ -67,9 +65,7 @@ func liveRun(t *testing.T, provider Provider, env, model string, cmd func(url, t
 	c.Dir = "../.."
 	out, err := c.Output()
 	spent := revoke()
-	if err != nil {
-		t.Fatalf("the CLI failed: %v\n%s", err, out)
-	}
+	require.NoError(t, err, "the CLI failed: %s", out)
 	t.Logf("proxy: %+v", spent)
 
 	return out, spent
@@ -91,14 +87,12 @@ func TestLiveClaudeCodeUsage(t *testing.T) {
 			OutputTokens  int64 `json:"output_tokens"`
 		} `json:"usage"`
 	}
-	if err := json.Unmarshal(out, &result); err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
+	require.NoError(t, json.Unmarshal(out, &result), "%s", out)
 	cli := usage.Usage{InputTokens: result.Usage.InputTokens + result.Usage.CacheCreation + result.Usage.CacheRead, OutputTokens: result.Usage.OutputTokens}
 	t.Logf("cli: %+v", cli)
-	if spent.Requests < 2 || spent.InputTokens != cli.InputTokens || spent.OutputTokens != cli.OutputTokens {
-		t.Fatalf("the proxy counted %+v, the CLI reports %+v", spent, cli)
-	}
+	require.GreaterOrEqual(t, spent.Requests, int64(2))
+	require.Equal(t, cli.InputTokens, spent.InputTokens)
+	require.Equal(t, cli.OutputTokens, spent.OutputTokens)
 }
 
 func TestLiveCodexUsage(t *testing.T) {
@@ -107,9 +101,7 @@ func TestLiveCodexUsage(t *testing.T) {
 		home := t.TempDir()
 		// The same features as in sandbox.writeConfig are off, the proxy refuses the requests they make.
 		config := fmt.Sprintf("model_provider = \"tamis\"\nweb_search = \"disabled\"\n\n[analytics]\nenabled = false\n\n[features]\napps = false\nplugins = false\nremote_plugin = false\nplugin_sharing = false\ngoals = false\nimage_generation = false\nskill_mcp_dependency_install = false\n\n[model_providers.tamis]\nname = \"Tamis\"\nbase_url = %q\nenv_key = \"CODEX_API_KEY\"\nwire_api = \"responses\"\nsupports_websockets = false\nrequest_max_retries = 0\nstream_max_retries = 0\n", url+"/v1")
-		if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600))
 		c := exec.Command("codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-m", model, livePrompt)
 		c.Env = append(os.Environ(), "CODEX_HOME="+home, "CODEX_API_KEY="+token)
 		return c
@@ -132,7 +124,7 @@ func TestLiveCodexUsage(t *testing.T) {
 		}
 	}
 	t.Logf("cli: %+v", cli)
-	if spent.Requests < 2 || spent.InputTokens != cli.InputTokens || spent.OutputTokens != cli.OutputTokens {
-		t.Fatalf("the proxy counted %+v, the CLI reports %+v\n%s", spent, cli, out)
-	}
+	require.GreaterOrEqual(t, spent.Requests, int64(2), "%s", out)
+	require.Equal(t, cli.InputTokens, spent.InputTokens, "%s", out)
+	require.Equal(t, cli.OutputTokens, spent.OutputTokens, "%s", out)
 }
