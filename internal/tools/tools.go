@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/alexandre-daubois/embargod/internal/github"
-	"github.com/alexandre-daubois/embargod/internal/repo"
+	"github.com/alexandre-daubois/tamis/internal/github"
+	"github.com/alexandre-daubois/tamis/internal/repo"
 )
 
 // Submit is the tool the model calls with its final answer, which ends the run.

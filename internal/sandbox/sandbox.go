@@ -23,14 +23,14 @@ import (
 	"github.com/alpha-omega-security/harness/container"
 	"github.com/alpha-omega-security/harness/egress"
 
-	"github.com/alexandre-daubois/embargod/internal/modelproxy"
-	"github.com/alexandre-daubois/embargod/internal/usage"
+	"github.com/alexandre-daubois/tamis/internal/modelproxy"
+	"github.com/alexandre-daubois/tamis/internal/usage"
 )
 
 const (
 	maxTurns   = 80
 	outputFile = "report.json"
-	caFile     = "embargod-ca.pem"
+	caFile     = "tamis-ca.pem"
 	// srcDir is where the repository snapshot lives, relative to the workspace.
 	srcDir = "src"
 )
@@ -54,7 +54,7 @@ var backends = map[string]backend{
 	"codex-token": {"codex", modelproxy.ChatGPT, "CODEX_ACCESS_TOKEN", modelproxy.PathPrefix + "/backend-api/codex", true},
 }
 
-// imagesJSON pins each agent image by digest, so a version of embargod always runs the images built for it.
+// imagesJSON pins each agent image by digest, so a version of tamis always runs the images built for it.
 // The agent-image workflow updates it through a pull request after publishing new images.
 //
 //go:embed images.json
@@ -156,12 +156,12 @@ func (r *Reader) Close() error {
 
 // Read runs the agent on one report and returns the JSON it wrote, after at most one correction round.
 func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error) {
-	workspace, err := os.MkdirTemp("", "embargod-work-")
+	workspace, err := os.MkdirTemp("", "tamis-work-")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(workspace)
-	state, err := os.MkdirTemp("", "embargod-state-")
+	state, err := os.MkdirTemp("", "tamis-state-")
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +253,7 @@ func (r *Reader) writeConfig(state, origin string) error {
 		}
 	}
 	// The ChatGPT features are off: they would call routes the model proxy refuses.
-	config := fmt.Sprintf("model_provider = \"embargod\"\ndaybreak = %t\nweb_search = \"disabled\"\nchatgpt_base_url = %q\n\n[analytics]\nenabled = false\n\n[features]\napps = false\nplugins = false\nremote_plugin = false\nplugin_sharing = false\ngoals = false\nimage_generation = false\nskill_mcp_dependency_install = false\n\n[model_providers.embargod]\nname = \"Embargod\"\nbase_url = %q\n%s\nwire_api = \"responses\"\nsupports_websockets = false\nsupports_standalone_web_search = false\nrequest_max_retries = 0\nstream_max_retries = 0\n", r.Daybreak, origin+modelproxy.PathPrefix+"/backend-api", origin+r.backend.basePath, auth)
+	config := fmt.Sprintf("model_provider = \"tamis\"\ndaybreak = %t\nweb_search = \"disabled\"\nchatgpt_base_url = %q\n\n[analytics]\nenabled = false\n\n[features]\napps = false\nplugins = false\nremote_plugin = false\nplugin_sharing = false\ngoals = false\nimage_generation = false\nskill_mcp_dependency_install = false\n\n[model_providers.tamis]\nname = \"Tamis\"\nbase_url = %q\n%s\nwire_api = \"responses\"\nsupports_websockets = false\nsupports_standalone_web_search = false\nrequest_max_retries = 0\nstream_max_retries = 0\n", r.Daybreak, origin+modelproxy.PathPrefix+"/backend-api", origin+r.backend.basePath, auth)
 	return os.WriteFile(filepath.Join(state, "config.toml"), []byte(config), 0o600)
 }
 

@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alexandre-daubois/embargod/internal/engine"
-	"github.com/alexandre-daubois/embargod/internal/github"
-	"github.com/alexandre-daubois/embargod/internal/sandbox"
-	"github.com/alexandre-daubois/embargod/internal/triage"
+	"github.com/alexandre-daubois/tamis/internal/engine"
+	"github.com/alexandre-daubois/tamis/internal/github"
+	"github.com/alexandre-daubois/tamis/internal/sandbox"
+	"github.com/alexandre-daubois/tamis/internal/triage"
 )
 
 // defaultCodexTokenModel is Codex's default with a ChatGPT account, which does not serve the API models.

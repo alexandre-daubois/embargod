@@ -65,8 +65,8 @@ jobs:
         with:
           go-version-file: go.mod
       - run: docker info
-      - run: docker build --target ${{ matrix.agent }} -t embargod-test:${{ matrix.agent }} docker/agent
+      - run: docker build --target ${{ matrix.agent }} -t tamis-test:${{ matrix.agent }} docker/agent
       - run: go test -race -count=1 -tags integration -timeout 8m ./internal/sandbox
         env:
-          EMBARGOD_TEST_IMAGE: embargod-test:${{ matrix.agent }}
+          TAMIS_TEST_IMAGE: tamis-test:${{ matrix.agent }}
 

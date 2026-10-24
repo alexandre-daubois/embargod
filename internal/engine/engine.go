@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/alexandre-daubois/embargod/internal/budget"
-	"github.com/alexandre-daubois/embargod/internal/tools"
+	"github.com/alexandre-daubois/tamis/internal/budget"
+	"github.com/alexandre-daubois/tamis/internal/tools"
 )
 
 const (

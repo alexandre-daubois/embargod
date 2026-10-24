@@ -122,10 +122,10 @@ func TestLogin(t *testing.T) {
 		if r.URL.Path != "/user" {
 			t.Errorf("path = %s", r.URL.Path)
 		}
-		fmt.Fprint(w, `{"login":"embargod-bot"}`)
+		fmt.Fprint(w, `{"login":"tamis-bot"}`)
 	})
 
-	if got, err := c.Login(context.Background()); err != nil || got != "embargod-bot" {
+	if got, err := c.Login(context.Background()); err != nil || got != "tamis-bot" {
 		t.Fatalf("got %q, %v", got, err)
 	}
 }

@@ -53,8 +53,8 @@ func startIsolatedRun(ctx context.Context, runtime container.Runtime, image, mod
 	if run.network, err = isolatedName(); err != nil {
 		return nil, err
 	}
-	run.proxy = "embargod-proxy-" + strings.TrimPrefix(run.network, "embargod-")
-	run.agent = "embargod-agent-" + strings.TrimPrefix(run.network, "embargod-")
+	run.proxy = "tamis-proxy-" + strings.TrimPrefix(run.network, "tamis-")
+	run.agent = "tamis-agent-" + strings.TrimPrefix(run.network, "tamis-")
 	run.token = egress.NewToken()
 
 	if out, err := exec.CommandContext(ctx, runtime.Bin, "network", "create", "--driver", "bridge", "--internal", "--ipv6=false", "--opt", "com.docker.network.bridge.gateway_mode_ipv4=isolated", "--opt", "com.docker.network.bridge.gateway_mode_ipv6=isolated", "--", run.network).CombinedOutput(); err != nil {
@@ -113,7 +113,7 @@ func isolatedName() (string, error) {
 		return "", err
 	}
 
-	return "embargod-" + strconv.Itoa(os.Getpid()) + "-" + hex.EncodeToString(raw[:]), nil
+	return "tamis-" + strconv.Itoa(os.Getpid()) + "-" + hex.EncodeToString(raw[:]), nil
 }
 
 func (r *isolatedRun) waitReady(ctx context.Context) error {

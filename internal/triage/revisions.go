@@ -12,11 +12,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/alexandre-daubois/embargod/internal/engine"
-	"github.com/alexandre-daubois/embargod/internal/github"
-	"github.com/alexandre-daubois/embargod/internal/repo"
-	"github.com/alexandre-daubois/embargod/internal/report"
-	"github.com/alexandre-daubois/embargod/internal/sandbox"
+	"github.com/alexandre-daubois/tamis/internal/engine"
+	"github.com/alexandre-daubois/tamis/internal/github"
+	"github.com/alexandre-daubois/tamis/internal/repo"
+	"github.com/alexandre-daubois/tamis/internal/report"
+	"github.com/alexandre-daubois/tamis/internal/sandbox"
 )
 
 func advisoryRevision(a github.Advisory, comments []github.Comment, login string, references []string) string {
@@ -73,7 +73,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	for _, reference := range cfg.References {
 		path := cfg.RepoPath
 		if reference != "HEAD" {
-			dir, err := os.MkdirTemp("", "embargod-reference-")
+			dir, err := os.MkdirTemp("", "tamis-reference-")
 			if err != nil {
 				return false, err
 			}

@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alexandre-daubois/embargod/internal/github"
-	"github.com/alexandre-daubois/embargod/internal/repo"
+	"github.com/alexandre-daubois/tamis/internal/github"
+	"github.com/alexandre-daubois/tamis/internal/repo"
 )
 
 type fakeIssues map[int]github.Issue

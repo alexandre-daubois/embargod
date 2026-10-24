@@ -17,14 +17,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexandre-daubois/embargod/internal/engine"
-	"github.com/alexandre-daubois/embargod/internal/github"
-	"github.com/alexandre-daubois/embargod/internal/repo"
-	"github.com/alexandre-daubois/embargod/internal/report"
-	"github.com/alexandre-daubois/embargod/internal/sandbox"
-	"github.com/alexandre-daubois/embargod/internal/tools"
-	"github.com/alexandre-daubois/embargod/internal/usage"
-	"github.com/alexandre-daubois/embargod/skill"
+	"github.com/alexandre-daubois/tamis/internal/engine"
+	"github.com/alexandre-daubois/tamis/internal/github"
+	"github.com/alexandre-daubois/tamis/internal/repo"
+	"github.com/alexandre-daubois/tamis/internal/report"
+	"github.com/alexandre-daubois/tamis/internal/sandbox"
+	"github.com/alexandre-daubois/tamis/internal/tools"
+	"github.com/alexandre-daubois/tamis/internal/usage"
+	"github.com/alexandre-daubois/tamis/skill"
 )
 
 var since = time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
@@ -55,7 +55,7 @@ func (f *fakeGitHub) GetAdvisory(_ context.Context, _, ghsa string) (github.Advi
 }
 
 func (f *fakeGitHub) Login(context.Context) (string, error) {
-	return "embargod-bot", f.loginErr
+	return "tamis-bot", f.loginErr
 }
 
 func (f *fakeGitHub) ListAdvisories(context.Context, string, string) ([]github.Advisory, error) {
@@ -336,7 +336,7 @@ func (e *fakeEngine) role(system string) []engineCall {
 
 func botComment(body string) github.Comment {
 	c := github.Comment{Body: body}
-	c.User.Login = "embargod-bot"
+	c.User.Login = "tamis-bot"
 
 	return c
 }
@@ -991,10 +991,10 @@ func TestRunWithBotLoginSkipsTheTokenOwnerLookup(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
 	gh.loginErr = &github.HTTPError{Status: 403}
 	app := github.Comment{Body: gh.comments["GHSA-done"][0].Body}
-	app.User.Login = "embargod[bot]"
+	app.User.Login = "tamis[bot]"
 	gh.comments["GHSA-done"] = []github.Comment{app}
 
-	if err := run(t, Config{Since: since, BotLogin: "embargod[bot]"}, gh, eng); err != nil {
+	if err := run(t, Config{Since: since, BotLogin: "tamis[bot]"}, gh, eng); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1006,10 +1006,10 @@ func TestRunWithBotLoginSkipsTheTokenOwnerLookup(t *testing.T) {
 func TestRunMatchesTheBotLoginWhateverItsCase(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
 	app := github.Comment{Body: gh.comments["GHSA-done"][0].Body}
-	app.User.Login = "embargod[bot]"
+	app.User.Login = "tamis[bot]"
 	gh.comments["GHSA-done"] = []github.Comment{app}
 
-	if err := run(t, Config{Since: since, BotLogin: "Embargod[bot]"}, gh, eng); err != nil {
+	if err := run(t, Config{Since: since, BotLogin: "Tamis[bot]"}, gh, eng); err != nil {
 		t.Fatal(err)
 	}
 

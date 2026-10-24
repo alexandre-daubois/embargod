@@ -1,6 +1,6 @@
 # Security
 
-embargod reads text written by an outside reporter, with access to embargoed advisories and an API key, and posts a comment the reporter can read. The design assumes the report is hostile.
+tamis reads text written by an outside reporter, with access to embargoed advisories and an API key, and posts a comment the reporter can read. The design assumes the report is hostile.
 
 ## Threats
 
@@ -14,7 +14,7 @@ embargod reads text written by an outside reporter, with access to embargoed adv
 | A report changes while being triaged | The title, description, metadata and non-bot comments are hashed. They are re-read before publication; a changed revision cancels the post. Completed advisories are not automatically triaged again after later edits. |
 | A reporter consumes the model budget | Advisory and run budgets are shared across branches, agents and comparators. Requests, bytes, output tokens and runtime are bounded; one known reporter cannot monopolise a run. A dedicated provider spending ceiling bounds costs across runs. |
 | A release tag is replaced | The action requires a full reviewed commit SHA. Agent images are additionally pinned by digest and verified against their build attestation. |
-| Logs of a public repository expose the report | embargod only logs counters and status codes, never report text, GHSA identifiers or provider error bodies. GitHub still prints step inputs, so run the workflow from a private repository. |
+| Logs of a public repository expose the report | tamis only logs counters and status codes, never report text, GHSA identifiers or provider error bodies. GitHub still prints step inputs, so run the workflow from a private repository. |
 
 ## The agent container
 
@@ -25,7 +25,7 @@ The agent runs through [harness](https://github.com/alpha-omega-security/harness
 - an internal bridge network with both gateway modes set to `isolated` and IPv6 explicitly disabled, whose only peer is an authenticated egress proxy allowing the model proxy and `api.github.com`,
 - the workspace mounted read-only except for `report.json`, with memory, CPU, process, file-size, output-capture and Docker-log limits,
 - an image containing only the agent CLI, git, curl, ripgrep and `harness-proxy`, with every download checked against a pinned checksum,
-- that image pinned by digest in each release, and checked by the action against its build attestation before use, like the embargod binary of a release.
+- that image pinned by digest in each release, and checked by the action against its build attestation before use, like the tamis binary of a release.
 
 ## The model proxy
 
@@ -47,4 +47,4 @@ CI builds both agent images and runs the Docker isolation tests on `ubuntu-lates
 
 ## Reporting a vulnerability
 
-Report vulnerabilities in embargod privately through [GitHub security advisories](https://github.com/alexandre-daubois/embargod/security/advisories/new).
+Report vulnerabilities in tamis privately through [GitHub security advisories](https://github.com/alexandre-daubois/tamis/security/advisories/new).

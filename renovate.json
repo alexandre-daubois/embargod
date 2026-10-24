@@ -88,7 +88,7 @@
       "minimumGroupSize": 2
     },
     {
-      "description": "harness-proxy in the agent image must match the harness module embargod is built with",
+      "description": "harness-proxy in the agent image must match the harness module tamis is built with",
       "matchPackageNames": ["github.com/alpha-omega-security/harness"],
       "groupName": "harness",
       "minimumGroupSize": 2

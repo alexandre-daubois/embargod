@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexandre-daubois/embargod/internal/repo"
+	"github.com/alexandre-daubois/tamis/internal/repo"
 )
 
 func git(t *testing.T, dir string, args ...string) string {

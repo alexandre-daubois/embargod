@@ -1,4 +1,4 @@
-// Package github is a minimal REST client for the endpoints embargod needs.
+// Package github is a minimal REST client for the endpoints tamis needs.
 package github
 
 import (

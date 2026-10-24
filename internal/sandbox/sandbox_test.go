@@ -233,7 +233,7 @@ func TestWriteConfig(t *testing.T) {
 			if (len(got) > 0) != tc.wantConfig {
 				t.Fatalf("config.toml = %q", got)
 			}
-			for _, want := range []string{"model_provider = \"embargod\"", "supports_websockets = false", "plugins = false", "[analytics]\nenabled = false", "chatgpt_base_url = \"https://proxy:1/model-proxy/backend-api\"", "base_url = \"https://proxy:1" + backends[tc.backend].basePath + "\""} {
+			for _, want := range []string{"model_provider = \"tamis\"", "supports_websockets = false", "plugins = false", "[analytics]\nenabled = false", "chatgpt_base_url = \"https://proxy:1/model-proxy/backend-api\"", "base_url = \"https://proxy:1" + backends[tc.backend].basePath + "\""} {
 				if tc.wantConfig && !strings.Contains(string(got), want) {
 					t.Fatalf("config.toml misses %q: %q", want, got)
 				}

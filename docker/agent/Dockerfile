@@ -1,7 +1,7 @@
 # Image the reader agent runs in: one agent CLI, git, curl and harness-proxy, nothing else, since the agent
 # has a shell while it reads a report that may be hostile.
-#   docker build --target claude -t embargod-agent:claude docker/agent
-#   docker build --target codex -t embargod-agent:codex docker/agent
+#   docker build --target claude -t tamis-agent:claude docker/agent
+#   docker build --target codex -t tamis-agent:codex docker/agent
 
 # Each release tag sits beside the digest of its asset, as in scrutineer's Dockerfile.runner, so a version
 # bump updates both and a mismatch fails sha256sum below.

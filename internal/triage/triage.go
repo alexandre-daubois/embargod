@@ -18,19 +18,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alexandre-daubois/embargod/internal/budget"
-	"github.com/alexandre-daubois/embargod/internal/engine"
-	"github.com/alexandre-daubois/embargod/internal/github"
-	"github.com/alexandre-daubois/embargod/internal/repo"
-	"github.com/alexandre-daubois/embargod/internal/report"
-	"github.com/alexandre-daubois/embargod/internal/sandbox"
-	"github.com/alexandre-daubois/embargod/internal/tools"
-	"github.com/alexandre-daubois/embargod/internal/usage"
-	"github.com/alexandre-daubois/embargod/skill"
+	"github.com/alexandre-daubois/tamis/internal/budget"
+	"github.com/alexandre-daubois/tamis/internal/engine"
+	"github.com/alexandre-daubois/tamis/internal/github"
+	"github.com/alexandre-daubois/tamis/internal/repo"
+	"github.com/alexandre-daubois/tamis/internal/report"
+	"github.com/alexandre-daubois/tamis/internal/sandbox"
+	"github.com/alexandre-daubois/tamis/internal/tools"
+	"github.com/alexandre-daubois/tamis/internal/usage"
+	"github.com/alexandre-daubois/tamis/skill"
 )
 
 // ProfilePath holds project-specific guidance, relative to the repository root.
-const ProfilePath = ".github/embargod.md"
+const ProfilePath = ".github/tamis.md"
 
 const (
 	maxTriagesPerRun      = 10
@@ -59,7 +59,7 @@ type Config struct {
 	Advisory string
 	RepoPath string
 	// BotLogin is the account the comments are posted as. GitHub App tokens cannot call GET /user,
-	// so it must be set with them, e.g. "embargod[bot]". Left empty, it is asked to GitHub.
+	// so it must be set with them, e.g. "tamis[bot]". Left empty, it is asked to GitHub.
 	BotLogin   string
 	OutputDir  string
 	References []string

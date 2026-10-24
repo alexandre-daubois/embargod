@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alexandre-daubois/embargod/internal/usage"
+	"github.com/alexandre-daubois/tamis/internal/usage"
 )
 
 // spend relays one request to an upstream answering with body, and returns what the run spent once revoked.

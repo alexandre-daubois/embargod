@@ -23,7 +23,7 @@ func newCertificate(host string) ([]byte, tls.Certificate, error) {
 	}
 	ca := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "embargod model proxy CA"},
+		Subject:               pkix.Name{CommonName: "tamis model proxy CA"},
 		NotBefore:             now.Add(-time.Minute),
 		NotAfter:              now.Add(24 * time.Hour),
 		KeyUsage:              x509.KeyUsageCertSign,

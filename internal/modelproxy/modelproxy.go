@@ -22,8 +22,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/alexandre-daubois/embargod/internal/budget"
-	"github.com/alexandre-daubois/embargod/internal/usage"
+	"github.com/alexandre-daubois/tamis/internal/budget"
+	"github.com/alexandre-daubois/tamis/internal/usage"
 )
 
 const (
@@ -33,7 +33,7 @@ const (
 	maxBody     = 1 << 20
 	maxRequests = 32
 	maxTokens   = 16_000
-	tokenPrefix = "embargod-"
+	tokenPrefix = "tamis-"
 )
 
 var errUpstreamRedirect = errors.New("model proxy: upstream redirect refused")
@@ -341,8 +341,8 @@ func (p *Proxy) redactIdentity(resp *http.Response) error {
 	p.mu.Unlock()
 	redacted, _ := json.Marshal(map[string]any{
 		"email":                      nil,
-		"chatgpt_user_id":            "embargod",
-		"chatgpt_account_id":         "embargod",
+		"chatgpt_user_id":            "tamis",
+		"chatgpt_account_id":         "tamis",
 		"chatgpt_plan_type":          identity.PlanType,
 		"chatgpt_account_is_fedramp": identity.FedRAMP,
 	})

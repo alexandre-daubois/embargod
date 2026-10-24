@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alexandre-daubois/embargod/internal/budget"
+	"github.com/alexandre-daubois/tamis/internal/budget"
 )
 
 type upstreamCall struct {
@@ -122,7 +122,7 @@ func TestOpenAISwapsTheBearerToken(t *testing.T) {
 
 func TestChatGPTSwapsTheAccessTokenOnBothUpstreams(t *testing.T) {
 	srv, calls, token := setup(t, ChatGPT, http.StatusOK)
-	if !strings.HasPrefix(token, "at-embargod-") {
+	if !strings.HasPrefix(token, "at-tamis-") {
 		t.Fatalf("Codex only reads a token starting with at- as an access token: %q", token)
 	}
 
@@ -145,7 +145,7 @@ func TestChatGPTSwapsTheAccessTokenOnBothUpstreams(t *testing.T) {
 	if (*calls)[0].accountID != "" || (*calls)[1].accountID != "account-secret" || (*calls)[2].accountID != "account-secret" {
 		t.Errorf("workspace identity was not applied server-side only: %+v", *calls)
 	}
-	if strings.Contains(string(identity), "secret") || strings.Contains(string(identity), "security@example.com") || !strings.Contains(string(identity), `"chatgpt_account_id":"embargod"`) || strings.Contains(string(managed), "internal") || !strings.Contains(string(managed), `"enterprise_managed":[]`) {
+	if strings.Contains(string(identity), "secret") || strings.Contains(string(identity), "security@example.com") || !strings.Contains(string(identity), `"chatgpt_account_id":"tamis"`) || strings.Contains(string(managed), "internal") || !strings.Contains(string(managed), `"enterprise_managed":[]`) {
 		t.Errorf("private workspace response reached the agent: identity %s, bundle %s", identity, managed)
 	}
 	if body := (*calls)[2].body; !strings.Contains(body, `"store":false`) || strings.Contains(body, "background") || strings.Contains(body, "max_output_tokens") {
@@ -206,7 +206,7 @@ func TestRefusals(t *testing.T) {
 		status       int
 	}{
 		"no token":       {http.MethodPost, PathPrefix + "/v1/messages", http.Header{}, http.StatusUnauthorized},
-		"unknown token":  {http.MethodPost, PathPrefix + "/v1/messages", withKey("X-Api-Key", "embargod-guess"), http.StatusUnauthorized},
+		"unknown token":  {http.MethodPost, PathPrefix + "/v1/messages", withKey("X-Api-Key", "tamis-guess"), http.StatusUnauthorized},
 		"real key":       {http.MethodPost, PathPrefix + "/v1/messages", withKey("X-Api-Key", "real-key"), http.StatusUnauthorized},
 		"other route":    {http.MethodPost, PathPrefix + "/v1/files", withKey("X-Api-Key", token), http.StatusForbidden},
 		"wrong method":   {http.MethodDelete, PathPrefix + "/v1/messages", withKey("X-Api-Key", token), http.StatusForbidden},
@@ -322,7 +322,7 @@ func TestEveryAccessTokenRequestSpendsTheQuota(t *testing.T) {
 	if resp := call(t, srv, http.MethodPost, PathPrefix+"/backend-api/codex/responses", withKey("Authorization", "Bearer "+token)); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("request after token checks: status %d", resp.StatusCode)
 	}
-	if resp := call(t, srv, http.MethodGet, whoami, withKey("Authorization", "Bearer at-embargod-guess")); resp.StatusCode != http.StatusUnauthorized {
+	if resp := call(t, srv, http.MethodGet, whoami, withKey("Authorization", "Bearer at-tamis-guess")); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("token check with an unknown token: status %d", resp.StatusCode)
 	}
 	if len(*calls) != maxRequests {

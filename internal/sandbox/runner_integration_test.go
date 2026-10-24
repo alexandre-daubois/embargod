@@ -25,8 +25,8 @@ import (
 )
 
 func TestIsolatedNetworkReachesTheModelButNotOtherHostServices(t *testing.T) {
-	if os.Getenv("EMBARGOD_TEST_IMAGE") == "" {
-		t.Fatal("EMBARGOD_TEST_IMAGE is required")
+	if os.Getenv("TAMIS_TEST_IMAGE") == "" {
+		t.Fatal("TAMIS_TEST_IMAGE is required")
 	}
 	runtime, ok := container.DetectRuntime("")
 	if !ok {
@@ -39,7 +39,7 @@ func TestIsolatedNetworkReachesTheModelButNotOtherHostServices(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	run, err := startIsolatedRun(ctx, runtime, os.Getenv("EMBARGOD_TEST_IMAGE"), modelPort, false, allow)
+	run, err := startIsolatedRun(ctx, runtime, os.Getenv("TAMIS_TEST_IMAGE"), modelPort, false, allow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestIsolatedNetworkReachesTheModelButNotOtherHostServices(t *testing.T) {
 		t.Fatalf("unexpected network policy: %q, %v", out, err)
 	}
 	proxyURL := egress.EndpointURL(run.token, net.JoinHostPort(run.proxyIP, proxyPort))
-	cmd := exec.CommandContext(ctx, runtime.Bin, "run", "--rm", "--network", run.network, "--add-host", egress.HostGatewayAlias+":"+run.proxyIP, "-e", "http_proxy", "-e", "NO_PROXY", "-e", "MODEL_URL", "-e", "SECRET_URL", "-e", "PROXIED_SECRET_URL", "--", os.Getenv("EMBARGOD_TEST_IMAGE"), "sh", "-c", `test "$(curl -fsS --connect-timeout 5 "$MODEL_URL")" = model && ! curl -fsS --noproxy '*' --connect-timeout 2 "$SECRET_URL" && ! curl -fsS --connect-timeout 2 "$PROXIED_SECRET_URL" && ! curl -fsS --noproxy '*' --connect-timeout 2 'https://1.1.1.1' && ! curl -gfsS --noproxy '*' --connect-timeout 2 'https://[2606:4700:4700::1111]' && ! getent hosts example.com`)
+	cmd := exec.CommandContext(ctx, runtime.Bin, "run", "--rm", "--network", run.network, "--add-host", egress.HostGatewayAlias+":"+run.proxyIP, "-e", "http_proxy", "-e", "NO_PROXY", "-e", "MODEL_URL", "-e", "SECRET_URL", "-e", "PROXIED_SECRET_URL", "--", os.Getenv("TAMIS_TEST_IMAGE"), "sh", "-c", `test "$(curl -fsS --connect-timeout 5 "$MODEL_URL")" = model && ! curl -fsS --noproxy '*' --connect-timeout 2 "$SECRET_URL" && ! curl -fsS --connect-timeout 2 "$PROXIED_SECRET_URL" && ! curl -fsS --noproxy '*' --connect-timeout 2 'https://1.1.1.1' && ! curl -gfsS --noproxy '*' --connect-timeout 2 'https://[2606:4700:4700::1111]' && ! getent hosts example.com`)
 	cmd.Env = append(os.Environ(), "http_proxy="+proxyURL, "NO_PROXY=", "MODEL_URL=http://"+egress.HostGatewayAlias+":"+modelPort, "SECRET_URL=http://"+net.JoinHostPort(hostIP, secretPort), "PROXIED_SECRET_URL=http://"+egress.HostGatewayAlias+":"+secretPort)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("isolation probe: %v: %s", err, strings.TrimSpace(string(out)))
@@ -75,9 +75,9 @@ func TestCodexWithAnAccessTokenCanReachTheFilteredModelProxy(t *testing.T) {
 
 func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuffix string) {
 	t.Helper()
-	image := os.Getenv("EMBARGOD_TEST_IMAGE")
+	image := os.Getenv("TAMIS_TEST_IMAGE")
 	if !strings.HasSuffix(image, imageSuffix) {
-		t.Skip("EMBARGOD_TEST_IMAGE must end in " + imageSuffix)
+		t.Skip("TAMIS_TEST_IMAGE must end in " + imageSuffix)
 	}
 	var calls atomic.Int32
 	upstream, port := testServerHandler(t, func(w http.ResponseWriter, r *http.Request) {

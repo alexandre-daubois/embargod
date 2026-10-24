@@ -1,10 +1,10 @@
-# embargod
+# tamis
 
-[![CI](https://github.com/alexandre-daubois/embargod/actions/workflows/ci.yml/badge.svg)](https://github.com/alexandre-daubois/embargod/actions/workflows/ci.yml)
+[![CI](https://github.com/alexandre-daubois/tamis/actions/workflows/ci.yml/badge.svg)](https://github.com/alexandre-daubois/tamis/actions/workflows/ci.yml)
 
-First-pass triage of private vulnerability reports on GitHub. When a new security advisory comes in, embargod has an LLM agent investigate it against the repository and posts its findings as a comment on the advisory.
+First-pass triage of private vulnerability reports on GitHub. When a new security advisory comes in, tamis has an LLM agent investigate it against the repository and posts its findings as a comment on the advisory.
 
-For each report, embargod:
+For each report, tamis:
 
 - lists public duplicates in the comment and embargoed duplicates only in a private report,
 - finds public issues and pull requests already fixing or hardening the same code,
@@ -21,7 +21,7 @@ It informs the maintainers' decision and never makes it.
 3. Add this workflow to the private repository:
 
 ```yaml
-name: embargod
+name: tamis
 
 on:
   schedule:
@@ -33,21 +33,21 @@ on:
         required: false
 
 concurrency:
-  group: embargod
+  group: tamis
 
 jobs:
   triage:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: embargod
+    environment: tamis
     permissions:
       contents: read
     steps:
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app
         with:
-          client-id: ${{ vars.EMBARGOD_CLIENT_ID }}
-          private-key: ${{ secrets.EMBARGOD_PRIVATE_KEY }}
+          client-id: ${{ vars.TAMIS_CLIENT_ID }}
+          private-key: ${{ secrets.TAMIS_PRIVATE_KEY }}
           owner: your-org
           repositories: your-project
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -55,8 +55,8 @@ jobs:
           repository: your-org/your-project
           fetch-depth: 0
           persist-credentials: false
-      # Replace this placeholder with the full SHA of a reviewed Embargod commit.
-      - uses: alexandre-daubois/embargod@REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA
+      # Replace this placeholder with the full SHA of a reviewed Tamis commit.
+      - uses: alexandre-daubois/tamis@REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA
         with:
           repository: your-org/your-project
           since: "2026-10-22"

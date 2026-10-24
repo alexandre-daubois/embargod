@@ -16,15 +16,15 @@ import (
 
 	"github.com/git-pkgs/cwe"
 
-	"github.com/alexandre-daubois/embargod/internal/github"
-	"github.com/alexandre-daubois/embargod/internal/repo"
+	"github.com/alexandre-daubois/tamis/internal/github"
+	"github.com/alexandre-daubois/tamis/internal/repo"
 )
 
-// Marker identifies comments posted by embargod.
-const Marker = "<!-- embargod -->"
+// Marker identifies comments posted by tamis.
+const Marker = "<!-- tamis -->"
 
 // FailedMarker identifies the comments of failed attempts, which do not count as a triage.
-const FailedMarker = "<!-- embargod failed -->"
+const FailedMarker = "<!-- tamis failed -->"
 
 var (
 	cweID = regexp.MustCompile(`^CWE-[1-9][0-9]*$`)

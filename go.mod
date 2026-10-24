@@ -1,4 +1,4 @@
-module github.com/alexandre-daubois/embargod
+module github.com/alexandre-daubois/tamis
 
 go 1.27.3
 

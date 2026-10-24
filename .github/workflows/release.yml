@@ -27,13 +27,13 @@ jobs:
           GOOS: linux
         run: |
           for arch in amd64 arm64; do
-            GOARCH="$arch" go build -trimpath -o "dist/embargod-linux-$arch" ./cmd/embargod
+            GOARCH="$arch" go build -trimpath -o "dist/tamis-linux-$arch" ./cmd/tamis
           done
       # The action only runs a released binary attested by this workflow for the commit it was given.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/embargod-linux-*
+          subject-path: dist/tamis-linux-*
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/embargod-linux-* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/tamis-linux-* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
