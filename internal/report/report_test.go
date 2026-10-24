@@ -179,8 +179,8 @@ func TestRender(t *testing.T) {
 		"| [Issue #13](https://x/13) | Crash | Low |",
 		"Checked against `SECURITY.md`.",
 		`- Malicious unserialize\(\) inputs: The PoC feeds unserialize\(\).`,
-		"| `a.c` `f` | yes |",
-		"| `b\\|c.c` | no |",
+		"| `a.c` `f` | Found |",
+		"| `b\\|c.c` | Not found |",
 		"| | Estimate | Why |",
 		"| CWE | [CWE-787](https://cwe.mitre.org/data/definitions/787.html) Out-of-bounds Write | write |",
 		"| CVSS 4.0 | [`AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N`](https://www.first.org/cvss/calculator/4.0#CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N) | remote |",
@@ -210,7 +210,7 @@ func TestRenderNeutralisesMarkup(t *testing.T) {
 	for _, want := range []string{
 		`\!\[x\]\(https://evil.example/?d=SECRET\) \<img src=x\> \[link\]\(https://evil.example\) \# Heading`,
 		`| \<script\>alert\(1\)\</script\> |`,
-		"| `a'b.c` `f') [x](y` | no |",
+		"| `a'b.c` `f') [x](y` | Not found |",
 		"| CWE | [CWE-787](https://cwe.mitre.org/data/definitions/787.html) Out-of-bounds Write | \\~\\~strike\\~\\~ \\| pipe |",
 	} {
 		if !strings.Contains(got, want) {
@@ -381,6 +381,9 @@ func TestValidateReaderBoundsModelOutput(t *testing.T) {
 		"too many related": {Related: make([]Related, maxRelated+1)},
 		"bad issue":        {Related: []Related{{Number: -1}}},
 		"long text":        {Summary: strings.Repeat("x", maxText+1)},
+		"negative line":    {CodeReferences: []CodeReference{{Line: -1}}},
+		"huge line":        {CodeReferences: []CodeReference{{Line: maxLine + 1}}},
+		"long snippet":     {CodeReferences: []CodeReference{{Snippet: strings.Repeat("x", maxText+1)}}},
 		"too much text": {PolicyExclusions: []PolicyPoint{
 			{Point: strings.Repeat("x", maxText), Reason: strings.Repeat("x", maxText)},
 			{Point: strings.Repeat("x", maxText), Reason: strings.Repeat("x", maxText)},
@@ -508,7 +511,7 @@ func TestVerifySymbolWithoutPath(t *testing.T) {
 func TestRenderReferenceWithoutPath(t *testing.T) {
 	got := Render(Report{CodeReferences: []CodeReference{{Symbol: "urldecode", Found: true}}})
 
-	if !strings.Contains(got, "| `urldecode` | yes |") || strings.Contains(got, "``") {
+	if !strings.Contains(got, "| `urldecode` | Found |") || strings.Contains(got, "``") {
 		t.Fatalf("got:\n%s", got)
 	}
 }

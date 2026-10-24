@@ -240,7 +240,7 @@ func TestRunOnlyPostsOnNewUntriagedAdvisories(t *testing.T) {
 		t.Fatalf("posted = %v", gh.posted)
 	}
 	body := gh.posted["GHSA-new"]
-	for _, want := range []string{report.Marker, "Looks like a heap overflow.", "| [GHSA-old](https://x/GHSA-old) | Unpublished | High • Exact duplicate |", "CWE-787"} {
+	for _, want := range []string{report.Marker, "Scanned on ", " UTC", "Looks like a heap overflow.", "| [GHSA-old](https://x/GHSA-old) | Unpublished | High • Exact duplicate |", "CWE-787"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in:\n%s", want, body)
 		}

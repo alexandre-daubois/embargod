@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/git-pkgs/cwe"
 
@@ -42,6 +45,7 @@ const (
 	maxCWE         = 3
 	maxText        = 2_000
 	maxTotalText   = 12_000
+	minQuote       = 10
 )
 
 type Report struct {
@@ -58,6 +62,11 @@ type Report struct {
 	Duplicates []Duplicate `json:"-"`
 	// Policies are the files the policy check read, empty when the repository has none.
 	Policies []string `json:"-"`
+	// ScannedAt, Repo, Commit and Branch say when and on what code the report was checked.
+	ScannedAt time.Time `json:"-"`
+	Repo      string    `json:"-"`
+	Commit    string    `json:"-"`
+	Branch    string    `json:"-"`
 	// Removed counts the model claims dropped because they could not be verified.
 	Removed int `json:"-"`
 }
@@ -94,10 +103,34 @@ type Related struct {
 }
 
 type CodeReference struct {
-	Path   string `json:"path"`
-	Symbol string `json:"symbol"`
-	Found  bool   `json:"-"`
+	Path    string `json:"path"`
+	Symbol  string `json:"symbol"`
+	Line    int    `json:"line"`
+	Snippet string `json:"snippet"`
+	Found   bool   `json:"-"`
+	// Place, Current, Commit and Date say where the cited line stands on the scanned commit.
+	Place   Place  `json:"-"`
+	Current int    `json:"-"`
+	Commit  string `json:"-"`
+	Date    string `json:"-"`
 }
+
+type Place string
+
+const (
+	// PlaceSame: the quoted code is at the cited line.
+	PlaceSame Place = "same"
+	// PlaceMoved: the quoted code is at Current.
+	PlaceMoved Place = "moved"
+	// PlaceChanged: the quoted code is gone, Commit last added or removed it.
+	PlaceChanged Place = "changed"
+	// PlaceMissing: the quoted code never was in the file.
+	PlaceMissing Place = "missing"
+	// PlaceUnquoted: the report cites a line without quoting it.
+	PlaceUnquoted Place = "unquoted"
+	// PlacePastEnd: the cited line is past the end of the file, which has Current lines.
+	PlacePastEnd Place = "past-end"
+)
 
 type PolicyPoint struct {
 	Point  string `json:"point"`
@@ -139,8 +172,10 @@ func ReaderProperties() (map[string]any, []string) {
 			"confidence": confidence,
 		}),
 		"code_references": list("Every file and function or macro the report cites.", map[string]any{
-			"path":   str("File path relative to the repository root, as cited"),
-			"symbol": str("Function, macro or variable name cited, empty when only a file is cited"),
+			"path":    str("File path relative to the repository root, as cited"),
+			"symbol":  str("Function, macro or variable name cited, empty when only a file is cited"),
+			"line":    map[string]any{"type": "integer", "description": "Line number the report cites, as written in the report, 0 when it cites none"},
+			"snippet": str("One line of code the report quotes at this reference, copied verbatim from the report, empty when it quotes none"),
 		}),
 		"policy_exclusions": list("Points of the repository security policy that may exclude the report from security handling. Empty when none applies or when there is no policy.", map[string]any{
 			"point":  str("The policy point, quoted or closely paraphrased"),
@@ -180,7 +215,7 @@ func ValidateReader(r Report) error {
 		}
 	}
 	for _, item := range r.CodeReferences {
-		if len(item.Path) > maxText || len(item.Symbol) > maxText {
+		if len(item.Path) > maxText || len(item.Symbol) > maxText || len(item.Snippet) > maxText || item.Line < 0 || item.Line > maxLine {
 			return errors.New("the report exceeds its limits")
 		}
 	}
@@ -202,7 +237,7 @@ func ValidateReader(r Report) error {
 		total += len(item.Confidence)
 	}
 	for _, item := range r.CodeReferences {
-		total += len(item.Path) + len(item.Symbol)
+		total += len(item.Path) + len(item.Symbol) + len(item.Snippet)
 	}
 	for _, item := range r.PolicyExclusions {
 		total += len(item.Point) + len(item.Reason)
@@ -242,19 +277,33 @@ func Clues(r Report) Comparison {
 }
 
 // KeepCited drops the code references the report text does not name, which the reader tends to add
-// from its own investigation: the section lists what the report cites, found or not.
+// from its own investigation: the section lists what the report cites, found or not. It also drops a
+// line or a quote the report does not contain, and quotes too short to tell one line from another.
 func (r *Report) KeepCited(reportText string) {
+	flat := flatten(reportText)
 	cited := r.CodeReferences[:0]
 	for _, ref := range r.CodeReferences {
 		name := ref.Symbol
 		if name == "" && ref.Path != "" {
 			name = path.Base(ref.Path)
 		}
-		if name != "" && strings.Contains(reportText, name) {
-			cited = append(cited, ref)
+		if name == "" || !strings.Contains(reportText, name) {
+			continue
 		}
+		if !strings.Contains(reportText, strconv.Itoa(ref.Line)) {
+			ref.Line = 0
+		}
+		if quote := flatten(ref.Snippet); len(quote) < minQuote || !strings.Contains(flat, quote) {
+			ref.Snippet = ""
+		}
+		cited = append(cited, ref)
 	}
 	r.CodeReferences = cited
+}
+
+// flatten collapses whitespace, so a quote matches the code whatever its indentation.
+func flatten(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 type IssueGetter interface {
@@ -311,6 +360,9 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 	}
 	r.Related = related
 
+	// A checkout without commits has no line to link to, the references are still checked.
+	r.Repo = c.Repo
+	r.Commit, r.Branch, _ = c.Code.Head()
 	for i, ref := range r.CodeReferences {
 		// A symbol cited without a file is looked up in the whole repository.
 		found := ref.Path == "" || c.Code.Exists(ref.Path)
@@ -321,6 +373,11 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 			}
 		}
 		r.CodeReferences[i].Found = found && (ref.Path != "" || ref.Symbol != "")
+		if r.CodeReferences[i].Found && r.Commit != "" && (ref.Line > 0 || ref.Snippet != "") {
+			if err := c.place(&r.CodeReferences[i]); err != nil {
+				return err
+			}
+		}
 	}
 
 	cwes := r.CWE[:0]
@@ -341,11 +398,56 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 	return nil
 }
 
+// place finds the quoted code on the scanned commit, nearest to the cited line, or the commit that last
+// changed it. Reports often target another version than the one scanned.
+func (c Checker) place(ref *CodeReference) error {
+	lines, ok, err := c.Code.Lines(ref.Path)
+	if err != nil || !ok {
+		return err
+	}
+	quote := flatten(ref.Snippet)
+	if quote == "" {
+		ref.Place = PlaceUnquoted
+		if ref.Line > len(lines) {
+			ref.Place, ref.Current = PlacePastEnd, len(lines)
+		}
+		return nil
+	}
+	for i, line := range lines {
+		if n := i + 1; strings.Contains(flatten(line), quote) && (ref.Current == 0 || abs(n-ref.Line) < abs(ref.Current-ref.Line)) {
+			ref.Current = n
+		}
+	}
+	switch {
+	case ref.Current == 0:
+		if ref.Commit, ref.Date, err = c.Code.LastChange(ref.Path, strings.TrimSpace(ref.Snippet)); err != nil {
+			return err
+		}
+		ref.Place = PlaceMissing
+		if ref.Commit != "" {
+			ref.Place = PlaceChanged
+		}
+	case ref.Current == ref.Line:
+		ref.Place = PlaceSame
+	default:
+		ref.Place = PlaceMoved
+	}
+
+	return nil
+}
+
+func abs(n int) int {
+	return max(n, -n)
+}
+
 // Render formats the report as the advisory comment.
 func Render(r Report) string {
 	var b strings.Builder
 	b.WriteString(Marker + "\n### Automated triage\n\n")
 	b.WriteString("> Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.\n\n")
+	if !r.ScannedAt.IsZero() {
+		fmt.Fprintf(&b, "Scanned on %s UTC%s.\n\n", r.ScannedAt.UTC().Format("2006-01-02 at 15:04"), r.scope())
+	}
 	b.WriteString(text(r.Summary) + "\n")
 
 	b.WriteString("\n#### Possible duplicates\n\n")
@@ -383,20 +485,19 @@ func Render(r Report) string {
 	}
 
 	if len(r.CodeReferences) > 0 {
-		b.WriteString("\n#### Code cited by the report\n\n| Reference | Found in the repository |\n|---|---|\n")
+		fmt.Fprintf(&b, "\n#### Code cited by the report\n\n| Cited | In the repository%s |\n|---|---|\n", r.scope())
 		for _, ref := range r.CodeReferences {
+			cited := ref.Path
+			if cited != "" && ref.Line > 0 {
+				cited += ":" + strconv.Itoa(ref.Line)
+			}
 			var parts []string
-			for _, p := range []string{ref.Path, ref.Symbol} {
+			for _, p := range []string{cited, ref.Symbol} {
 				if strings.TrimSpace(p) != "" {
 					parts = append(parts, code(p))
 				}
 			}
-			name := strings.Join(parts, " ")
-			found := "no"
-			if ref.Found {
-				found = "yes"
-			}
-			fmt.Fprintf(&b, "| %s | %s |\n", name, found)
+			fmt.Fprintf(&b, "| %s | %s |\n", strings.Join(parts, " "), r.where(ref))
 		}
 	}
 
@@ -442,6 +543,53 @@ func Render(r Report) string {
 // Failed prevents a hostile report that never completes from being retried indefinitely.
 func Failed() string {
 	return Marker + "\n### Automated triage\n\nThe automated triage could not complete. A maintainer must review this report manually.\n"
+}
+
+// scope names the scanned commit, and its branch when it has one.
+func (r Report) scope() string {
+	if r.Commit == "" {
+		return ""
+	}
+	short := code(r.Commit[:min(len(r.Commit), 7)])
+	if r.Branch == "" {
+		return " at " + short
+	}
+
+	return fmt.Sprintf(" on %s at %s", code(r.Branch), short)
+}
+
+// where says where a cited reference stands on the scanned commit. Links are built from the repository,
+// a commit hash and a tracked path, never from model text.
+func (r Report) where(ref CodeReference) string {
+	switch {
+	case !ref.Found:
+		return "Not found"
+	case ref.Place == PlaceSame:
+		return "Same line, " + r.lineLink(ref.Path, ref.Current)
+	case ref.Place == PlaceMoved && ref.Line == 0:
+		return "At " + r.lineLink(ref.Path, ref.Current)
+	case ref.Place == PlaceMoved:
+		return "Moved to " + r.lineLink(ref.Path, ref.Current)
+	case ref.Place == PlaceChanged:
+		return fmt.Sprintf("Quoted code changed by [`%s`](https://github.com/%s/commit/%s) on %s", ref.Commit[:min(len(ref.Commit), 7)], r.Repo, ref.Commit, ref.Date)
+	case ref.Place == PlaceMissing:
+		return "Quoted code not found in the file's history"
+	case ref.Place == PlaceUnquoted:
+		return r.lineLink(ref.Path, ref.Line) + ", the report quotes no code"
+	case ref.Place == PlacePastEnd:
+		return fmt.Sprintf("Past the end of the file (%d lines)", ref.Current)
+	default:
+		return "Found"
+	}
+}
+
+func (r Report) lineLink(file string, line int) string {
+	segments := strings.Split(file, "/")
+	for i, s := range segments {
+		segments[i] = url.PathEscape(s)
+	}
+
+	return fmt.Sprintf("[L%d](https://github.com/%s/blob/%s/%s#L%d)", line, r.Repo, r.Commit, strings.Join(segments, "/"), line)
 }
 
 func label(confidence string) string {
