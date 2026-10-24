@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/alexandre-daubois/embargod/internal/budget"
 	"github.com/alexandre-daubois/embargod/internal/usage"
 )
 
@@ -29,7 +30,7 @@ const (
 	// PathPrefix is where the proxy serves, the agent's base URL ends with it.
 	PathPrefix = "/model-proxy"
 	// maxBody caps a forwarded request so a hostile agent cannot make the host buffer unbounded data.
-	maxBody     = 8 << 20
+	maxBody     = 1 << 20
 	maxRequests = 32
 	maxTokens   = 16_000
 	tokenPrefix = "embargod-"
@@ -117,10 +118,15 @@ type Proxy struct {
 	proxy    *httputil.ReverseProxy
 
 	mu        sync.RWMutex
-	tokens    map[[sha256.Size]byte]int
+	tokens    map[[sha256.Size]byte]*tokenBudget
 	spent     map[[sha256.Size]byte]usage.Usage
 	model     string
 	accountID string
+}
+
+type tokenBudget struct {
+	remaining int
+	ctx       context.Context
 }
 
 func New(provider Provider, key, model string) (*Proxy, error) {
@@ -146,7 +152,7 @@ func New(provider Provider, key, model string) (*Proxy, error) {
 		upstreams[""] = u
 	}
 
-	p := &Proxy{provider: provider, key: key, model: model, tokens: map[[sha256.Size]byte]int{}, spent: map[[sha256.Size]byte]usage.Usage{}}
+	p := &Proxy{provider: provider, key: key, model: model, tokens: map[[sha256.Size]byte]*tokenBudget{}, spent: map[[sha256.Size]byte]usage.Usage{}}
 	p.proxy = &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			// ServeHTTP only forwards permitted routes, each under exactly one prefix.
@@ -159,8 +165,22 @@ func New(provider Provider, key, model string) (*Proxy, error) {
 			}
 			pr.Out.URL.Scheme, pr.Out.URL.Host, pr.Out.Host = upstream.Scheme, upstream.Host, upstream.Host
 			pr.Out.URL.Path, pr.Out.URL.RawPath = upstream.Path+route, ""
-			for _, h := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Cookie", "OpenAI-Organization", "OpenAI-Project", "ChatGPT-Account-Id", "Accept-Encoding"} {
-				pr.Out.Header.Del(h)
+			// New provider capabilities must not be enabled through a client-supplied header.
+			pr.Out.Header = http.Header{}
+			pr.Out.Header.Set("Content-Type", "application/json")
+			pr.Out.Header.Set("Accept", pr.In.Header.Get("Accept"))
+			if provider.UntypedTools {
+				pr.Out.Header.Set("Anthropic-Version", "2023-06-01")
+				var betas []string
+				for _, beta := range strings.Split(pr.In.Header.Get("Anthropic-Beta"), ",") {
+					beta = strings.TrimSpace(beta)
+					if slices.Contains([]string{"claude-code-20250219", "interleaved-thinking-2025-05-14", "fine-grained-tool-streaming-2025-05-14", "context-management-2025-06-27", "effort-2025-11-24", "adaptive-thinking-2026-01-28", "structured-outputs-2025-11-13", "prompt-caching-2024-07-31", "tool-search-tool-2025-10-19", "per-turn-control-2026-07-01", "mid-conversation-tool-changes-2026-07-01", "thinking-display-updates-2026-08-18", "thinking-token-count-2026-05-13", "prompt-caching-scope-2026-01-05"}, beta) {
+						betas = append(betas, beta)
+					}
+				}
+				if len(betas) > 0 {
+					pr.Out.Header.Set("Anthropic-Beta", strings.Join(betas, ","))
+				}
 			}
 			provider.SetKey(pr.Out.Header, key)
 			if provider.PrivateWorkspace && strings.HasPrefix(pr.In.URL.Path, "/backend-api/") {
@@ -213,13 +233,13 @@ func New(provider Provider, key, model string) (*Proxy, error) {
 }
 
 // Issue mints a token for one agent run, revoke invalidates it and returns what the run spent. Only its hash is kept.
-func (p *Proxy) Issue() (token string, revoke func() usage.Usage) {
+func (p *Proxy) Issue(ctx context.Context) (token string, revoke func() usage.Usage) {
 	var raw [32]byte
 	_, _ = rand.Read(raw[:])
 	token = cmp.Or(p.provider.TokenPrefix, tokenPrefix) + hex.EncodeToString(raw[:])
 	sum := sha256.Sum256([]byte(token))
 	p.mu.Lock()
-	p.tokens[sum] = maxRequests
+	p.tokens[sum] = &tokenBudget{remaining: maxRequests, ctx: ctx}
 	p.mu.Unlock()
 
 	return token, func() usage.Usage {
@@ -247,8 +267,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	sum, ok := p.authorized(r)
-	if !ok {
+	sum, token := p.authorized(r)
+	if token == nil {
 		http.Error(w, "invalid or revoked token", http.StatusUnauthorized)
 		return
 	}
@@ -269,6 +289,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r.ContentLength = int64(len(body))
+		if !budget.Take(token.ctx, len(body)) {
+			http.Error(w, "provider budget exhausted", http.StatusTooManyRequests)
+			return
+		}
 	}
 	if strings.Contains(strings.ToLower(r.Header.Get("Anthropic-Beta")), "mcp") {
 		http.Error(w, "provider capability not permitted", http.StatusForbidden)
@@ -278,23 +302,24 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.proxy.ServeHTTP(w, r)
 }
 
-func (p *Proxy) authorized(r *http.Request) ([sha256.Size]byte, bool) {
+func (p *Proxy) authorized(r *http.Request) ([sha256.Size]byte, *tokenBudget) {
 	token := r.Header.Get("X-Api-Key")
 	if bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); token == "" && ok {
 		token = bearer
 	}
 	if token == "" {
-		return [sha256.Size]byte{}, false
+		return [sha256.Size]byte{}, nil
 	}
 	sum := sha256.Sum256([]byte(token))
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.tokens[sum] <= 0 {
-		return sum, false
+	b := p.tokens[sum]
+	if b == nil || b.remaining <= 0 || b.ctx.Err() != nil {
+		return sum, nil
 	}
-	p.tokens[sum]--
+	b.remaining--
 
-	return sum, true
+	return sum, b
 }
 
 func (p *Proxy) redactIdentity(resp *http.Response) error {
@@ -358,9 +383,10 @@ func (p *Proxy) safeBody(body io.Reader) ([]byte, error) {
 		return nil, errors.New("invalid provider request")
 	}
 	model, ok := v["model"].(string)
-	if !ok || model != p.model || unsafeProviderValue(v) || unsafeInputReference(v["input"]) || unsafeToolsField(v["tools"], p.provider.UntypedTools) {
+	if !ok || model != p.model || !safeRequest(v, p.provider.UntypedTools) {
 		return nil, errors.New("provider request not permitted")
 	}
+	delete(v, "client_metadata")
 	for _, key := range []string{"previous_response_id", "conversation", "prompt", "fallbacks", "multi_agent"} {
 		if _, ok := v[key]; ok {
 			return nil, errors.New("provider request not permitted")
@@ -393,81 +419,4 @@ func (p *Proxy) safeBody(body io.Reader) ([]byte, error) {
 	}
 
 	return json.Marshal(v)
-}
-
-func unsafeInputReference(v any) bool {
-	items, ok := v.([]any)
-	if !ok {
-		return false
-	}
-	for _, item := range items {
-		value, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		if _, hasID := value["id"].(string); hasID {
-			if kind, typed := value["type"].(string); !typed || kind == "" {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func unsafeProviderValue(v any) bool {
-	switch value := v.(type) {
-	case []any:
-		for _, item := range value {
-			if unsafeProviderValue(item) {
-				return true
-			}
-		}
-	case map[string]any:
-		for key, item := range value {
-			switch key {
-			case "mcp_servers", "server_url", "image_url", "file_url", "file_id", "vector_store_ids":
-				return true
-			case "type":
-				if kind, ok := item.(string); ok {
-					for _, forbidden := range []string{"mcp", "web", "computer", "code_interpreter", "file_search", "image_generation", "item_reference", "multi_agent"} {
-						if strings.Contains(strings.ToLower(kind), forbidden) {
-							return true
-						}
-					}
-				}
-			}
-			if kind, _ := value["type"].(string); key == "url" && kind == "url" {
-				return true
-			}
-			if unsafeProviderValue(item) {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func unsafeTools(v any, untyped bool) bool {
-	tools, ok := v.([]any)
-	if !ok {
-		return true
-	}
-	for _, value := range tools {
-		tool, ok := value.(map[string]any)
-		if !ok {
-			return true
-		}
-		kind, ok := tool["type"].(string)
-		if (!ok && !untyped) || (ok && !slices.Contains([]string{"function", "custom", "tool_search", "local_shell", "apply_patch"}, kind)) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func unsafeToolsField(v any, untyped bool) bool {
-	return v != nil && unsafeTools(v, untyped)
 }

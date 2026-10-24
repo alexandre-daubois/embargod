@@ -76,10 +76,13 @@ func TestClaudeRunsToolsUntilSubmit(t *testing.T) {
 		t.Fatalf("tool calls = %v", calls)
 	}
 	first, second, third := (*requests)[0], (*requests)[1], (*requests)[2]
-	for _, want := range []string{"server-side-fallback-2026-07-01", `"fallbacks":"default"`, `"effort":"high"`, `"name":"submit"`, `"cache_control":{"type":"ephemeral"}`, `"input_schema":{"properties":{},`} {
+	for _, want := range []string{`"effort":"high"`, `"name":"submit"`, `"cache_control":{"type":"ephemeral"}`, `"input_schema":{"properties":{},`} {
 		if !strings.Contains(first, want) {
 			t.Errorf("first request misses %s: %s", want, first)
 		}
+	}
+	if strings.Contains(first, "fallback") {
+		t.Fatalf("an unapproved fallback was enabled: %s", first)
 	}
 	if !strings.Contains(second, `"tool_use_id":"tu1"`) || !strings.Contains(second, "lookup result") {
 		t.Errorf("second request misses the tool result: %s", second)

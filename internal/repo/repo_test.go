@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,15 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestGitCommandsStopWithTheirContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	r := Repo{Dir: t.TempDir(), Context: ctx}
+	if _, err := r.Commit(); err == nil {
+		t.Fatal("a canceled command ran")
+	}
+}
 
 // newRepo creates a git repository with one committed C file.
 func newRepo(t testing.TB) Repo {

@@ -66,6 +66,28 @@ func TestSnapshotSourceStopsWithItsContext(t *testing.T) {
 	}
 }
 
+func TestSnapshotSourceUsesTheConfiguredBranch(t *testing.T) {
+	source := gitRepo(t)
+	git(t, source, "branch", "stable")
+	if err := os.WriteFile(filepath.Join(source, "new.txt"), []byte("HEAD-only"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, source, "add", "--", "new.txt")
+	git(t, source, "commit", "--quiet", "--no-gpg-sign", "-m", "new branch code")
+	target := filepath.Join(t.TempDir(), "src")
+	if err := SnapshotSource(t.Context(), source, target, "stable"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "new.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("HEAD code reached the stable snapshot")
+	}
+	for _, ref := range []string{"missing", "--upload-pack=malicious"} {
+		if err := SnapshotSource(t.Context(), source, filepath.Join(t.TempDir(), "src"), ref); err == nil {
+			t.Fatal("invalid reference accepted")
+		}
+	}
+}
+
 func gitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

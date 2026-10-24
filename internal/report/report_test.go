@@ -185,7 +185,7 @@ func TestRenderFoldsTheAnalysisDetails(t *testing.T) {
 }
 
 func TestRender(t *testing.T) {
-	got := Render(Report{
+	got := RenderPrivate(Report{
 		Summary:          "Heap overflow claimed,\ncc @someone",
 		Duplicates:       []Duplicate{{GHSAID: "GHSA-real", URL: "https://x/GHSA-real", Confidence: "high", Exact: true}, {GHSAID: "GHSA-near", URL: "https://x/GHSA-near", Confidence: "low", Published: true}},
 		Related:          []Related{{Number: 12, Title: "Harden", URL: "https://x/12", PullRequest: true, Confidence: "medium"}, {Number: 13, Title: "Crash", URL: "https://x/13", Confidence: "low"}},
@@ -204,7 +204,7 @@ func TestRender(t *testing.T) {
 		"| Advisory | Status | Confidence |",
 		"| [GHSA-real](https://x/GHSA-real) | Unpublished | High • Exact duplicate |",
 		"| [GHSA-near](https://x/GHSA-near) | Published | Low |",
-		"_Unpublished advisories are only listed when they are exact duplicates._",
+		"_Embargoed matches are kept in the private report, never in the reporter-visible comment._",
 		"| Issue or PR | Title | Confidence |",
 		"| [PR #12](https://x/12) | Harden | Medium |",
 		"| [Issue #13](https://x/13) | Crash | Low |",
@@ -220,6 +220,16 @@ func TestRender(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+func TestRenderNeverDisclosesEmbargoedMatches(t *testing.T) {
+	r := Report{Duplicates: []Duplicate{{GHSAID: "PRIVATE-ID", Confidence: "high", Exact: true}, {GHSAID: "PUBLIC-ID", Confidence: "low", Published: true}}}
+	if body := Render(r); strings.Contains(body, "PRIVATE-ID") || !strings.Contains(body, "PUBLIC-ID") {
+		t.Fatal("private match rendered in a comment")
+	}
+	if !strings.Contains(RenderPrivate(r), "PRIVATE-ID") {
+		t.Fatal("public rendering modified the private result")
 	}
 }
 

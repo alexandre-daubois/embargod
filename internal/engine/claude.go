@@ -20,7 +20,7 @@ type Claude struct {
 }
 
 func NewClaude(apiKey, model string, opts ...option.RequestOption) *Claude {
-	return &Claude{client: anthropic.NewClient(append([]option.RequestOption{option.WithAPIKey(apiKey)}, opts...)...), model: model}
+	return &Claude{client: anthropic.NewClient(append([]option.RequestOption{option.WithAPIKey(apiKey), option.WithMaxRetries(0)}, opts...)...), model: model}
 }
 
 func (c *Claude) Run(ctx context.Context, system, prompt string, ts []tools.Tool) (json.RawMessage, error) {
@@ -51,13 +51,10 @@ func (c *Claude) Run(ctx context.Context, system, prompt string, ts []tools.Tool
 		OutputConfig: anthropic.BetaOutputConfigParam{Effort: anthropic.BetaOutputConfigEffortHigh},
 		// Every turn resends the whole conversation, the cache keeps the earlier turns from being billed in full again.
 		CacheControl: anthropic.NewBetaCacheControlEphemeralParam(),
-		// Security reports can trip the cyber classifier, the server-side fallback re-serves refused requests.
-		Fallbacks: anthropic.BetaFallbacksParamOfDefault(),
-		Betas:     []anthropic.AnthropicBeta{anthropic.AnthropicBetaServerSideFallback2026_07_01},
 	}
 
 	for range maxTurns {
-		if !takeRequest(ctx) {
+		if !takeRequest(ctx, params) {
 			return nil, ErrNoReport
 		}
 		resp, err := c.client.Beta.Messages.New(ctx, params)

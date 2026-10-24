@@ -149,6 +149,23 @@ func TestNew(t *testing.T) {
 	}
 }
 
+func TestGetAdvisoryReadsTheCurrentReportAndReporter(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/repos/o/r/security-advisories/GHSA-1" {
+			t.Fatalf("unexpected request: %s", r.URL)
+		}
+		fmt.Fprint(w, `{"ghsa_id":"GHSA-1","description":"current revision","author":{"login":"reporter"}}`)
+	})
+	a, err := c.GetAdvisory(t.Context(), "o/r", "GHSA-1")
+	if err != nil || a.Description != "current revision" || a.Author.Login != "reporter" {
+		t.Fatalf("advisory: %+v, %v", a, err)
+	}
+	c = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) })
+	if _, err := c.GetAdvisory(t.Context(), "o/r", "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("missing advisory accepted")
+	}
+}
+
 func TestHTTPErrorUnwrapsOnlyNotFoundAndGone(t *testing.T) {
 	if !errors.Is(&HTTPError{Status: 404}, ErrNotFound) || !errors.Is(&HTTPError{Status: 410}, ErrNotFound) || errors.Is(&HTTPError{Status: 403}, ErrNotFound) || errors.Is(&HTTPError{}, ErrNotFound) {
 		t.Fatal("only a 404 or a 410 is ErrNotFound")

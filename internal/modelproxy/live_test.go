@@ -61,7 +61,7 @@ func liveRun(t *testing.T, provider Provider, env, model string, cmd func(url, t
 		t.Logf("%s %s -> %d", r.Method, r.URL.Path, rec.status)
 	}))
 	t.Cleanup(srv.Close)
-	token, revoke := mp.Issue()
+	token, revoke := mp.Issue(t.Context())
 
 	c := cmd(srv.URL+PathPrefix, token)
 	c.Dir = "../.."

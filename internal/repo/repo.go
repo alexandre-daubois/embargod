@@ -4,6 +4,7 @@ package repo
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -17,7 +18,13 @@ const (
 )
 
 type Repo struct {
-	Dir string
+	Dir     string
+	Context context.Context
+}
+
+func (r Repo) Commit() (string, error) {
+	out, err := r.git("rev-parse", "--verify", "HEAD")
+	return strings.TrimSpace(out), err
 }
 
 var errNotTracked = errors.New("not a file tracked by git")
@@ -173,7 +180,11 @@ func (r Repo) LastChange(path, text string) (commit, date string, err error) {
 
 func (r Repo) git(args ...string) (string, error) {
 	// Literal pathspecs stop paths like ":(glob)**" from being read as patterns.
-	cmd := exec.Command("git", append([]string{"-C", r.Dir, "--literal-pathspecs"}, args...)...)
+	ctx := r.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", r.Dir, "--literal-pathspecs"}, args...)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 

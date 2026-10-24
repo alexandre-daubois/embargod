@@ -50,6 +50,9 @@ type Advisory struct {
 	Severity    string    `json:"severity"`
 	CWEIDs      []string  `json:"cwe_ids"`
 	CreatedAt   time.Time `json:"created_at"`
+	Author      struct {
+		Login string `json:"login"`
+	} `json:"author"`
 }
 
 type Issue struct {
@@ -66,6 +69,12 @@ type Comment struct {
 	User struct {
 		Login string `json:"login"`
 	} `json:"user"`
+}
+
+func (c *Client) GetAdvisory(ctx context.Context, repo, ghsa string) (Advisory, error) {
+	var a Advisory
+	_, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/repos/%s/security-advisories/%s", c.BaseURL, repo, url.PathEscape(ghsa)), nil, &a)
+	return a, err
 }
 
 type Client struct {

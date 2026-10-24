@@ -2,11 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alexandre-daubois/embargod/internal/report"
 )
 
 func TestParseSince(t *testing.T) {
@@ -23,6 +29,41 @@ func TestParseSince(t *testing.T) {
 
 	if _, err := parseSince("yesterday"); err == nil {
 		t.Error("an invalid date should fail")
+	}
+}
+
+func TestSigningKey(t *testing.T) {
+	for _, value := range []string{"", "not base64", base64.StdEncoding.EncodeToString([]byte("short"))} {
+		t.Setenv("SIGNING_KEY", value)
+		if _, err := signingKey(); err == nil {
+			t.Fatal("invalid signing seed accepted")
+		}
+	}
+	t.Setenv("SIGNING_KEY", base64.StdEncoding.EncodeToString(make([]byte, ed25519.SeedSize)))
+	if key, err := signingKey(); err != nil || len(key) != ed25519.PrivateKeySize {
+		t.Fatal("valid seed rejected")
+	}
+}
+
+func TestVerifyCommand(t *testing.T) {
+	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	file := filepath.Join(t.TempDir(), "report.md")
+	body := report.Sign("verdict\n", "o/r", "GHSA-test", strings.Repeat("a", 64), key)
+	if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--public-key", base64.StdEncoding.EncodeToString(key.Public().(ed25519.PublicKey)), "--repository", "o/r", "--advisory", "GHSA-test", "--file", file}
+	if err := verify(args); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(body+"forged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verify(args); err == nil {
+		t.Fatal("forged report accepted")
+	}
+	if err := verify(nil); err == nil {
+		t.Fatal("missing verification options accepted")
 	}
 }
 

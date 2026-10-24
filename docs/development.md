@@ -12,13 +12,22 @@ go build ./cmd/embargod
 go test -race ./...
 ```
 
-Three fuzz targets cover the comment escaper, the duplicate-search clue filter and file reading:
+Five fuzz targets cover the comment escaper, duplicate-search clues, file reading, signatures and the provider protocol filter:
 
 ```bash
 go test ./internal/report -run '^$' -fuzz '^FuzzText$' -fuzztime 60s
 ```
 
-The other two are `FuzzClues` in `./internal/report` and `FuzzReadFileStaysInTrackedFiles` in `./internal/repo`. CI runs formatting, `go mod tidy`, `go vet`, the tests and the three fuzz targets on every push.
+The others are `FuzzClues` and `FuzzSignature` in `./internal/report`, `FuzzReadFileStaysInTrackedFiles` in `./internal/repo`, and `FuzzProviderRequest` in `./internal/modelproxy`. CI runs formatting, `go mod tidy`, `go vet`, the tests, the five fuzz targets and Docker isolation tests for both agent images on every push. Make both isolation jobs required release checks.
+
+Build each agent image and run its isolation tests locally without a real API key:
+
+```bash
+docker build --target codex -t embargod-test:codex docker/agent
+EMBARGOD_TEST_IMAGE=embargod-test:codex go test -race -count=1 -tags integration ./internal/sandbox
+```
+
+Repeat for `claude`. The tests use fake model servers, check direct host/Internet/DNS access and validate that the pinned CLI can reach the filtered proxy. Missing Docker or an unset test image fails the suite.
 
 ## Agent images
 
@@ -45,10 +54,10 @@ Pushing a `vX.Y.Z` tag runs the `Release` workflow, which builds embargod for Li
 embargod reads its configuration from environment variables, so it runs on any machine with Docker. From a checkout of the target repository:
 
 ```bash
-REPOSITORY=your-org/your-project REPO_PATH=. ADVISORY=GHSA-xxxx-xxxx-xxxx ENGINE=claude GH_TOKEN="$(gh auth token)" LLM_API_KEY="$ANTHROPIC_API_KEY" RUNNER_IMAGE=embargod-agent:claude ./embargod
+REPOSITORY=your-org/your-project REPO_PATH=. ADVISORY=GHSA-xxxx-xxxx-xxxx ENGINE=claude GH_TOKEN="$(gh auth token)" LLM_API_KEY="$ANTHROPIC_API_KEY" RUNNER_IMAGE=embargod-agent:claude REFERENCES=HEAD OUTPUT_DIR=/private/path/to/reports ./embargod
 ```
 
-The comment is posted for real. The comments API cannot delete it, and a triaged advisory is skipped until its comment is removed by hand.
+Set `SIGNING_KEY` to a dedicated base64-encoded 32-byte seed first. The comment is posted for real. An unchanged revision with a valid signed comment is skipped; editing the report or adding a reporter comment triggers a fresh analysis. See [signature verification](configuration.md#signed-reports).
 
 ## Layout
 

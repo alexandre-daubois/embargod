@@ -31,17 +31,20 @@ In that repository, create an `embargod` environment and add:
 | Variable | `EMBARGOD_CLIENT_ID` | the App client ID |
 | Secret | `EMBARGOD_PRIVATE_KEY` | the App private key |
 | Secret | `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | the model provider key, or a [Codex access token](configuration.md#codex-access-token) |
+| Secret | `EMBARGOD_SIGNING_KEY` | a dedicated 32-byte signing seed generated with `openssl rand -base64 32` |
 
 Restrict the environment to the default branch so other workflows cannot read its secrets.
 
+Use a dedicated provider project/account with a hard spending or credit limit. Alerts alone do not stop charges. Approve the configured models and their retention/residency terms; the Anthropic comparator does not switch models on refusal. See [resource budgets](configuration.md#resource-budgets) for the application limits.
+
 ## 3. Add the workflow
 
-Copy the workflow from the [README](../README.md#quick-start) and replace `your-org`, `your-project` and `your-app-slug`. Set `since` to today's date: only advisories in the `triage` state created after it are processed.
+Copy the workflow from the [README](../README.md#quick-start) and replace `your-org`, `your-project`, `your-app-slug` and the Embargod commit placeholder. Pin the full SHA of a reviewed commit; the action refuses a branch or tag reference. Review updates in the private deployment repository. Set `since` to today's date: only advisories in the `triage` state created after it are processed. Set `references` to every branch covered by your security policy; a report is checked independently against each.
 
 Keep `persist-credentials: false` on the checkout, so no token is written to `.git/config`, and `fetch-depth: 0`, so the agent can read the history.
 
 ## 4. First run
 
-Trigger the workflow by hand with the `advisory` input set to one GHSA. That advisory is triaged whatever its state and date, and the comment is posted on it. Check the comment, then let the schedule run.
+Trigger the workflow by hand with the `advisory` input set to a test GHSA. That advisory is triaged whatever its state and date, and the signed comment is posted on it. Download the private `embargod-reports` artifact, verify its signature and check that embargoed duplicate IDs appear only there. Keep the public verification key in your trusted deployment documentation, then let the schedule run. Artifact access follows the private runner repository's permissions; grant access only to the security team.
 
 GitHub Actions has no trigger for security advisories, so the schedule polls every 15 minutes. Runs without a new advisory do not start the agent nor call the model.

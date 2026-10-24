@@ -24,7 +24,7 @@ func spend(t *testing.T, p Provider, route string, status int, contentType, body
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, revoke := mp.Issue()
+	token, revoke := mp.Issue(t.Context())
 	srv := httptest.NewServer(mp)
 	t.Cleanup(srv.Close)
 
@@ -123,8 +123,8 @@ func TestUsageIsCountedPerToken(t *testing.T) {
 	}
 	srv := httptest.NewServer(mp)
 	t.Cleanup(srv.Close)
-	first, revokeFirst := mp.Issue()
-	_, revokeSecond := mp.Issue()
+	first, revokeFirst := mp.Issue(t.Context())
+	_, revokeSecond := mp.Issue(t.Context())
 
 	for range 2 {
 		resp := call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", withKey("X-Api-Key", first))
