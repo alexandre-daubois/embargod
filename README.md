@@ -64,12 +64,11 @@ jobs:
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           github-token: ${{ steps.app.outputs.token }}
           bot-login: your-app-slug[bot]
-          signing-key: ${{ secrets.EMBARGOD_SIGNING_KEY }}
           # List every branch your project supports; these refs must exist in the checkout.
           references: master origin/release-branch
 ```
 
-Set `since` to the installation date so existing advisories are left alone. Keep the workflow repository private: the action uploads signed reports there as artifacts, retained for seven days. The [setup guide](docs/setup.md) covers the signing key, source branches and provider spending limits.
+Set `since` to the installation date so existing advisories are left alone. Keep the workflow repository private: the action uploads reports there as artifacts, retained for seven days. The [setup guide](docs/setup.md) covers source branches and provider spending limits.
 
 ## Documentation
 

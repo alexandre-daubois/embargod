@@ -15,32 +15,19 @@
 | `model` | `claude-opus-5-5` / `gpt-5.5` | Model used by both the agent and the duplicate search. `gpt-6.1-sol` with a Codex access token. |
 | `daybreak` | `false` | Turn on OpenAI's Daybreak cyber access program in Codex. `openai` engine only, and the API key's organisation must be approved for it. |
 | `runner-image` | embargod agent image, pinned by digest | Image the agent runs in. It must contain the agent CLI, git, curl and `harness-proxy`. A custom image skips the attestation check. |
-| `signing-key` | | Base64-encoded 32-byte Ed25519 seed, stored as a secret. Required. |
 | `references` | | Whitespace-separated local git references, one for each supported branch. Required, at most ten. A missing reference fails the analysis. |
 
-Outside GitHub Actions, the same settings are read from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK`, `RUNNER_IMAGE`, `SIGNING_KEY` and `REFERENCES`. `OUTPUT_DIR` must name a private directory for the signed reports. The action creates that directory in the runner's temporary storage and uploads it to the private workflow repository with seven-day retention.
+Outside GitHub Actions, the same settings are read from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK`, `RUNNER_IMAGE` and `REFERENCES`. `OUTPUT_DIR` must name a private directory for the reports. The action creates that directory in the runner's temporary storage and uploads it to the private workflow repository with seven-day retention.
 
-The action requires a private workflow repository and a full commit SHA in `uses:`. Update that SHA through a reviewed pull request. `verification-key` is an action output containing the public signing key; keep a trusted copy outside advisory comments.
+The action requires a private workflow repository and a full commit SHA in `uses:`. Update that SHA through a reviewed pull request.
 
 ## Source branches
 
 Fetch the configured references with `fetch-depth: 0`. For php-src, include the default branch and every PHP branch covered by your disclosure policy, for example `master origin/PHP-8.4` when those are the branches you support. Keep the list current as releases enter or leave support. Embargod analyses each reference separately and includes its exact commit in both copies of the result; it does not infer the maintained branches from a reporter's prose. No source code is executed.
 
-## Signed reports
+## Private reports
 
-Generate the signing seed once with `openssl rand -base64 32`, store it as `EMBARGOD_SIGNING_KEY`, then obtain its public key with `SIGNING_KEY` set in the environment:
-
-```bash
-embargod public-key
-```
-
-The private artifact contains a full signed `.md` report and a signed `.comment.md` copy of the reporter-visible text. Download either file from the private workflow run, or save the raw Markdown of a comment, then verify it against your trusted public key:
-
-```bash
-embargod verify --public-key YOUR_TRUSTED_PUBLIC_KEY --repository php/php-src --advisory GHSA-xxxx-xxxx-xxxx --file report.md
-```
-
-A collaborator can still change how an ordinary comment looks on GitHub. An edit invalidates its signature; use the private artifact as the reference and verify signatures before relying on comments. The footer covers the entire raw body, repository, advisory and input revision. Copying it to another report cannot authenticate that report. Rotating the key invalidates old signatures for automatic deduplication and can cause reports to be processed again.
+The private artifact contains a full `.md` report and a `.comment.md` copy of the reporter-visible text. Embargoed duplicate IDs appear only in the full report. Each copy names the source commit and input revision it covers.
 
 ## Resource budgets
 

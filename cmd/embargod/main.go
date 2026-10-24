@@ -3,10 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
-	"crypto/ed25519"
-	"encoding/base64"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,7 +14,6 @@ import (
 
 	"github.com/alexandre-daubois/embargod/internal/engine"
 	"github.com/alexandre-daubois/embargod/internal/github"
-	"github.com/alexandre-daubois/embargod/internal/report"
 	"github.com/alexandre-daubois/embargod/internal/sandbox"
 	"github.com/alexandre-daubois/embargod/internal/triage"
 )
@@ -40,19 +36,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	var err error
-	if len(os.Args) > 1 && os.Args[1] == "verify" {
-		err = verify(os.Args[2:])
-	} else if len(os.Args) == 2 && os.Args[1] == "public-key" {
-		var key ed25519.PrivateKey
-		key, err = signingKey()
-		if err == nil {
-			fmt.Println(base64.StdEncoding.EncodeToString(key.Public().(ed25519.PublicKey)))
-		}
-	} else {
-		err = run(ctx, log)
-	}
-	if err != nil {
+	if err := run(ctx, log); err != nil {
 		log.Error(err.Error())
 		os.Exit(1)
 	}
@@ -101,10 +85,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if daybreak && !strings.HasPrefix(agent, "codex") {
 		return errors.New("DAYBREAK requires ENGINE=openai")
 	}
-	cfg.SigningKey, err = signingKey()
-	if err != nil {
-		return err
-	}
 	cfg.OutputDir = os.Getenv("OUTPUT_DIR")
 	if cfg.OutputDir == "" {
 		return errors.New("OUTPUT_DIR is required and must be private")
@@ -121,38 +101,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	reader.Daybreak = daybreak
 
 	return triage.Run(ctx, cfg, github.New(token), reader, eng, log)
-}
-
-func signingKey() (ed25519.PrivateKey, error) {
-	seed, err := base64.StdEncoding.DecodeString(os.Getenv("SIGNING_KEY"))
-	if err != nil || len(seed) != ed25519.SeedSize {
-		return nil, errors.New("SIGNING_KEY must be a base64-encoded 32-byte Ed25519 seed")
-	}
-	return ed25519.NewKeyFromSeed(seed), nil
-}
-
-func verify(args []string) error {
-	flags := flag.NewFlagSet("verify", flag.ContinueOnError)
-	publicKey := flags.String("public-key", "", "trusted base64-encoded Ed25519 public key")
-	repository := flags.String("repository", "", "repository owning the advisory")
-	advisory := flags.String("advisory", "", "advisory identifier")
-	file := flags.String("file", "", "comment or canonical report file")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	key, err := base64.StdEncoding.DecodeString(*publicKey)
-	if err != nil || len(key) != ed25519.PublicKeySize || *repository == "" || *advisory == "" || *file == "" || flags.NArg() != 0 {
-		return errors.New("verify requires --public-key, --repository, --advisory and --file")
-	}
-	body, err := os.ReadFile(*file)
-	if err != nil {
-		return errors.New("reading the signed report failed")
-	}
-	if _, ok := report.Verify(string(body), *repository, *advisory, ed25519.PublicKey(key)); !ok {
-		return errors.New("invalid report signature")
-	}
-	fmt.Println("Report signature verified.")
-	return nil
 }
 
 func parseSince(v string) (time.Time, error) {

@@ -4,7 +4,7 @@ Each run goes through four stages. Two models are involved, and no model ever se
 
 ## 1. Selection
 
-embargod lists the repository's advisories and keeps those in the `triage` state created after `since`, or only the one given in `advisory`. It skips an advisory only when a comment from `bot-login` has a valid Ed25519 signature for the current input revision. An edited comment, an unsigned marker or an old revision cannot skip the analysis. The revision covers the report, its non-bot comments and the configured source references.
+embargod lists the repository's advisories and keeps those in the `triage` state created after `since`, or only the one given in `advisory`. It skips an advisory when a comment from `bot-login` contains the Embargod marker. A marker posted by another account is ignored.
 
 A failed triage posts a comment saying so, with its own marker, and is retried on the next runs. After three failures, the comment asks a maintainer to review the report and the advisory is left alone. An advisory is triaged once: editing the report afterwards does not start a new triage.
 
@@ -36,7 +36,7 @@ Before posting, embargod checks every claim against GitHub and the checkout:
 | Cited code | Only references named in the report are kept, each marked as found in the repository or not. A cited line and the code the report quotes there are kept only when the report contains them. The quote is looked up in the file at the scanned commit, nearest the cited line, and when it is gone, `git log -S` names the commit that last changed it, since reports often target another version. |
 | CWE and CVSS | Must be well-formed. CWE names come from the MITRE catalogue. |
 
-Claims that fail a check are dropped, and the comment counts them. Just before publication, the current report and non-bot comments are read again; if they changed, no result is posted. The public comment is signed and saved before publication. Only then does Embargod examine private candidates and save the full signed report: their decisions, failures and counts cannot change the comment. A failed private comparison is marked incomplete in the artifact. A failure before publication leaves the advisory retriable; a failed private search does not invalidate its already-published public triage.
+Claims that fail a check are dropped, and the comment counts them. Just before publication, the current report and non-bot comments are read again; if they changed, no result is posted. The public comment is saved before publication. Only then does Embargod examine private candidates and save the full report: their decisions, failures and counts cannot change the comment. A failed private comparison is marked incomplete in the artifact. A failure before publication leaves the advisory retriable; a failed private search does not invalidate its already-published public triage.
 
 ## The comment
 

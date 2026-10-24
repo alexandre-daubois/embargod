@@ -39,17 +39,9 @@ inputs:
   runner-image:
     description: Image the agent runs in, instead of the embargod agent image pinned by digest and checked against its build attestation. It needs the agent CLI, git, curl and harness-proxy, and is not checked.
     required: false
-  signing-key:
-    description: Base64-encoded 32-byte Ed25519 seed. Keep it as a secret in the private runner repository.
-    required: true
   references:
     description: Whitespace-separated local git references to analyse, including each supported release branch. All must have been fetched.
     required: true
-
-outputs:
-  verification-key:
-    description: Base64-encoded public key used to verify comments and private reports.
-    value: ${{ steps.verification.outputs.key }}
 
 runs:
   # The agent runs in its own hardened container, so embargod itself runs on the runner, next to Docker.
@@ -102,14 +94,6 @@ runs:
       shell: bash
       working-directory: ${{ github.action_path }}
       run: go build -trimpath -o "$RUNNER_TEMP/embargod" ./cmd/embargod
-    - name: Get verification key
-      id: verification
-      shell: bash
-      env:
-        SIGNING_KEY: ${{ inputs.signing-key }}
-      run: |
-        key=$("$RUNNER_TEMP/embargod" public-key)
-        printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
     # The default images are pinned by digest. This checks they were built by embargod's own workflow.
     - name: Verify the agent image
       if: inputs.runner-image == ''
@@ -138,7 +122,6 @@ runs:
         REPO_PATH: ${{ inputs.path }}
         RUNNER_IMAGE: ${{ inputs.runner-image }}
         DAYBREAK: ${{ inputs.daybreak }}
-        SIGNING_KEY: ${{ inputs.signing-key }}
         OUTPUT_DIR: ${{ steps.reports.outputs.path }}
         REFERENCES: ${{ inputs.references }}
     - name: Store private reports

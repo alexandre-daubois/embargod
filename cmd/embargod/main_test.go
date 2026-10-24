@@ -2,17 +2,11 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
-	"encoding/base64"
 	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/alexandre-daubois/embargod/internal/report"
 )
 
 func TestParseSince(t *testing.T) {
@@ -29,41 +23,6 @@ func TestParseSince(t *testing.T) {
 
 	if _, err := parseSince("yesterday"); err == nil {
 		t.Error("an invalid date should fail")
-	}
-}
-
-func TestSigningKey(t *testing.T) {
-	for _, value := range []string{"", "not base64", base64.StdEncoding.EncodeToString([]byte("short"))} {
-		t.Setenv("SIGNING_KEY", value)
-		if _, err := signingKey(); err == nil {
-			t.Fatal("invalid signing seed accepted")
-		}
-	}
-	t.Setenv("SIGNING_KEY", base64.StdEncoding.EncodeToString(make([]byte, ed25519.SeedSize)))
-	if key, err := signingKey(); err != nil || len(key) != ed25519.PrivateKeySize {
-		t.Fatal("valid seed rejected")
-	}
-}
-
-func TestVerifyCommand(t *testing.T) {
-	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
-	file := filepath.Join(t.TempDir(), "report.md")
-	body := report.Sign("verdict\n", "o/r", "GHSA-test", strings.Repeat("a", 64), key)
-	if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	args := []string{"--public-key", base64.StdEncoding.EncodeToString(key.Public().(ed25519.PublicKey)), "--repository", "o/r", "--advisory", "GHSA-test", "--file", file}
-	if err := verify(args); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(file, []byte(body+"forged"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := verify(args); err == nil {
-		t.Fatal("forged report accepted")
-	}
-	if err := verify(nil); err == nil {
-		t.Fatal("missing verification options accepted")
 	}
 }
 
@@ -102,9 +61,11 @@ func TestRunValidatesConfiguration(t *testing.T) {
 		"api key required":      {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t"}, "LLM_API_KEY is required"},
 		"invalid daybreak":      {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "DAYBREAK": "maybe"}, "DAYBREAK"},
 		"daybreak needs openai": {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "DAYBREAK": "true"}, "DAYBREAK requires ENGINE=openai"},
+		"output required":       {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k"}, "OUTPUT_DIR is required"},
+		"references required":   {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "OUTPUT_DIR": t.TempDir()}, "REFERENCES must list"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			for _, k := range []string{"REPOSITORY", "GITHUB_REPOSITORY", "ADVISORY", "REPO_PATH", "BOT_LOGIN", "DAYBREAK", "SINCE", "GH_TOKEN", "ENGINE", "MODEL", "LLM_API_KEY"} {
+			for _, k := range []string{"REPOSITORY", "GITHUB_REPOSITORY", "ADVISORY", "REPO_PATH", "BOT_LOGIN", "DAYBREAK", "SINCE", "GH_TOKEN", "ENGINE", "MODEL", "LLM_API_KEY", "OUTPUT_DIR", "REFERENCES"} {
 				t.Setenv(k, tc.env[k])
 			}
 

@@ -109,7 +109,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	if advisoryRevision(current, latestComments, login, cfg.References) != revision {
 		return false, errors.New("the report changed during triage")
 	}
-	body := report.Sign(visible.String(), cfg.Repo, a.GHSAID, revision, cfg.SigningKey)
+	body := visible.String()
 	if err := os.MkdirAll(cfg.OutputDir, 0o700); err != nil {
 		return false, err
 	}
@@ -138,8 +138,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		}
 		private.WriteString(result.provenance + report.RenderPrivate(result.report))
 	}
-	canonical := report.Sign(private.String(), cfg.Repo, a.GHSAID, revision, cfg.SigningKey)
-	if err := os.WriteFile(base+".md", []byte(canonical), 0o600); err != nil {
+	if err := os.WriteFile(base+".md", []byte(private.String()), 0o600); err != nil {
 		return true, err
 	}
 	return true, comparisonErr

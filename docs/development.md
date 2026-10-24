@@ -12,13 +12,13 @@ go build ./cmd/embargod
 go test -race ./...
 ```
 
-Five fuzz targets cover the comment escaper, duplicate-search clues, file reading, signatures and the provider protocol filter:
+Four fuzz targets cover the comment escaper, duplicate-search clues, file reading and the provider protocol filter:
 
 ```bash
 go test ./internal/report -run '^$' -fuzz '^FuzzText$' -fuzztime 60s
 ```
 
-The others are `FuzzClues` and `FuzzSignature` in `./internal/report`, `FuzzReadFileStaysInTrackedFiles` in `./internal/repo`, and `FuzzProviderRequest` in `./internal/modelproxy`. CI runs formatting, `go mod tidy`, `go vet`, the tests, the five fuzz targets and Docker isolation tests for both agent images on every push. Make both isolation jobs required release checks.
+The others are `FuzzClues` in `./internal/report`, `FuzzReadFileStaysInTrackedFiles` in `./internal/repo`, and `FuzzProviderRequest` in `./internal/modelproxy`. CI runs formatting, `go mod tidy`, `go vet`, the tests, the four fuzz targets and Docker isolation tests for both agent images on every push. Make both isolation jobs required release checks.
 
 Build each agent image and run its isolation tests locally without a real API key:
 
@@ -43,7 +43,7 @@ To bump an agent CLI, update its tag and the sha256 of each architecture's asset
 
 ## Releases
 
-Pushing a `vX.Y.Z` tag runs the `Release` workflow, which builds embargod for Linux on amd64 and arm64, attests both binaries and publishes them in a GitHub release. When the action's ref points at the commit of such a tag, as a moving `v1` tag does, the action downloads the binary for the runner and checks its attestation against that commit before running it. Any other ref, such as a branch or a fork, is built from source.
+Pushing a `vX.Y.Z` tag runs the `Release` workflow, which builds embargod for Linux on amd64 and arm64, attests both binaries and publishes them in a GitHub release. When the action's pinned commit has such a release tag, the action downloads the binary for the runner and checks its attestation against that commit before running it. Any other pinned commit is built from source.
 
 ## Dependency updates
 
@@ -57,7 +57,7 @@ embargod reads its configuration from environment variables, so it runs on any m
 REPOSITORY=your-org/your-project REPO_PATH=. ADVISORY=GHSA-xxxx-xxxx-xxxx ENGINE=claude GH_TOKEN="$(gh auth token)" LLM_API_KEY="$ANTHROPIC_API_KEY" RUNNER_IMAGE=embargod-agent:claude REFERENCES=HEAD OUTPUT_DIR=/private/path/to/reports ./embargod
 ```
 
-Set `SIGNING_KEY` to a dedicated base64-encoded 32-byte seed first. The comment is posted for real. An unchanged revision with a valid signed comment is skipped; editing the report or adding a reporter comment triggers a fresh analysis. See [signature verification](configuration.md#signed-reports).
+The comment is posted for real. An advisory with a completed comment from the configured bot is skipped, including after edits to the report or followup comments.
 
 ## Layout
 

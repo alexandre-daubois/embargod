@@ -4,7 +4,6 @@ package triage
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,7 +61,6 @@ type Config struct {
 	// BotLogin is the account the comments are posted as. GitHub App tokens cannot call GET /user,
 	// so it must be set with them, e.g. "embargod[bot]". Left empty, it is asked to GitHub.
 	BotLogin   string
-	SigningKey ed25519.PrivateKey
 	OutputDir  string
 	References []string
 }
@@ -74,8 +72,8 @@ type Reader interface {
 
 // Run never logs report content, GHSA identifiers nor raw errors: logs of public repositories are public.
 func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, log *slog.Logger) error {
-	if len(cfg.SigningKey) != ed25519.PrivateKeySize || cfg.OutputDir == "" || len(cfg.References) == 0 {
-		return errors.New("a signing key, private output directory and source references are required")
+	if cfg.OutputDir == "" || len(cfg.References) == 0 {
+		return errors.New("a private output directory and source references are required")
 	}
 	ctx = budget.WithLimit(ctx, 128, 32<<20)
 	login := cfg.BotLogin

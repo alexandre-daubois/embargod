@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,7 +134,7 @@ func (e *fakeEngine) Read(ctx context.Context, req sandbox.Request) (json.RawMes
 	return raw, nil
 }
 
-func TestRunSignsPublicAndPrivateResultsWithoutDisclosingEmbargoedMatches(t *testing.T) {
+func TestRunKeepsEmbargoedMatchesPrivateAndSkipsCompletedAdvisories(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
 	cfg := testConfig(t, gh, Config{Advisory: "GHSA-new"})
 	if err := Run(t.Context(), cfg, gh, eng, eng, slog.New(slog.DiscardHandler)); err != nil {
@@ -145,21 +144,14 @@ func TestRunSignsPublicAndPrivateResultsWithoutDisclosingEmbargoedMatches(t *tes
 	if strings.Contains(body, "GHSA-old") || strings.Contains(body, "Unpublished |") {
 		t.Fatal("an embargoed match reached the reporter")
 	}
-	key := testSigningKey.Public().(ed25519.PublicKey)
-	if _, ok := report.Verify(body, "o/r", "GHSA-new", key); !ok {
-		t.Fatal("unsigned public comment")
-	}
 	canonical := privateReports(t, gh)
 	if !strings.Contains(canonical, "GHSA-old") {
 		t.Fatal("the private duplicate was lost")
 	}
-	if _, ok := report.Verify(canonical, "o/r", "GHSA-new", key); !ok {
-		t.Fatal("unsigned canonical report")
-	}
 	gh.comments["GHSA-new"] = []github.Comment{botComment(body)}
 	eng.calls = nil
 	if err := Run(t.Context(), cfg, gh, eng, eng, slog.New(slog.DiscardHandler)); err != nil || len(eng.calls) != 0 {
-		t.Fatal("an unchanged signed revision was retriaged")
+		t.Fatal("an unchanged revision was retriaged")
 	}
 }
 
@@ -175,11 +167,23 @@ func TestPrivateComparatorResultsAndFailuresCannotChangeThePublicComment(t *test
 		}
 		_ = run(t, Config{Advisory: "GHSA-new", RepoPath: dir}, gh, eng)
 		body := gh.posted["GHSA-new"]
+		lines := strings.Split(body, "\n")
+		for i, line := range lines {
+			if strings.HasPrefix(line, "Scanned on ") {
+				lines[i] = ""
+			}
+		}
+		body = strings.Join(lines, "\n")
 		if want == "" {
 			want = body
 		}
 		if body == "" || body != want {
 			t.Fatal("a private decision or failure changed the public output")
+		}
+		gh.comments["GHSA-new"] = []github.Comment{botComment(gh.posted["GHSA-new"])}
+		eng.calls = nil
+		if err := run(t, Config{Advisory: "GHSA-new", RepoPath: dir}, gh, eng); err != nil || len(eng.calls) != 0 {
+			t.Fatalf("private comparison outcome caused another triage: %v", err)
 		}
 	}
 }
@@ -349,16 +353,13 @@ func newFixture() *fakeGitHub {
 		posted:   map[string]string{},
 	}
 	a := f.advisories[2]
-	f.comments[a.GHSAID] = []github.Comment{botComment(report.Sign(report.Marker+"\nprevious run", "o/r", a.GHSAID, advisoryRevision(a, nil, "embargod-bot", []string{"HEAD"}), testSigningKey))}
+	f.comments[a.GHSAID] = []github.Comment{botComment(report.Marker + "\nprevious run")}
 	return f
 }
-
-var testSigningKey = ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
 
 func testConfig(t *testing.T, gh *fakeGitHub, cfg Config) Config {
 	t.Helper()
 	cfg.Repo = "o/r"
-	cfg.SigningKey = testSigningKey
 	if cfg.OutputDir == "" {
 		cfg.OutputDir = t.TempDir()
 	}

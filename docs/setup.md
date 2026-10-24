@@ -31,7 +31,6 @@ In that repository, create an `embargod` environment and add:
 | Variable | `EMBARGOD_CLIENT_ID` | the App client ID |
 | Secret | `EMBARGOD_PRIVATE_KEY` | the App private key |
 | Secret | `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | the model provider key, or a [Codex access token](configuration.md#codex-access-token) |
-| Secret | `EMBARGOD_SIGNING_KEY` | a dedicated 32-byte signing seed generated with `openssl rand -base64 32` |
 
 Restrict the environment to the default branch so other workflows cannot read its secrets.
 
@@ -45,6 +44,6 @@ Keep `persist-credentials: false` on the checkout, so no token is written to `.g
 
 ## 4. First run
 
-Trigger the workflow by hand with the `advisory` input set to a test GHSA. That advisory is triaged whatever its state and date, and the signed comment is posted on it. Download the private `embargod-reports` artifact, verify its signature and check that embargoed duplicate IDs appear only there. Keep the public verification key in your trusted deployment documentation, then let the schedule run. Artifact access follows the private runner repository's permissions; grant access only to the security team.
+Trigger the workflow by hand with the `advisory` input set to a test GHSA. That advisory is triaged whatever its state and date, and the comment is posted on it. Download the private `embargod-reports` artifact and check that embargoed duplicate IDs appear only there, then let the schedule run. Artifact access follows the private runner repository's permissions; grant access only to the security team.
 
 GitHub Actions has no trigger for security advisories, so the schedule polls every 15 minutes. Runs without a new advisory do not start the agent nor call the model.
