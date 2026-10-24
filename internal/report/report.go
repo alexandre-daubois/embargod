@@ -175,7 +175,7 @@ func ReaderProperties() (map[string]any, []string) {
 			"path":    str("File path relative to the repository root, as cited"),
 			"symbol":  str("Function, macro or variable name cited, empty when only a file is cited"),
 			"line":    map[string]any{"type": "integer", "description": "Line number the report cites, as written in the report, 0 when it cites none"},
-			"snippet": str("One line of code the report quotes at this reference, copied verbatim from the report, empty when it quotes none"),
+			"snippet": str("One line of this file's code the report quotes at this reference, copied verbatim from the report. Never proof-of-concept or usage code. Empty when it quotes none"),
 		}),
 		"policy_exclusions": list("Points of the repository security policy that may exclude the report from security handling. Empty when none applies or when there is no policy.", map[string]any{
 			"point":  str("The policy point, quoted or closely paraphrased"),
@@ -423,9 +423,12 @@ func (c Checker) place(ref *CodeReference) error {
 		if ref.Commit, ref.Date, err = c.Code.LastChange(ref.Path, strings.TrimSpace(ref.Snippet)); err != nil {
 			return err
 		}
-		ref.Place = PlaceMissing
-		if ref.Commit != "" {
+		switch {
+		case ref.Commit != "":
 			ref.Place = PlaceChanged
+		// Without a cited line, a quote absent from the file is more likely the reporter's own code.
+		case ref.Line > 0:
+			ref.Place = PlaceMissing
 		}
 	case ref.Current == ref.Line:
 		ref.Place = PlaceSame
@@ -484,6 +487,9 @@ func Render(r Report) string {
 		fmt.Fprintf(&b, "| [%s #%d](%s) | %s | %s |\n", kind, rel.Number, rel.URL, cell(rel.Title), label(rel.Confidence))
 	}
 
+	// GitHub only renders the Markdown inside a details block after a blank line.
+	b.WriteString("\n<details>\n<summary>Show more details from the analysis</summary>\n")
+
 	if len(r.CodeReferences) > 0 {
 		fmt.Fprintf(&b, "\n#### Code cited by the report\n\n| Cited | In the repository%s |\n|---|---|\n", r.scope())
 		for _, ref := range r.CodeReferences {
@@ -532,6 +538,7 @@ func Render(r Report) string {
 	if r.CVSS.Vector != "" {
 		fmt.Fprintf(&b, "| CVSS 4.0 | [`%s`](https://www.first.org/cvss/calculator/4.0#%s) | %s |\n", strings.TrimPrefix(r.CVSS.Vector, "CVSS:4.0/"), r.CVSS.Vector, cell(r.CVSS.Reason))
 	}
+	b.WriteString("\n</details>\n")
 
 	if r.Removed > 0 {
 		fmt.Fprintf(&b, "\n_%d suggestion(s) removed because they could not be verified._\n", r.Removed)

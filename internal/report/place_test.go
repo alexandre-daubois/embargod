@@ -59,6 +59,8 @@ func TestVerifyPlacesCitedLines(t *testing.T) {
 		"quote only":        {CodeReference{Path: file, Snippet: "return s[len];"}, PlaceMoved, 4, ""},
 		"changed":           {CodeReference{Path: file, Line: 2, Snippet: "if (len > MAX_LEN) return -1;"}, PlaceChanged, 0, removal},
 		"never in the file": {CodeReference{Path: file, Line: 2, Snippet: "memcpy(dst, src, len);"}, PlaceMissing, 0, ""},
+		"proof of concept":  {CodeReference{Path: file, Snippet: `rawurldecode("%\x80\x80");`}, "", 0, ""},
+		"changed, no line":  {CodeReference{Path: file, Snippet: "if (len > MAX_LEN) return -1;"}, PlaceChanged, 0, removal},
 		"unquoted line":     {CodeReference{Path: file, Line: 5}, PlaceUnquoted, 0, ""},
 		"past the end":      {CodeReference{Path: file, Line: 99}, PlacePastEnd, 5, ""},
 		"directory":         {CodeReference{Path: "ext", Line: 2, Snippet: "return s[len];"}, "", 0, ""},

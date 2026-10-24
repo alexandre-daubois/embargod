@@ -153,6 +153,37 @@ func TestVerifyFailsOnGitHubErrors(t *testing.T) {
 	}
 }
 
+func TestRenderFoldsTheAnalysisDetails(t *testing.T) {
+	got := Render(Report{
+		Summary:        "Overflow </details> escape",
+		CodeReferences: []CodeReference{{Path: "a.c", Found: true}},
+		Policies:       []string{"SECURITY.md"},
+		CWE:            []CWE{{ID: "CWE-787", Reason: "</details><img src=x>"}},
+		Removed:        1,
+	})
+
+	order := []string{
+		"#### Possible duplicates",
+		"#### Related issues and pull requests",
+		"\n<details>\n<summary>Show more details from the analysis</summary>\n\n#### Code cited by the report",
+		"#### Security policy",
+		"#### Weakness and severity",
+		"\n</details>\n",
+		"1 suggestion(s) removed",
+	}
+	last := -1
+	for _, want := range order {
+		i := strings.Index(got, want)
+		if i <= last {
+			t.Fatalf("%q missing or out of order in:\n%s", want, got)
+		}
+		last = i
+	}
+	if strings.Count(got, "</details>") != 1 {
+		t.Fatalf("model text closed the details block:\n%s", got)
+	}
+}
+
 func TestRender(t *testing.T) {
 	got := Render(Report{
 		Summary:          "Heap overflow claimed,\ncc @someone",

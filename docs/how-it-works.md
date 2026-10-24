@@ -53,6 +53,9 @@ Plausible signed `char` passed to `isxdigit()` in `php_url_decode_ex()`, the giv
 
 #### Related issues and pull requests
 
+<details>
+<summary>Show more details from the analysis</summary>
+
 #### Code cited by the report
 
 | Cited | In the repository on `main` at `21a7561` |
@@ -64,6 +67,10 @@ Plausible signed `char` passed to `isxdigit()` in `php_url_decode_ex()`, the giv
 
 #### Security policy
 #### Weakness and severity
+
+</details>
 ```
+
+The duplicates and related issues stay visible. The cited code, the security policy and the weakness estimate are folded so the comment scans quickly.
 
 Every piece of model text is escaped, so the comment cannot contain links, images, HTML or mentions coming from the model. The links to cited lines are built from the repository name, the commit hash and the tracked path, and the quoted code itself is never shown.
