@@ -21,7 +21,7 @@ type OpenAI struct {
 }
 
 func NewOpenAI(apiKey, model string, opts ...option.RequestOption) *OpenAI {
-	return &OpenAI{client: openai.NewClient(append([]option.RequestOption{option.WithAPIKey(apiKey)}, opts...)...), model: model}
+	return &OpenAI{client: openai.NewClient(append([]option.RequestOption{option.WithAPIKey(apiKey), option.WithMaxRetries(0)}, opts...)...), model: model}
 }
 
 func (o *OpenAI) Run(ctx context.Context, system, prompt string, ts []tools.Tool) (json.RawMessage, error) {
@@ -50,7 +50,7 @@ func (o *OpenAI) Run(ctx context.Context, system, prompt string, ts []tools.Tool
 	}
 
 	for range maxTurns {
-		if !takeRequest(ctx) {
+		if !takeRequest(ctx, params) {
 			return nil, ErrNoReport
 		}
 		resp, err := o.client.Chat.Completions.New(ctx, params)

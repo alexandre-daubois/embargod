@@ -39,11 +39,32 @@ inputs:
   runner-image:
     description: Image the agent runs in, instead of the embargod agent image pinned by digest and checked against its build attestation. It needs the agent CLI, git, curl and harness-proxy, and is not checked.
     required: false
+  references:
+    description: Whitespace-separated local git references to analyse, including each supported release branch. All must have been fetched.
+    required: true
 
 runs:
   # The agent runs in its own hardened container, so embargod itself runs on the runner, next to Docker.
   using: composite
   steps:
+    - name: Check deployment
+      shell: bash
+      env:
+        PRIVATE_REPOSITORY: ${{ github.event.repository.private }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        if [[ "$PRIVATE_REPOSITORY" != true ]]; then
+          echo 'Embargod requires a private workflow repository.' >&2
+          exit 1
+        fi
+        if [[ ! "$ACTION_REF" =~ ^[a-fA-F0-9]{40}$ ]]; then
+          echo 'Pin Embargod to a reviewed full commit SHA.' >&2
+          exit 1
+        fi
+    - name: Prepare private reports
+      id: reports
+      shell: bash
+      run: printf 'path=%s\n' "$(mktemp -d "$RUNNER_TEMP/embargod-reports.XXXXXX")" >> "$GITHUB_OUTPUT"
     # A ref pointing at a release runs its attested binary, any other ref is built from source.
     - name: Download embargod
       id: download
@@ -86,6 +107,7 @@ runs:
         image=$(jq -er --arg agent "$agent" '.[$agent]' internal/sandbox/images.json)
         gh attestation verify "oci://$image" --repo alexandre-daubois/embargod --signer-workflow alexandre-daubois/embargod/.github/workflows/agent-image.yml
     - name: Triage
+      id: triage
       shell: bash
       run: '"$RUNNER_TEMP/embargod"'
       env:
@@ -100,3 +122,13 @@ runs:
         REPO_PATH: ${{ inputs.path }}
         RUNNER_IMAGE: ${{ inputs.runner-image }}
         DAYBREAK: ${{ inputs.daybreak }}
+        OUTPUT_DIR: ${{ steps.reports.outputs.path }}
+        REFERENCES: ${{ inputs.references }}
+    - name: Store private reports
+      if: always() && steps.triage.outcome != 'skipped' && steps.reports.outcome == 'success'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: embargod-reports-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ steps.reports.outputs.path }}
+        retention-days: 7
+        if-no-files-found: ignore

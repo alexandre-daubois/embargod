@@ -6,7 +6,7 @@ First-pass triage of private vulnerability reports on GitHub. When a new securit
 
 For each report, embargod:
 
-- lists duplicates among the repository's other advisories,
+- lists public duplicates in the comment and embargoed duplicates only in a private report,
 - finds public issues and pull requests already fixing or hardening the same code,
 - checks that the files and functions the report cites exist,
 - reads the security policy and flags what may exclude the report,
@@ -38,6 +38,7 @@ concurrency:
 jobs:
   triage:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: embargod
     permissions:
       contents: read
@@ -49,12 +50,13 @@ jobs:
           private-key: ${{ secrets.EMBARGOD_PRIVATE_KEY }}
           owner: your-org
           repositories: your-project
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: your-org/your-project
           fetch-depth: 0
           persist-credentials: false
-      - uses: alexandre-daubois/embargod@v1
+      # Replace this placeholder with the full SHA of a reviewed Embargod commit.
+      - uses: alexandre-daubois/embargod@REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA
         with:
           repository: your-org/your-project
           since: "2026-10-22"
@@ -62,9 +64,11 @@ jobs:
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           github-token: ${{ steps.app.outputs.token }}
           bot-login: your-app-slug[bot]
+          # List every branch your project supports; these refs must exist in the checkout.
+          references: master origin/release-branch
 ```
 
-Set `since` to the installation date so existing advisories are left alone. The [setup guide](docs/setup.md) covers each step in detail.
+Set `since` to the installation date so existing advisories are left alone. Keep the workflow repository private: the action uploads reports there as artifacts, retained for seven days. The [setup guide](docs/setup.md) covers source branches and provider spending limits.
 
 ## Documentation
 

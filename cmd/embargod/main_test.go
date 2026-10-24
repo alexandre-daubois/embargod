@@ -61,9 +61,11 @@ func TestRunValidatesConfiguration(t *testing.T) {
 		"api key required":      {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t"}, "LLM_API_KEY is required"},
 		"invalid daybreak":      {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "DAYBREAK": "maybe"}, "DAYBREAK"},
 		"daybreak needs openai": {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "DAYBREAK": "true"}, "DAYBREAK requires ENGINE=openai"},
+		"output required":       {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k"}, "OUTPUT_DIR is required"},
+		"references required":   {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "OUTPUT_DIR": t.TempDir()}, "REFERENCES must list"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			for _, k := range []string{"REPOSITORY", "GITHUB_REPOSITORY", "ADVISORY", "REPO_PATH", "BOT_LOGIN", "DAYBREAK", "SINCE", "GH_TOKEN", "ENGINE", "MODEL", "LLM_API_KEY"} {
+			for _, k := range []string{"REPOSITORY", "GITHUB_REPOSITORY", "ADVISORY", "REPO_PATH", "BOT_LOGIN", "DAYBREAK", "SINCE", "GH_TOKEN", "ENGINE", "MODEL", "LLM_API_KEY", "OUTPUT_DIR", "REFERENCES"} {
 				t.Setenv(k, tc.env[k])
 			}
 

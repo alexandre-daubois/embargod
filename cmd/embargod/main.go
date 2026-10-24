@@ -85,6 +85,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if daybreak && !strings.HasPrefix(agent, "codex") {
 		return errors.New("DAYBREAK requires ENGINE=openai")
 	}
+	cfg.OutputDir = os.Getenv("OUTPUT_DIR")
+	if cfg.OutputDir == "" {
+		return errors.New("OUTPUT_DIR is required and must be private")
+	}
+	cfg.References = strings.Fields(os.Getenv("REFERENCES"))
+	if len(cfg.References) == 0 || len(cfg.References) > 10 {
+		return errors.New("REFERENCES must list between one and ten local source references")
+	}
 	reader, err := sandbox.New(agent, model, os.Getenv("LLM_API_KEY"), os.Getenv("RUNNER_IMAGE"))
 	if err != nil {
 		return err

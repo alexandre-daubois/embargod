@@ -57,7 +57,7 @@ func startIsolatedRun(ctx context.Context, runtime container.Runtime, image, mod
 	run.agent = "embargod-agent-" + strings.TrimPrefix(run.network, "embargod-")
 	run.token = egress.NewToken()
 
-	if out, err := exec.CommandContext(ctx, runtime.Bin, "network", "create", "--internal", "--opt", "com.docker.network.bridge.gateway_mode_ipv4=isolated", "--", run.network).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, runtime.Bin, "network", "create", "--driver", "bridge", "--internal", "--ipv6=false", "--opt", "com.docker.network.bridge.gateway_mode_ipv4=isolated", "--opt", "com.docker.network.bridge.gateway_mode_ipv6=isolated", "--", run.network).CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("creating the isolated network: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	failed := true

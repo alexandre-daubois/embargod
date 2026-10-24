@@ -12,13 +12,22 @@ go build ./cmd/embargod
 go test -race ./...
 ```
 
-Three fuzz targets cover the comment escaper, the duplicate-search clue filter and file reading:
+Four fuzz targets cover the comment escaper, duplicate-search clues, file reading and the provider protocol filter:
 
 ```bash
 go test ./internal/report -run '^$' -fuzz '^FuzzText$' -fuzztime 60s
 ```
 
-The other two are `FuzzClues` in `./internal/report` and `FuzzReadFileStaysInTrackedFiles` in `./internal/repo`. CI runs formatting, `go mod tidy`, `go vet`, the tests and the three fuzz targets on every push.
+The others are `FuzzClues` in `./internal/report`, `FuzzReadFileStaysInTrackedFiles` in `./internal/repo`, and `FuzzProviderRequest` in `./internal/modelproxy`. CI runs formatting, `go mod tidy`, `go vet`, the tests, the four fuzz targets and Docker isolation tests for both agent images on every push. Make both isolation jobs required release checks.
+
+Build each agent image and run its isolation tests locally without a real API key:
+
+```bash
+docker build --target codex -t embargod-test:codex docker/agent
+EMBARGOD_TEST_IMAGE=embargod-test:codex go test -race -count=1 -tags integration ./internal/sandbox
+```
+
+Repeat for `claude`. The tests use fake model servers, check direct host/Internet/DNS access and validate that the pinned CLI can reach the filtered proxy. Missing Docker or an unset test image fails the suite.
 
 ## Agent images
 
@@ -34,7 +43,7 @@ To bump an agent CLI, update its tag and the sha256 of each architecture's asset
 
 ## Releases
 
-Pushing a `vX.Y.Z` tag runs the `Release` workflow, which builds embargod for Linux on amd64 and arm64, attests both binaries and publishes them in a GitHub release. When the action's ref points at the commit of such a tag, as a moving `v1` tag does, the action downloads the binary for the runner and checks its attestation against that commit before running it. Any other ref, such as a branch or a fork, is built from source.
+Pushing a `vX.Y.Z` tag runs the `Release` workflow, which builds embargod for Linux on amd64 and arm64, attests both binaries and publishes them in a GitHub release. When the action's pinned commit has such a release tag, the action downloads the binary for the runner and checks its attestation against that commit before running it. Any other pinned commit is built from source.
 
 ## Dependency updates
 
@@ -45,10 +54,10 @@ Pushing a `vX.Y.Z` tag runs the `Release` workflow, which builds embargod for Li
 embargod reads its configuration from environment variables, so it runs on any machine with Docker. From a checkout of the target repository:
 
 ```bash
-REPOSITORY=your-org/your-project REPO_PATH=. ADVISORY=GHSA-xxxx-xxxx-xxxx ENGINE=claude GH_TOKEN="$(gh auth token)" LLM_API_KEY="$ANTHROPIC_API_KEY" RUNNER_IMAGE=embargod-agent:claude ./embargod
+REPOSITORY=your-org/your-project REPO_PATH=. ADVISORY=GHSA-xxxx-xxxx-xxxx ENGINE=claude GH_TOKEN="$(gh auth token)" LLM_API_KEY="$ANTHROPIC_API_KEY" RUNNER_IMAGE=embargod-agent:claude REFERENCES=HEAD OUTPUT_DIR=/private/path/to/reports ./embargod
 ```
 
-The comment is posted for real. The comments API cannot delete it, and a triaged advisory is skipped until its comment is removed by hand.
+The comment is posted for real. An advisory with a completed comment from the configured bot is skipped, including after edits to the report or followup comments.
 
 ## Layout
 

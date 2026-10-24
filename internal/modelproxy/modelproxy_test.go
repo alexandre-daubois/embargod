@@ -1,12 +1,15 @@
 package modelproxy
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/alexandre-daubois/embargod/internal/budget"
 )
 
 type upstreamCall struct {
@@ -49,7 +52,7 @@ func setup(t *testing.T, p Provider, status int) (*httptest.Server, *[]upstreamC
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, revoke := mp.Issue()
+	token, revoke := mp.Issue(t.Context())
 	srv := httptest.NewServer(mp)
 	t.Cleanup(srv.Close)
 	t.Cleanup(func() { revoke() })
@@ -161,7 +164,7 @@ func TestChatGPTRefusesAnIdentityWithoutAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, revoke := mp.Issue()
+	token, revoke := mp.Issue(t.Context())
 	t.Cleanup(func() { revoke() })
 	srv := httptest.NewServer(mp)
 	t.Cleanup(srv.Close)
@@ -230,7 +233,7 @@ func TestRevokedTokenIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, revoke := mp.Issue()
+	token, revoke := mp.Issue(t.Context())
 	srv := httptest.NewServer(mp)
 	t.Cleanup(srv.Close)
 
@@ -340,4 +343,120 @@ func TestProviderRequestQuota(t *testing.T) {
 	if len(*calls) != maxRequests {
 		t.Fatalf("upstream calls = %d", len(*calls))
 	}
+}
+
+func TestNestedToolsAndUnknownProtocolCapabilitiesFailClosed(t *testing.T) {
+	for _, provider := range []Provider{OpenAI, ChatGPT} {
+		t.Run(provider.TokenPrefix, func(t *testing.T) {
+			for _, body := range []string{
+				`{"model":"allowed","input":[{"type":"additional_tools","role":"developer","tools":[{"type":"shell","environment":{"type":"container_auto","network_policy":{"type":"allowlist","allowed_domains":["attacker.invalid"]}}}]}]}`,
+				`{"model":"allowed","input":[{"type":"tool_search_output","tools":[{"type":"namespace","name":"n","tools":[{"type":"shell"}]}]}]}`,
+				`{"model":"allowed","tools":[{"type":"namespace","name":"n","tools":[{"type":"mcp","server_url":"https://attacker.invalid"}]}]}`,
+				`{"model":"allowed","tools":[{"type":"tool_search","execution":"server"}]}`,
+				`{"model":"allowed","input":[{"type":"configuration_update","tools":[]}]}`,
+				`{"model":"allowed","input":[{"type":"future_provider_tool"}]}`,
+				`{"model":"allowed","future_provider_option":true}`,
+				`{"model":"allowed","background":true}`,
+			} {
+				srv, calls, token := setup(t, provider, http.StatusOK)
+				route := "/v1/responses"
+				if provider.PrivateWorkspace {
+					route = "/backend-api/codex/responses"
+				}
+				if response := callBody(t, srv, http.MethodPost, PathPrefix+route, body, withKey("Authorization", "Bearer "+token)); response.StatusCode != http.StatusForbidden || len(*calls) != 0 {
+					t.Fatalf("unsafe request reached upstream: %s (HTTP %d)", body, response.StatusCode)
+				}
+			}
+		})
+	}
+}
+
+func TestLocalToolConversationPasses(t *testing.T) {
+	srv, calls, token := setup(t, OpenAI, http.StatusOK)
+	body := `{"model":"allowed","tools":[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"read","parameters":{"type":"object","properties":{"type":{"type":"string"}}}}]},{"type":"tool_search","execution":"client"}],"input":[{"role":"user","content":[{"type":"input_text","text":"report"}]},{"type":"reasoning","id":"rs_1","encrypted_content":"opaque","summary":[]},{"type":"function_call","call_id":"c","name":"read","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"source"},{"type":"additional_tools","role":"developer","tools":[{"type":"custom","name":"local","format":{"type":"text"}}]}],"include":["reasoning.encrypted_content"]}`
+	if response := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", body, withKey("Authorization", "Bearer "+token)); response.StatusCode != http.StatusOK || len(*calls) != 1 {
+		t.Fatalf("local tools rejected: %d", response.StatusCode)
+	}
+}
+
+func TestTokensShareTheAdvisoryBudgetAndStopOnCancellation(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer upstream.Close()
+	provider := OpenAI
+	provider.Upstream = upstream.URL
+	mp, err := New(provider, "key", "allowed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(mp)
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(budget.WithLimit(t.Context(), 1, 1<<20))
+	defer cancel()
+	a, revokeA := mp.Issue(ctx)
+	defer revokeA()
+	b, revokeB := mp.Issue(ctx)
+	defer revokeB()
+	if response := call(t, srv, http.MethodPost, PathPrefix+"/v1/responses", withKey("Authorization", "Bearer "+a)); response.StatusCode != http.StatusOK {
+		t.Fatal(response.StatusCode)
+	}
+	if response := call(t, srv, http.MethodPost, PathPrefix+"/v1/responses", withKey("Authorization", "Bearer "+b)); response.StatusCode != http.StatusTooManyRequests {
+		t.Fatal(response.StatusCode)
+	}
+	cancel()
+	if response := call(t, srv, http.MethodPost, PathPrefix+"/v1/responses", withKey("Authorization", "Bearer "+a)); response.StatusCode != http.StatusUnauthorized {
+		t.Fatal(response.StatusCode)
+	}
+}
+
+func TestAnthropicLocalToolsAndContextEdits(t *testing.T) {
+	srv, calls, token := setup(t, Anthropic, http.StatusOK)
+	body := `{"model":"allowed","messages":[{"role":"user","content":[{"type":"text","text":"report"}]},{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Read","input":{"path":"a.c"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"text","text":"source"},{"type":"tool_reference","tool_name":"Read"}]}]}],"tools":[{"name":"Read","description":"read","defer_loading":true,"input_schema":{"type":"object"}}],"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}}`
+	if response := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/messages", body, withKey("X-Api-Key", token)); response.StatusCode != http.StatusOK || len(*calls) != 1 {
+		t.Fatal("valid local Anthropic conversation rejected")
+	}
+	body = strings.ReplaceAll(body, "clear_thinking_20251015", "future_remote_compaction")
+	if response := callBody(t, srv, http.MethodPost, PathPrefix+"/v1/messages", body, withKey("X-Api-Key", token)); response.StatusCode != http.StatusForbidden || len(*calls) != 1 {
+		t.Fatal("unknown context capability reached Anthropic")
+	}
+}
+
+func TestCapabilityHeadersAreNotForwarded(t *testing.T) {
+	var got http.Header
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got = r.Header.Clone(); w.WriteHeader(http.StatusOK) }))
+	defer up.Close()
+	provider := Anthropic
+	provider.Upstream = up.URL
+	mp, err := New(provider, "key", "allowed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, revoke := mp.Issue(t.Context())
+	defer revoke()
+	srv := httptest.NewServer(mp)
+	defer srv.Close()
+	h := withKey("X-Api-Key", token)
+	h.Set("Anthropic-Beta", "context-management-2025-06-27,future-hosted-tools-2026-01-01")
+	h.Set("OpenAI-Beta", "agents=enabled")
+	h.Set("X-Unknown-Provider-Capability", "enabled")
+	if response := call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", h); response.StatusCode != http.StatusOK {
+		t.Fatal(response.StatusCode)
+	}
+	if got.Get("Anthropic-Beta") != "context-management-2025-06-27" || got.Get("OpenAI-Beta") != "" || got.Get("X-Unknown-Provider-Capability") != "" {
+		t.Fatal("unreviewed capability header reached upstream")
+	}
+}
+
+func FuzzProviderRequest(f *testing.F) {
+	for _, seed := range []string{`{"model":"allowed"}`, `{"model":"allowed","tools":[{"type":"function","name":"local","parameters":{}}]}`, `{"model":"allowed","input":[{"type":"additional_tools","tools":[{"type":"shell"}]}]}`, `{"model":"allowed","tools":[{"type":{}}]}`} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, body string) {
+		for _, provider := range []Provider{Anthropic, OpenAI, ChatGPT} {
+			proxy, err := New(provider, "fixture", "allowed")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = proxy.safeBody(strings.NewReader(body))
+		}
+	})
 }

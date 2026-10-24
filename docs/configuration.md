@@ -15,8 +15,25 @@
 | `model` | `claude-opus-5-5` / `gpt-5.5` | Model used by both the agent and the duplicate search. `gpt-6.1-sol` with a Codex access token. |
 | `daybreak` | `false` | Turn on OpenAI's Daybreak cyber access program in Codex. `openai` engine only, and the API key's organisation must be approved for it. |
 | `runner-image` | embargod agent image, pinned by digest | Image the agent runs in. It must contain the agent CLI, git, curl and `harness-proxy`. A custom image skips the attestation check. |
+| `references` | | Whitespace-separated local git references, one for each supported branch. Required, at most ten. A missing reference fails the analysis. |
 
-Outside GitHub Actions, the same settings are read from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK` and `RUNNER_IMAGE`.
+Outside GitHub Actions, the same settings are read from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK`, `RUNNER_IMAGE` and `REFERENCES`. `OUTPUT_DIR` must name a private directory for the reports. The action creates that directory in the runner's temporary storage and uploads it to the private workflow repository with seven-day retention.
+
+The action requires a private workflow repository and a full commit SHA in `uses:`. Update that SHA through a reviewed pull request.
+
+## Source branches
+
+Fetch the configured references with `fetch-depth: 0`. For php-src, include the default branch and every PHP branch covered by your disclosure policy, for example `master origin/PHP-8.4` when those are the branches you support. Keep the list current as releases enter or leave support. Embargod analyses each reference separately and includes its exact commit in both copies of the result; it does not infer the maintained branches from a reporter's prose. No source code is executed.
+
+## Private reports
+
+The private artifact contains a full `.md` report and a `.comment.md` copy of the reporter-visible text. Embargoed duplicate IDs appear only in the full report. Each copy names the source commit and input revision it covers.
+
+## Resource budgets
+
+An execution permits at most 128 provider requests and 32 MiB of cumulative request bodies. Each advisory shares 64 requests and 8 MiB across all branches, reader runs and comparisons; each agent token additionally permits 32 requests. A request body cannot exceed 1 MiB. API responses request at most 16,000 output tokens; the ChatGPT backend has its own output limits. The ten-minute advisory deadline also cancels host-side git commands. At most ten reports and one report per known reporter are attempted per execution. SDK retries are disabled.
+
+These bounds limit each execution, not spending across scheduled runs. Use a dedicated provider account/project with an enforced spending or credit ceiling, restrict models, disable hosted tools and network allowlists there, and configure billing alerts. Provider pricing, tokenisation and ChatGPT credit policies differ, so byte/request limits are not a monetary guarantee. Keep a workflow `timeout-minutes` and a single concurrency group. Budget exhaustion leaves a report retriable rather than marking it permanently complete.
 
 ## Project guidance
 

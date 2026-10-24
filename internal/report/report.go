@@ -255,8 +255,7 @@ func ValidateReader(r Report) error {
 	return nil
 }
 
-// Clues keeps the location, entry points and CWEs made of plain paths, identifiers and numbers,
-// which leaves no room for instructions to travel from the report to the comparator.
+// Clues bounds the syntax; identifiers can still carry hostile instructions.
 func Clues(r Report) Comparison {
 	var c Comparison
 	if l := r.Location; cluePath.MatchString(l.Path) && (l.Symbol == "" || clueSymbol.MatchString(l.Symbol)) && l.Line >= 0 && l.Line <= maxLine {
@@ -448,6 +447,12 @@ func abs(n int) int {
 
 // Render formats the report as the advisory comment.
 func Render(r Report) string {
+	r.Duplicates = slices.DeleteFunc(slices.Clone(r.Duplicates), func(d Duplicate) bool { return !d.Published })
+	return RenderPrivate(r)
+}
+
+// RenderPrivate may contain embargoed advisory identifiers and must stay in private storage.
+func RenderPrivate(r Report) string {
 	var b strings.Builder
 	b.WriteString(Marker + "\n### Automated triage\n\n")
 	b.WriteString("> Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.\n\n")
@@ -474,7 +479,7 @@ func Render(r Report) string {
 		// No title: the reporter reads this comment, and other advisories may still be under embargo.
 		fmt.Fprintf(&b, "| [%s](%s) | %s | %s |\n", d.GHSAID, d.URL, status, confidence)
 	}
-	b.WriteString("\n_Unpublished advisories are only listed when they are exact duplicates._\n")
+	b.WriteString("\n_Embargoed matches are kept in the private report, never in the reporter-visible comment._\n")
 
 	b.WriteString("\n#### Related issues and pull requests\n\n")
 	if len(r.Related) == 0 {

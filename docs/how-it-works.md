@@ -4,7 +4,7 @@ Each run goes through four stages. Two models are involved, and no model ever se
 
 ## 1. Selection
 
-embargod lists the repository's advisories and keeps those in the `triage` state created after `since`, or only the one given in `advisory`. It skips an advisory that already carries a comment from `bot-login` containing the `<!-- embargod -->` marker. A marker posted by anyone else is ignored.
+embargod lists the repository's advisories and keeps those in the `triage` state created after `since`, or only the one given in `advisory`. It skips an advisory when a comment from `bot-login` contains the Embargod marker. A marker posted by another account is ignored.
 
 A failed triage posts a comment saying so, with its own marker, and is retried on the next runs. After three failures, the comment asks a maintainer to review the report and the advisory is left alone. An advisory is triaged once: editing the report afterwards does not start a new triage.
 
@@ -14,16 +14,16 @@ Each triaged or failed advisory logs the model requests and the input and output
 
 An agent, Claude Code or Codex, investigates the report in a throwaway container:
 
-- the report is in `/work/report.md`, and the repository is mounted read-only in `/work/src` with its history,
+- the report and its non-bot followup comments are in `/work/report.md`, and the selected source branch is mounted read-only in `/work/src` with its history,
 - it can search public issues and pull requests through the GitHub API,
 - it reads the security policy files when the repository has some,
 - it writes its findings to `/work/report.json`, following a JSON schema.
 
-The JSON is decoded strictly: an unknown or mistyped field sends the error back to the agent for one correction round. The agent reports the faulty statement (file, function, line), the public entry points it goes through, the code the report cites, related issues, policy exclusions, CWE and CVSS.
+The JSON is decoded strictly: an unknown or mistyped field sends the error back to the agent for one correction round. The agent reports the faulty statement (file, function, line), the public entry points it goes through, the code the report cites, related issues, policy exclusions, CWE and CVSS. Each configured source reference is analysed separately; the final report names its exact commit. A missing branch fails closed.
 
 ## 3. Duplicate search
 
-Potential candidates are selected without a model when their text contains the filtered location, entry points or CWE, with at most ten comparisons. Each candidate is then checked in its own model context: it gets only the filtered clues and that one advisory, so no hostile report can make it read another one. It answers with a confidence level and an exact flag; embargod supplies the identifier itself. With a Codex access token, which cannot call the OpenAI API, each check runs as Codex in a throwaway container that holds the candidate and the read-only repository, and cannot reach GitHub.
+Potential candidates are selected without a model when their text contains the filtered location, entry points or CWE. Public and private candidates are selected independently, with at most ten in each group per source branch. The location must exist in the selected checkout before it can select candidates. Each candidate is checked in a separate model context with the clues and that one advisory. The clues remain hostile even after syntax and existence checks. The comparator answers with confidence and an exact flag; embargod supplies the identifier itself. With a Codex access token, each check runs in an offline throwaway container. All models share the advisory and run budgets.
 
 ## 4. Verification and comment
 
@@ -31,12 +31,12 @@ Before posting, embargod checks every claim against GitHub and the checkout:
 
 | Claim | Check |
 |---|---|
-| Duplicates | Must be a candidate checked in isolation. Unpublished ones are only listed when they are exact duplicates, with their identifier and link, never their title. |
+| Duplicates | Must be a candidate checked in isolation. Unpublished exact matches appear only in the private report. The reporter-visible copy contains only published advisory IDs. |
 | Issues and pull requests | Must exist. Titles and links come from GitHub, not from the model. |
 | Cited code | Only references named in the report are kept, each marked as found in the repository or not. A cited line and the code the report quotes there are kept only when the report contains them. The quote is looked up in the file at the scanned commit, nearest the cited line, and when it is gone, `git log -S` names the commit that last changed it, since reports often target another version. |
 | CWE and CVSS | Must be well-formed. CWE names come from the MITRE catalogue. |
 
-Claims that fail a check are dropped, and the comment counts them. Dropped duplicates are not counted, so the comment never hints at an unpublished advisory.
+Claims that fail a check are dropped, and the comment counts them. Just before publication, the current report and non-bot comments are read again; if they changed, no result is posted. The public comment is saved before publication. Only then does Embargod examine private candidates and save the full report: their decisions, failures and counts cannot change the comment. A failed private comparison is marked incomplete in the artifact. A failure before publication leaves the advisory retriable; a failed private search does not invalidate its already-published public triage.
 
 ## The comment
 
@@ -53,7 +53,7 @@ Plausible signed `char` passed to `isxdigit()` in `php_url_decode_ex()`, the giv
 
 | Advisory | Status | Confidence |
 |---|---|---|
-| GHSA-xxxx-xxxx-xxxx | Unpublished | High • Exact duplicate |
+| GHSA-xxxx-xxxx-xxxx | Published | High • Exact duplicate |
 
 #### Related issues and pull requests
 

@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alpha-omega-security/harness"
@@ -174,7 +175,7 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		return nil, err
 	}
 
-	token, revoke := r.models.Issue()
+	token, revoke := r.models.Issue(ctx)
 	defer func() { usage.Add(ctx, revoke()) }()
 	hosts := allow
 	if req.Offline {
@@ -258,12 +259,28 @@ func (r *Reader) writeConfig(state, origin string) error {
 
 // snapshotSource keeps the sandbox on tracked content while retaining the current commit's public history.
 func snapshotSource(ctx context.Context, repoPath, target string) error {
+	return SnapshotSource(ctx, repoPath, target, "HEAD")
+}
+
+// SnapshotSource resolves only a configured local reference; it never fetches from the project's origin.
+func SnapshotSource(ctx context.Context, repoPath, target, reference string) error {
 	abs, err := filepath.Abs(repoPath)
 	if err != nil {
 		return err
 	}
+	out, err := exec.CommandContext(ctx, "git", "-C", abs, "rev-parse", "--verify", "--end-of-options", reference+"^{commit}").Output()
+	if err != nil {
+		return errors.New("resolving a configured source reference")
+	}
+	commit := strings.TrimSpace(string(out))
 	if err := exec.CommandContext(ctx, "git", "clone", "--no-local", "--no-hardlinks", "--no-tags", "--single-branch", "--quiet", "--", abs, target).Run(); err != nil {
 		return errors.New("snapshotting the source repository")
+	}
+	if err := exec.CommandContext(ctx, "git", "-C", target, "fetch", "--no-tags", "--quiet", "--", abs, commit).Run(); err != nil {
+		return errors.New("snapshotting the configured source reference")
+	}
+	if err := exec.CommandContext(ctx, "git", "-C", target, "checkout", "--quiet", "--detach", commit, "--").Run(); err != nil {
+		return errors.New("checking out the configured source reference")
 	}
 	// The generated remote contains the host path but is not needed by the read-only agent.
 	if err := os.WriteFile(filepath.Join(target, ".git", "config"), nil, 0o600); err != nil {

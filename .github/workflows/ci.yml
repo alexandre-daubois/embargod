@@ -15,6 +15,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,6 +32,7 @@ jobs:
 
   fuzz:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -38,6 +40,7 @@ jobs:
           - { package: ./internal/report, name: FuzzText }
           - { package: ./internal/report, name: FuzzClues }
           - { package: ./internal/repo, name: FuzzReadFileStaysInTrackedFiles }
+          - { package: ./internal/modelproxy, name: FuzzProviderRequest }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,4 +49,24 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test ${{ matrix.target.package }} -run '^$' -fuzz '^${{ matrix.target.name }}$' -fuzztime 60s
+
+  isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [claude, codex]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: docker info
+      - run: docker build --target ${{ matrix.agent }} -t embargod-test:${{ matrix.agent }} docker/agent
+      - run: go test -race -count=1 -tags integration -timeout 8m ./internal/sandbox
+        env:
+          EMBARGOD_TEST_IMAGE: embargod-test:${{ matrix.agent }}
 
