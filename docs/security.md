@@ -22,7 +22,7 @@ The agent runs through [harness](https://github.com/alpha-omega-security/harness
 - an internal network with no host gateway whose only peer is an authenticated egress proxy allowing the model proxy and `api.github.com`,
 - the workspace mounted read-only except for `report.json`, with memory, CPU, process, file-size, output-capture and Docker-log limits,
 - an image containing only the agent CLI, git, curl, ripgrep and `harness-proxy`, with every download checked against a pinned checksum,
-- that image pinned by digest in each release, and checked by the action against its build attestation before use.
+- that image pinned by digest in each release, and checked by the action against its build attestation before use, like the embargod binary of a release.
 
 ## The model proxy
 

@@ -20,7 +20,7 @@ Outside GitHub Actions, the same settings are read from environment variables: `
 
 ## Project guidance
 
-A `.github/embargod.md` file in the project is appended to the agent's instructions. Use it for what the model cannot guess: what is in scope, how the project scores CVSS, which configurations are realistic.
+A `.github/embargod.md` file in the project is appended to the agent's instructions. Use it for what the model cannot guess: what is in scope, what the project's public API is, how the project scores CVSS, which configurations are realistic.
 
 ## Security policy
 

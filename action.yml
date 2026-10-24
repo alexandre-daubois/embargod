@@ -44,11 +44,32 @@ runs:
   # The agent runs in its own hardened container, so embargod itself runs on the runner, next to Docker.
   using: composite
   steps:
+    # A ref pointing at a release runs its attested binary, any other ref is built from source.
+    - name: Download embargod
+      id: download
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.action_repository }}
+        REF: ${{ github.action_ref }}
+        ARCH: ${{ runner.arch }}
+      run: |
+        set -euo pipefail
+        case "$ARCH" in X64) arch=amd64 ;; ARM64) arch=arm64 ;; *) exit 0 ;; esac
+        sha=$(gh api "repos/$REPO/commits/$REF" --jq .sha) || exit 0
+        tags=$(gh api --paginate "repos/$REPO/tags" --jq ".[] | select(.commit.sha == \"$sha\") | .name") || exit 0
+        tag=$(grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$tags") || exit 0
+        gh release download "$tag" --repo "$REPO" --pattern "embargod-linux-$arch" --output "$RUNNER_TEMP/embargod" --clobber || exit 0
+        gh attestation verify "$RUNNER_TEMP/embargod" --repo "$REPO" --signer-workflow "$REPO/.github/workflows/release.yml" --source-digest "$sha"
+        chmod +x "$RUNNER_TEMP/embargod"
+        echo "binary=true" >> "$GITHUB_OUTPUT"
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      if: steps.download.outputs.binary != 'true'
       with:
         go-version-file: ${{ github.action_path }}/go.mod
         cache-dependency-path: ${{ github.action_path }}/go.sum
     - name: Build embargod
+      if: steps.download.outputs.binary != 'true'
       shell: bash
       working-directory: ${{ github.action_path }}
       run: go build -trimpath -o "$RUNNER_TEMP/embargod" ./cmd/embargod

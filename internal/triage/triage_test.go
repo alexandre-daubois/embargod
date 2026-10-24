@@ -23,6 +23,7 @@ import (
 	"github.com/alexandre-daubois/embargod/internal/report"
 	"github.com/alexandre-daubois/embargod/internal/sandbox"
 	"github.com/alexandre-daubois/embargod/internal/tools"
+	"github.com/alexandre-daubois/embargod/internal/usage"
 	"github.com/alexandre-daubois/embargod/skill"
 )
 
@@ -95,7 +96,8 @@ const defaultReader = `{"summary":"Looks like a heap overflow.","location":{"pat
 
 // Read plays the sandboxed reader, or the sandboxed comparator when there is no engine: no tools, the
 // document in the request, and the output validated like the sandbox does.
-func (e *fakeEngine) Read(_ context.Context, req sandbox.Request) (json.RawMessage, error) {
+func (e *fakeEngine) Read(ctx context.Context, req sandbox.Request) (json.RawMessage, error) {
+	usage.Add(ctx, usage.Usage{Requests: 1, InputTokens: 10, OutputTokens: 2})
 	call := engineCall{system: req.System, prompt: req.Prompt + "\n" + req.Report, offline: req.Offline}
 	raw := json.RawMessage(cmp.Or(e.reader, defaultReader))
 	if req.System == skill.Compare {
@@ -113,7 +115,8 @@ func (e *fakeEngine) Read(_ context.Context, req sandbox.Request) (json.RawMessa
 	return raw, nil
 }
 
-func (e *fakeEngine) Run(_ context.Context, system, prompt string, ts []tools.Tool) (json.RawMessage, error) {
+func (e *fakeEngine) Run(ctx context.Context, system, prompt string, ts []tools.Tool) (json.RawMessage, error) {
+	usage.Add(ctx, usage.Usage{Requests: 1, InputTokens: 10, OutputTokens: 2})
 	call := engineCall{system: system, prompt: prompt}
 	for _, t := range ts {
 		call.tools = append(call.tools, t.Name)
@@ -574,22 +577,6 @@ func TestDescribe(t *testing.T) {
 	}
 }
 
-func TestTerminalFailuresAreQuarantined(t *testing.T) {
-	for err, want := range map[error]bool{
-		engine.ErrNoReport:            true,
-		sandbox.ErrNoReport:           true,
-		context.DeadlineExceeded:      true,
-		errInvalidReport:              true,
-		&engine.RefusalError{}:        true,
-		&sandbox.Error{}:              true,
-		&engine.APIError{Status: 429}: false,
-	} {
-		if got := terminal(err); got != want {
-			t.Errorf("terminal(%v) = %v, want %v", err, got, want)
-		}
-	}
-}
-
 func TestRunStopsWhenGitHubIsUnreachable(t *testing.T) {
 	for name, tc := range map[string]struct {
 		setup func(*fakeGitHub)
@@ -618,19 +605,19 @@ func TestRunStopsWhenGitHubIsUnreachable(t *testing.T) {
 
 func TestRunFailures(t *testing.T) {
 	for name, tc := range map[string]struct {
-		setup      func(*fakeGitHub, *fakeEngine)
-		reason     string
-		quarantine bool
+		setup   func(*fakeGitHub, *fakeEngine)
+		reason  string
+		comment bool
 	}{
-		"reader fails":            {func(_ *fakeGitHub, e *fakeEngine) { e.fail = "Overflow in foo" }, "unexpected error", false},
+		"reader fails":            {func(_ *fakeGitHub, e *fakeEngine) { e.fail = "Overflow in foo" }, "unexpected error", true},
 		"reader invalid json":     {func(_ *fakeGitHub, e *fakeEngine) { e.reader = `{"summary": 1}` }, sandbox.ErrNoReport.Error(), true},
 		"reader adds duplicates":  {func(_ *fakeGitHub, e *fakeEngine) { e.reader = `{"summary":"s","duplicates":[]}` }, sandbox.ErrNoReport.Error(), true},
-		"comparator fails":        {func(_ *fakeGitHub, e *fakeEngine) { e.fail = "php_foo" }, "unexpected error", false},
+		"comparator fails":        {func(_ *fakeGitHub, e *fakeEngine) { e.fail = "php_foo" }, "unexpected error", true},
 		"comparator invalid json": {func(_ *fakeGitHub, e *fakeEngine) { e.comparator = `not json` }, engine.ErrNoReport.Error(), true},
 		"verification fails": {func(gh *fakeGitHub, e *fakeEngine) {
 			gh.issueErr = &github.HTTPError{Status: 502}
 			e.reader = `{"summary":"s","related":[{"number":12,"confidence":"high"}]}`
-		}, "github: HTTP 502", false},
+		}, "github: HTTP 502", true},
 		"post fails": {func(gh *fakeGitHub, _ *fakeEngine) { gh.postErr = &github.HTTPError{Status: 422} }, "github: HTTP 422", false},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -643,8 +630,8 @@ func TestRunFailures(t *testing.T) {
 			if err == nil || err.Error() != "1 advisory(ies) failed" {
 				t.Fatalf("want one failure, got %v", err)
 			}
-			if got := gh.posted["GHSA-new"]; (got != "") != tc.quarantine || strings.Contains(got, "SECRET-PAYLOAD") {
-				t.Fatalf("unexpected quarantine comment:\n%s", got)
+			if got := gh.posted["GHSA-new"]; (got != "") != tc.comment || (got != "" && got != report.Failed(true)) {
+				t.Fatalf("unexpected failure comment:\n%s", got)
 			}
 			if !strings.Contains(logs.String(), fmt.Sprintf("reason=%q", tc.reason)) || strings.Contains(logs.String(), "GHSA-") || strings.Contains(logs.String(), "SECRET-PAYLOAD") {
 				t.Fatalf("unexpected logs:\n%s", logs.String())
@@ -662,8 +649,70 @@ func TestRunRejectsFreeTextFromTheComparator(t *testing.T) {
 	}
 
 	body := gh.posted["GHSA-new"]
-	if strings.Contains(body, "SECRET-PAYLOAD") || !strings.Contains(body, report.Marker) {
-		t.Fatalf("the quarantining comment must carry no model output:\n%s", body)
+	if strings.Contains(body, "SECRET-PAYLOAD") || !strings.Contains(body, report.FailedMarker) {
+		t.Fatalf("the failure comment must carry no model output:\n%s", body)
+	}
+}
+
+func TestRunRetriesAFailedAdvisoryUntilTheLastAttempt(t *testing.T) {
+	for name, tc := range map[string]struct {
+		failures int
+		triaged  bool
+		posted   string
+	}{
+		"first failure":     {0, false, report.Failed(true)},
+		"second failure":    {1, false, report.Failed(true)},
+		"last attempt":      {2, false, report.Failed(false)},
+		"attempts used up":  {3, false, ""},
+		"retried and fixed": {1, true, report.Marker},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gh, eng := newFixture(), &fakeEngine{}
+			if !tc.triaged {
+				eng.reader = `{"summary": 1}`
+			}
+			for range tc.failures {
+				gh.comments["GHSA-new"] = append(gh.comments["GHSA-new"], botComment(report.Failed(true)))
+			}
+
+			_ = run(t, Config{Since: since}, gh, eng)
+
+			if got := gh.posted["GHSA-new"]; !strings.Contains(got, tc.posted) || (tc.posted == "") != (got == "") {
+				t.Fatalf("want a comment with %q, got:\n%s", tc.posted, got)
+			}
+			if tc.failures == maxAttempts && len(eng.calls) != 0 {
+				t.Fatalf("an advisory out of attempts must not reach the model: %d calls", len(eng.calls))
+			}
+		})
+	}
+}
+
+func TestRunIgnoresFailureMarkersPostedByOthers(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	for range maxAttempts {
+		gh.comments["GHSA-new"] = append(gh.comments["GHSA-new"], github.Comment{Body: report.Failed(true)})
+	}
+
+	if err := run(t, Config{Since: since}, gh, eng); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(gh.posted["GHSA-new"], report.Marker) {
+		t.Fatalf("a reporter's failure markers must not block the triage: %v", gh.posted)
+	}
+}
+
+func TestRunLogsTheUsageOfEachAdvisory(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	var logs bytes.Buffer
+
+	if err := runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs); err != nil {
+		t.Fatal(err)
+	}
+
+	// One reader and one comparator run, each recording one request of the fake engine.
+	if !strings.Contains(logs.String(), "msg=triaged usage.requests=2 usage.input_tokens=20 usage.output_tokens=4") {
+		t.Fatalf("logs miss the usage:\n%s", logs.String())
 	}
 }
 

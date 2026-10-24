@@ -24,6 +24,7 @@ import (
 	"github.com/alexandre-daubois/embargod/internal/report"
 	"github.com/alexandre-daubois/embargod/internal/sandbox"
 	"github.com/alexandre-daubois/embargod/internal/tools"
+	"github.com/alexandre-daubois/embargod/internal/usage"
 	"github.com/alexandre-daubois/embargod/skill"
 )
 
@@ -35,6 +36,7 @@ const (
 	maxComparisons        = 10
 	maxAdvisoryDuration   = 10 * time.Minute
 	maxComparatorRequests = 64
+	maxAttempts           = 3
 )
 
 var errInvalidReport = errors.New("the model submitted an invalid report")
@@ -93,7 +95,8 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 			failed++
 			continue
 		}
-		if commented(comments, login) {
+		done, failures := attempts(comments, login)
+		if done || failures >= maxAttempts {
 			cancel()
 			skipped++
 			continue
@@ -103,18 +106,17 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 			break
 		}
 		attempted++
-		advisoryCtx = engine.WithRequestLimit(advisoryCtx, maxComparatorRequests)
+		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
 
 		if err := triage(advisoryCtx, cfg, gh, reader, eng, a, all); err != nil {
 			cancel()
-			log.Error("triage failed", "reason", describe(err))
-			if terminal(err) {
-				_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed())
-			}
+			log.Error("triage failed", "reason", describe(err), "usage", spent())
+			_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed(failures+1 < maxAttempts))
 			failed++
 			continue
 		}
 		cancel()
+		log.Info("triaged", "usage", spent())
 		triaged++
 	}
 
@@ -124,15 +126,6 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	}
 
 	return nil
-}
-
-func terminal(err error) bool {
-	var (
-		agent   *sandbox.Error
-		refusal *engine.RefusalError
-	)
-
-	return errors.Is(err, engine.ErrNoReport) || errors.Is(err, sandbox.ErrNoReport) || errors.Is(err, errInvalidReport) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &agent) || errors.As(err, &refusal)
 }
 
 // describe turns an error into text that is safe to log, keeping only status codes and known reasons.
@@ -172,16 +165,22 @@ func selected(cfg Config, a github.Advisory) bool {
 	return a.State == "triage" && a.CreatedAt.After(cfg.Since)
 }
 
-// commented only trusts the marker in comments of the token owner, a reporter could post it to skip the triage.
+// attempts only trusts the markers in comments of the token owner, a reporter could post them to skip the triage.
 // GitHub logins are case-insensitive, and BotLogin is typed by hand.
-func commented(comments []github.Comment, login string) bool {
+func attempts(comments []github.Comment, login string) (done bool, failures int) {
 	for _, c := range comments {
-		if strings.EqualFold(c.User.Login, login) && strings.Contains(c.Body, report.Marker) {
-			return true
+		if !strings.EqualFold(c.User.Login, login) {
+			continue
+		}
+		switch {
+		case strings.Contains(c.Body, report.Marker):
+			return true, failures
+		case strings.Contains(c.Body, report.FailedMarker):
+			failures++
 		}
 	}
 
-	return false
+	return false, failures
 }
 
 // triage runs two models so that no context holds both the untrusted report and the embargoed
@@ -438,7 +437,7 @@ func strictDecode[T any](raw json.RawMessage) error {
 func comparatorPrompt(c report.Comparison) string {
 	clues, _ := json.Marshal(c)
 
-	return fmt.Sprintf(`A new security report was filed on this repository. You will not see it. Here is its faulty statement (file, symbol and line, 0 when unknown), the PHP entry points it goes through and its CWE, as JSON:
+	return fmt.Sprintf(`A new security report was filed on this repository. You will not see it. Here is its faulty statement (file, symbol and line, 0 when unknown), the public entry points it goes through and its CWE, as JSON:
 
 %s
 
@@ -448,7 +447,7 @@ Find the other advisories that describe the same bug, then call %s.`, clues, too
 func agentComparatorPrompt(c report.Comparison) string {
 	clues, _ := json.Marshal(c)
 
-	return fmt.Sprintf(`A new security report was filed on this repository. You will not see it. Here is its faulty statement (file, symbol and line, 0 when unknown), the PHP entry points it goes through and its CWE, as JSON:
+	return fmt.Sprintf(`A new security report was filed on this repository. You will not see it. Here is its faulty statement (file, symbol and line, 0 when unknown), the public entry points it goes through and its CWE, as JSON:
 
 %s
 

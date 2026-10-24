@@ -52,7 +52,7 @@ func setup(t *testing.T, p Provider, status int) (*httptest.Server, *[]upstreamC
 	token, revoke := mp.Issue()
 	srv := httptest.NewServer(mp)
 	t.Cleanup(srv.Close)
-	t.Cleanup(revoke)
+	t.Cleanup(func() { revoke() })
 
 	return srv, &calls, token
 }
@@ -162,7 +162,7 @@ func TestChatGPTRefusesAnIdentityWithoutAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	token, revoke := mp.Issue()
-	t.Cleanup(revoke)
+	t.Cleanup(func() { revoke() })
 	srv := httptest.NewServer(mp)
 	t.Cleanup(srv.Close)
 

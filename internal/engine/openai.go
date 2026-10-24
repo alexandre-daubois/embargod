@@ -10,6 +10,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/alexandre-daubois/embargod/internal/tools"
+	"github.com/alexandre-daubois/embargod/internal/usage"
 )
 
 const DefaultOpenAIModel = shared.ChatModelGPT5_5
@@ -63,6 +64,7 @@ func (o *OpenAI) Run(ctx context.Context, system, prompt string, ts []tools.Tool
 			}
 			return nil, apiErr
 		}
+		usage.Add(ctx, usage.Usage{Requests: 1, InputTokens: resp.Usage.PromptTokens, OutputTokens: resp.Usage.CompletionTokens})
 		if len(resp.Choices) == 0 {
 			return nil, errors.New("empty completion")
 		}

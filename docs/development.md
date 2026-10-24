@@ -32,6 +32,10 @@ The `Agent image` workflow publishes both to `ghcr.io/alexandre-daubois/embargod
 
 To bump an agent CLI, update its tag and the sha256 of each architecture's asset together in the Dockerfile. The workflow needs "Allow GitHub Actions to create and approve pull requests" in the repository settings.
 
+## Releases
+
+Pushing a `vX.Y.Z` tag runs the `Release` workflow, which builds embargod for Linux on amd64 and arm64, attests both binaries and publishes them in a GitHub release. When the action's ref points at the commit of such a tag, as a moving `v1` tag does, the action downloads the binary for the runner and checks its attestation against that commit before running it. Any other ref, such as a branch or a fork, is built from source.
+
 ## Dependency updates
 
 [Renovate](https://docs.renovatebot.com/) keeps Go modules, pinned actions, base images and the agent CLIs up to date, following [`renovate.json`](../renovate.json). It updates each CLI's tag and checksums in one pull request, keeps `harness-proxy` in the agent image on the same version as the `harness` module, and waits seven days after a release before proposing it. It needs the [Renovate GitHub App](https://github.com/apps/renovate) installed on the repository.

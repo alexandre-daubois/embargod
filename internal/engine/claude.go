@@ -9,6 +9,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 
 	"github.com/alexandre-daubois/embargod/internal/tools"
+	"github.com/alexandre-daubois/embargod/internal/usage"
 )
 
 const DefaultClaudeModel = "claude-opus-5-5"
@@ -70,6 +71,7 @@ func (c *Claude) Run(ctx context.Context, system, prompt string, ts []tools.Tool
 			}
 			return nil, apiErr
 		}
+		usage.Add(ctx, usage.Usage{Requests: 1, InputTokens: resp.Usage.InputTokens + resp.Usage.CacheCreationInputTokens + resp.Usage.CacheReadInputTokens, OutputTokens: resp.Usage.OutputTokens})
 		if resp.StopReason == anthropic.BetaStopReasonRefusal {
 			return nil, &RefusalError{Category: string(resp.StopDetails.Category)}
 		}

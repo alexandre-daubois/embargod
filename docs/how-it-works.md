@@ -6,6 +6,10 @@ Each run goes through four stages. Two models are involved, and no model ever se
 
 embargod lists the repository's advisories and keeps those in the `triage` state created after `since`, or only the one given in `advisory`. It skips an advisory that already carries a comment from `bot-login` containing the `<!-- embargod -->` marker. A marker posted by anyone else is ignored.
 
+A failed triage posts a comment saying so, with its own marker, and is retried on the next runs. After three failures, the comment asks a maintainer to review the report and the advisory is left alone. An advisory is triaged once: editing the report afterwards does not start a new triage.
+
+Each triaged or failed advisory logs the model requests and the input and output tokens it spent, with cached input tokens counted as input.
+
 ## 2. Reading the report
 
 An agent, Claude Code or Codex, investigates the report in a throwaway container:
@@ -15,7 +19,7 @@ An agent, Claude Code or Codex, investigates the report in a throwaway container
 - it reads the security policy files when the repository has some,
 - it writes its findings to `/work/report.json`, following a JSON schema.
 
-The JSON is decoded strictly: an unknown or mistyped field sends the error back to the agent for one correction round. The agent reports the faulty statement (file, function, line), the PHP entry points it goes through, the code the report cites, related issues, policy exclusions, CWE and CVSS.
+The JSON is decoded strictly: an unknown or mistyped field sends the error back to the agent for one correction round. The agent reports the faulty statement (file, function, line), the public entry points it goes through, the code the report cites, related issues, policy exclusions, CWE and CVSS.
 
 ## 3. Duplicate search
 
