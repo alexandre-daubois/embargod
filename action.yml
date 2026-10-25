@@ -79,7 +79,7 @@ runs:
         case "$ARCH" in X64) arch=amd64 ;; ARM64) arch=arm64 ;; *) exit 0 ;; esac
         sha=$(gh api "repos/$REPO/commits/$REF" --jq .sha) || exit 0
         tags=$(gh api --paginate "repos/$REPO/tags" --jq ".[] | select(.commit.sha == \"$sha\") | .name") || exit 0
-        tag=$(grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$tags") || exit 0
+        tag=$(grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' <<<"$tags") || exit 0
         gh release download "$tag" --repo "$REPO" --pattern "tamis-linux-$arch" --output "$RUNNER_TEMP/tamis" --clobber || exit 0
         gh attestation verify "$RUNNER_TEMP/tamis" --repo "$REPO" --signer-workflow "$REPO/.github/workflows/release.yml" --source-digest "$sha"
         chmod +x "$RUNNER_TEMP/tamis"

@@ -43,7 +43,7 @@ To bump an agent CLI, update its tag and the sha256 of each architecture's asset
 
 ## Releases
 
-Pushing a `vX.Y.Z` tag runs the `Release` workflow, which builds tamis for Linux on amd64 and arm64, attests both binaries and publishes them in a GitHub release. When the action's pinned commit has such a release tag, the action downloads the binary for the runner and checks its attestation against that commit before running it. Any other pinned commit is built from source.
+Pushing a `vYYYY.MM.DD.N` tag, such as `v2026.10.25.1`, runs the `Release` workflow, which builds tamis for Linux on amd64 and arm64, attests both binaries and publishes them in a GitHub release. When the action's pinned commit has such a release tag, the action downloads the binary for the runner and checks its attestation against that commit before running it. Any other pinned commit is built from source.
 
 ## Dependency updates
 
