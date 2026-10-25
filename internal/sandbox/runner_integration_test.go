@@ -104,21 +104,7 @@ func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuff
 		}
 	})
 	t.Cleanup(func() { _ = upstream.Close() })
-	original := backends[name]
-	changed := original
-	changed.provider.Upstream = "http://127.0.0.1:" + port
-	if changed.provider.Upstreams != nil {
-		changed.provider.Upstreams = map[string]string{}
-		for prefix := range original.provider.Upstreams {
-			changed.provider.Upstreams[prefix] = changed.provider.Upstream
-		}
-	}
-	backends[name] = changed
-	t.Cleanup(func() { backends[name] = original })
-
-	reader, err := New(name, model, "test-key", image)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = reader.Close() })
+	reader := testReader(t, name, model, image, port)
 	reader.server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(body))
@@ -172,6 +158,90 @@ func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuff
 	})
 	_, readErr := reader.Read(t.Context(), Request{RepoPath: gitRepo(t), Prompt: "Answer", System: "System", Report: "Report", Schema: []byte(`{}`), Validate: func(json.RawMessage) error { return nil }})
 	require.GreaterOrEqual(t, calls.Load(), int32(2), "the legitimate %s request was blocked before the model provider: %v", name, errors.Unwrap(readErr))
+}
+
+func TestReaderGetsOneCorrectionRound(t *testing.T) {
+	image := os.Getenv("TAMIS_TEST_IMAGE")
+	if !strings.HasSuffix(image, ":claude") {
+		t.Skip("TAMIS_TEST_IMAGE must end in :claude")
+	}
+	t.Run("corrected", func(t *testing.T) {
+		raw, seen, err := readWithCorrection(t, image, `{"ok":true}`)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"ok":true}`, string(raw))
+		require.Equal(t, []string{"not json", `{"ok":true}`}, seen)
+	})
+	t.Run("still invalid", func(t *testing.T) {
+		_, seen, err := readWithCorrection(t, image, "still not json")
+		require.ErrorIs(t, err, ErrNoReport)
+		require.Equal(t, []string{"not json", "still not json"}, seen)
+	})
+}
+
+// readWithCorrection runs Claude Code against a model that writes invalid JSON, then corrected once the
+// prompt carries the validation error, and returns what the validator saw.
+func readWithCorrection(t *testing.T, image, corrected string) (json.RawMessage, []string, error) {
+	t.Helper()
+	_, port := testServerHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		event := func(kind string, data any) {
+			raw, _ := json.Marshal(data)
+			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", kind, raw)
+		}
+		event("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_fixture", "type": "message", "role": "assistant", "model": "claude-opus-5-5", "content": []any{}, "stop_reason": nil, "usage": map[string]int{"input_tokens": 1, "output_tokens": 0}}})
+		stop := "end_turn"
+		if bytes.Contains(body, []byte(`"tool_result"`)) {
+			event("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "text", "text": ""}})
+			event("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": "Done."}})
+		} else {
+			output := "not json"
+			if bytes.Contains(body, []byte("did not produce valid output")) {
+				output = corrected
+			}
+			command, _ := json.Marshal(map[string]string{"command": "printf '%s' '" + output + "' > /work/" + outputFile})
+			stop = "tool_use"
+			event("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "tool_use", "id": "tool_fixture", "name": "Bash", "input": map[string]any{}}})
+			event("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(command)}})
+		}
+		event("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0})
+		event("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop, "stop_sequence": nil}, "usage": map[string]int{"output_tokens": 1}})
+		event("message_stop", map[string]any{"type": "message_stop"})
+	})
+	reader := testReader(t, "claude", "claude-opus-5-5", image, port)
+
+	var seen []string
+	validate := func(raw json.RawMessage) error {
+		seen = append(seen, string(raw))
+		if !json.Valid(raw) {
+			return errors.New("not JSON")
+		}
+		return nil
+	}
+	raw, err := reader.Read(t.Context(), Request{RepoPath: gitRepo(t), Prompt: "Answer", System: "System", Report: "Report", Schema: []byte(`{}`), Validate: validate})
+
+	return raw, seen, err
+}
+
+func testReader(t *testing.T, name, model, image, port string) *Reader {
+	t.Helper()
+	original := backends[name]
+	changed := original
+	changed.provider.Upstream = "http://127.0.0.1:" + port
+	if changed.provider.Upstreams != nil {
+		changed.provider.Upstreams = map[string]string{}
+		for prefix := range original.provider.Upstreams {
+			changed.provider.Upstreams[prefix] = changed.provider.Upstream
+		}
+	}
+	backends[name] = changed
+	t.Cleanup(func() { backends[name] = original })
+
+	reader, err := New(name, model, "test-key", image)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reader.Close() })
+
+	return reader
 }
 
 func testServer(t *testing.T, response string) (*http.Server, string) {

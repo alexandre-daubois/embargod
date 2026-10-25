@@ -379,6 +379,22 @@ func TestValidateReaderBoundsModelOutput(t *testing.T) {
 		"negative line":    {CodeReferences: []CodeReference{{Line: -1}}},
 		"huge line":        {CodeReferences: []CodeReference{{Line: maxLine + 1}}},
 		"long snippet":     {CodeReferences: []CodeReference{{Snippet: strings.Repeat("x", maxText+1)}}},
+		"long entry point": {EntryPoints: []string{strings.Repeat("x", maxText+1)}},
+		"long exclusion":   {PolicyExclusions: []PolicyPoint{{Reason: strings.Repeat("x", maxText+1)}}},
+		"long CWE":         {CWE: []CWE{{Reason: strings.Repeat("x", maxText+1)}}},
+		"too much entry point text": {EntryPoints: []string{
+			strings.Repeat("x", maxText), strings.Repeat("x", maxText), strings.Repeat("x", maxText),
+			strings.Repeat("x", maxText), strings.Repeat("x", maxText), strings.Repeat("x", maxText), "x",
+		}},
+		"too much code reference text": {CodeReferences: []CodeReference{
+			{Path: strings.Repeat("x", maxText), Symbol: strings.Repeat("x", maxText), Snippet: strings.Repeat("x", maxText)},
+			{Path: strings.Repeat("x", maxText), Symbol: strings.Repeat("x", maxText), Snippet: strings.Repeat("x", maxText)},
+		}, Summary: "x"},
+		"too much CWE text": {Summary: "x", CWE: []CWE{
+			{ID: strings.Repeat("x", maxText), Reason: strings.Repeat("x", maxText)},
+			{ID: strings.Repeat("x", maxText), Reason: strings.Repeat("x", maxText)},
+			{ID: strings.Repeat("x", maxText), Reason: strings.Repeat("x", maxText)},
+		}},
 		"too much text": {PolicyExclusions: []PolicyPoint{
 			{Point: strings.Repeat("x", maxText), Reason: strings.Repeat("x", maxText)},
 			{Point: strings.Repeat("x", maxText), Reason: strings.Repeat("x", maxText)},

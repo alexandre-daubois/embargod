@@ -249,6 +249,30 @@ func TestClaudeRetriesAnInvalidSubmission(t *testing.T) {
 	assert.Contains(t, second, "does not match the schema", "the model should get the validation error")
 }
 
+func TestOpenAIGivesUpWithoutReport(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, openaiCompletion(`{"role":"assistant","content":"Thinking aloud."}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := NewOpenAI("key", "m", openaioption.WithBaseURL(srv.URL), openaioption.WithMaxRetries(0)).
+		Run(context.Background(), "s", "p", testTools(new([]string)))
+	require.ErrorIs(t, err, ErrNoReport)
+	require.Equal(t, maxTurns, requests)
+}
+
+func TestOpenAIRequestLimitStopsTheModelLoop(t *testing.T) {
+	srv, requests := scripted(t, openaiCompletion(`{"role":"assistant","content":"keep going"}`))
+	ctx := WithRequestLimit(context.Background(), 1)
+	_, err := NewOpenAI("key", "m", openaioption.WithBaseURL(srv.URL), openaioption.WithMaxRetries(0)).
+		Run(ctx, "s", "p", testTools(new([]string)))
+	require.ErrorIs(t, err, ErrNoReport)
+	require.Len(t, *requests, 1)
+}
+
 func TestOpenAIRetriesAnInvalidSubmission(t *testing.T) {
 	srv, requests := scripted(t,
 		openaiCompletion(`{"role":"assistant","content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"submit","arguments":"{\"summary\":42}"}}]}`),

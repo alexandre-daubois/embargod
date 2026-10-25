@@ -390,6 +390,130 @@ func TestCapabilityHeadersAreNotForwarded(t *testing.T) {
 	require.Empty(t, got.Get("X-Unknown-Provider-Capability"), "unreviewed capability header reached upstream")
 }
 
+// Each reviewed protocol position passes, and one unreviewed field or shape at that position is refused.
+func TestRequestShapes(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		provider Provider
+		accepted map[string]string
+		refused  map[string]string
+	}{
+		{
+			name:     "anthropic",
+			provider: Anthropic,
+			accepted: map[string]string{
+				"thinking":        `{"model":"allowed","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"redacted_thinking","data":"d"}]}]}`,
+				"effort":          `{"model":"allowed","messages":[{"role":"user","content":"x","output_config":{"effort":"high"}}]}`,
+				"clear tool uses": `{"model":"allowed","context_management":{"edits":[{"type":"clear_tool_uses_20250919","keep":{"type":"tool_uses","value":3}}]}}`,
+				"system blocks":   `{"model":"allowed","system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}]}`,
+			},
+			refused: map[string]string{
+				"tools object":             `{"model":"allowed","tools":{}}`,
+				"tool string":              `{"model":"allowed","tools":["Read"]}`,
+				"hosted tool":              `{"model":"allowed","tools":[{"type":"web_search_20250305","name":"web_search"}]}`,
+				"tool field":               `{"model":"allowed","tools":[{"name":"Read","input_schema":{},"mcp_server":"s"}]}`,
+				"messages object":          `{"model":"allowed","messages":{}}`,
+				"message field":            `{"model":"allowed","messages":[{"role":"user","content":"x","container":"c"}]}`,
+				"output config string":     `{"model":"allowed","messages":[{"role":"user","content":"x","output_config":"high"}]}`,
+				"output config field":      `{"model":"allowed","messages":[{"role":"user","content":"x","output_config":{"effort":"high","task_budget":1}}]}`,
+				"system object":            `{"model":"allowed","system":{}}`,
+				"system string block":      `{"model":"allowed","system":["s"]}`,
+				"text field":               `{"model":"allowed","system":[{"type":"text","text":"s","citations":[]}]}`,
+				"thinking field":           `{"model":"allowed","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s","source":"x"}]}]}`,
+				"tool use field":           `{"model":"allowed","messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Read","input":{},"caller":{}}]}]}`,
+				"tool result field":        `{"model":"allowed","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","container":"c"}]}]}`,
+				"tool reference field":     `{"model":"allowed","messages":[{"role":"user","content":[{"type":"tool_reference","tool_name":"Read","server":"s"}]}]}`,
+				"server tool block":        `{"model":"allowed","messages":[{"role":"assistant","content":[{"type":"server_tool_use","id":"s","name":"web_search","input":{}}]}]}`,
+				"context management list":  `{"model":"allowed","context_management":[]}`,
+				"context management field": `{"model":"allowed","context_management":{"edits":[],"compaction":true}}`,
+				"edits object":             `{"model":"allowed","context_management":{"edits":{}}}`,
+				"edit string":              `{"model":"allowed","context_management":{"edits":["clear_thinking_20251015"]}}`,
+				"clear thinking field":     `{"model":"allowed","context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all","trigger":{}}]}}`,
+				"clear tool uses field":    `{"model":"allowed","context_management":{"edits":[{"type":"clear_tool_uses_20250919","server":"s"}]}}`,
+				"token limit string":       `{"model":"allowed","max_tokens":"16000"}`,
+				"token limit zero":         `{"model":"allowed","max_tokens":0}`,
+			},
+		},
+		{
+			name:     "openai",
+			provider: OpenAI,
+			accepted: map[string]string{
+				"string input":      `{"model":"allowed","input":"report"}`,
+				"local tools":       `{"model":"allowed","tools":[{"type":"local_shell"},{"type":"apply_patch"},{"type":"custom","name":"c","format":{"type":"text"}}]}`,
+				"named tool choice": `{"model":"allowed","tool_choice":{"type":"function","name":"read"}}`,
+				"client search":     `{"model":"allowed","input":[{"type":"tool_search_call","call_id":"c","arguments":{},"execution":"client"},{"type":"custom_tool_call_output","call_id":"c","output":[{"type":"input_text","text":"x"}]}]}`,
+			},
+			refused: map[string]string{
+				"include string":          `{"model":"allowed","include":"reasoning.encrypted_content"}`,
+				"include other":           `{"model":"allowed","include":["file_search_call.results"]}`,
+				"function field":          `{"model":"allowed","tools":[{"type":"function","name":"f","server_url":"https://attacker.invalid"}]}`,
+				"custom field":            `{"model":"allowed","tools":[{"type":"custom","name":"c","server_url":"https://attacker.invalid"}]}`,
+				"local shell field":       `{"model":"allowed","tools":[{"type":"local_shell","environment":{}}]}`,
+				"client search field":     `{"model":"allowed","tools":[{"type":"tool_search","execution":"client","server_url":"https://attacker.invalid"}]}`,
+				"tool choice string":      `{"model":"allowed","tool_choice":"web_search"}`,
+				"tool choice hosted":      `{"model":"allowed","tool_choice":{"type":"mcp","server_label":"s"}}`,
+				"tool choice field":       `{"model":"allowed","tool_choice":{"type":"function","name":"f","server":"s"}}`,
+				"input number":            `{"model":"allowed","input":1}`,
+				"input string item":       `{"model":"allowed","input":["report"]}`,
+				"message field":           `{"model":"allowed","input":[{"role":"user","content":"x","file_url":"https://attacker.invalid"}]}`,
+				"message image":           `{"model":"allowed","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://attacker.invalid"}]}]}`,
+				"reasoning field":         `{"model":"allowed","input":[{"type":"reasoning","summary":[],"server":"s"}]}`,
+				"function call field":     `{"model":"allowed","input":[{"type":"function_call","call_id":"c","name":"f","arguments":"{}","server":"s"}]}`,
+				"call output field":       `{"model":"allowed","input":[{"type":"function_call_output","call_id":"c","output":"x","server":"s"}]}`,
+				"additional tools field":  `{"model":"allowed","input":[{"type":"additional_tools","tools":[],"server":"s"}]}`,
+				"server tool search call": `{"model":"allowed","input":[{"type":"tool_search_call","call_id":"c","arguments":{},"execution":"server"}]}`,
+				"tool search call field":  `{"model":"allowed","input":[{"type":"tool_search_call","call_id":"c","execution":"client","server":"s"}]}`,
+			},
+		},
+	} {
+		proxy, err := New(tc.provider, "key", "allowed")
+		require.NoError(t, err)
+		for name, body := range tc.accepted {
+			t.Run(tc.name+"/accepted/"+name, func(t *testing.T) {
+				_, err := proxy.safeBody(strings.NewReader(body))
+				require.NoError(t, err)
+			})
+		}
+		for name, body := range tc.refused {
+			t.Run(tc.name+"/refused/"+name, func(t *testing.T) {
+				_, err := proxy.safeBody(strings.NewReader(body))
+				require.EqualError(t, err, "provider request not permitted")
+			})
+		}
+	}
+}
+
+func TestMalformedRequestsAreRefused(t *testing.T) {
+	proxy, err := New(OpenAI, "key", "allowed")
+	require.NoError(t, err)
+	for name, body := range map[string]string{
+		"not JSON":      `model=allowed`,
+		"trailing data": `{"model":"allowed"} {"model":"allowed","tools":[{"type":"mcp"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := proxy.safeBody(strings.NewReader(body))
+			require.EqualError(t, err, "invalid provider request")
+		})
+	}
+	_, err = proxy.safeBody(strings.NewReader(`{"model":"allowed","input":"` + strings.Repeat("x", maxBody) + `"}`))
+	require.ErrorIs(t, err, errRequestTooLarge)
+}
+
+func TestOversizedRequestIsRefusedBeforeTheUpstream(t *testing.T) {
+	srv, calls, token := setup(t, OpenAI, http.StatusOK)
+	body := `{"model":"allowed","input":"` + strings.Repeat("x", maxBody) + `"}`
+	require.Equal(t, http.StatusRequestEntityTooLarge, callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", body, withKey("Authorization", "Bearer "+token)).StatusCode)
+	require.Empty(t, *calls)
+}
+
+func TestMCPBetaHeaderIsRefused(t *testing.T) {
+	srv, calls, token := setup(t, Anthropic, http.StatusOK)
+	header := withKey("X-Api-Key", token)
+	header.Set("Anthropic-Beta", "mcp-client-2025-04-04")
+	require.Equal(t, http.StatusForbidden, call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", header).StatusCode)
+	require.Empty(t, *calls)
+}
+
 func FuzzProviderRequest(f *testing.F) {
 	for _, seed := range []string{`{"model":"allowed"}`, `{"model":"allowed","tools":[{"type":"function","name":"local","parameters":{}}]}`, `{"model":"allowed","input":[{"type":"additional_tools","tools":[{"type":"shell"}]}]}`, `{"model":"allowed","tools":[{"type":{}}]}`} {
 		f.Add(seed)
