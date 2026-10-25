@@ -19,7 +19,7 @@ inputs:
     description: Model id, defaults to claude-opus-5-5, gpt-5.5, or gpt-6.1-sol with a Codex access token.
     required: false
   api-key:
-    description: API key of the LLM provider. With `engine: openai`, a Codex access token (`at-...`) works too.
+    description: "API key of the LLM provider. With `engine: openai`, a Codex access token (`at-...`) works too."
     required: true
   bot-login:
     description: Login the comments are posted as, required with a GitHub App token, e.g. `my-app[bot]`. Found through the token otherwise.
@@ -34,7 +34,7 @@ inputs:
     description: Path of the repository checkout, relative to the workspace.
     default: .
   daybreak:
-    description: Turn on OpenAI's Daybreak cyber access program in Codex, with `engine: openai` only. The API key's org must be approved for it.
+    description: "Turn on OpenAI's Daybreak cyber access program in Codex, with `engine: openai` only. The API key's org must be approved for it."
     default: "false"
   runner-image:
     description: Image the agent runs in, instead of the tamis agent image pinned by digest and checked against its build attestation. It needs the agent CLI, git, curl and harness-proxy, and is not checked.
