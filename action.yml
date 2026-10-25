@@ -102,10 +102,11 @@ runs:
       env:
         ENGINE: ${{ inputs.engine }}
         GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.action_repository }}
       run: |
         case "$ENGINE" in openai) agent=codex ;; *) agent=claude ;; esac
         image=$(jq -er --arg agent "$agent" '.[$agent]' internal/sandbox/images.json)
-        gh attestation verify "oci://$image" --repo alexandre-daubois/embargod --signer-workflow alexandre-daubois/embargod/.github/workflows/agent-image.yml
+        gh attestation verify "oci://$image" --repo "$REPO" --signer-workflow "$REPO/.github/workflows/agent-image.yml"
     - name: Triage
       id: triage
       shell: bash
