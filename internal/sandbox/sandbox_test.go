@@ -219,7 +219,7 @@ func TestWriteConfig(t *testing.T) {
 }
 
 func TestImagesArePinnedByDigest(t *testing.T) {
-	pinned := regexp.MustCompile(`^ghcr\.io/alexandre-daubois/embargod-agent@sha256:[0-9a-f]{64}$`)
+	pinned := regexp.MustCompile(`^ghcr\.io/alexandre-daubois/tamis-agent@sha256:[0-9a-f]{64}$`)
 	agents := map[string]bool{}
 	for _, b := range backends {
 		agents[b.harness] = true
