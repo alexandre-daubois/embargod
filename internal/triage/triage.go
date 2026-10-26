@@ -40,7 +40,10 @@ const (
 	maxAttempts           = 3
 )
 
-var errInvalidReport = errors.New("the model submitted an invalid report")
+var (
+	errInvalidReport    = errors.New("the model submitted an invalid report")
+	errIncompleteReport = errors.New("the agent stopped before finishing its report")
+)
 
 type GitHub interface {
 	report.IssueGetter
@@ -129,7 +132,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		attempted++
 		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
 
-		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, eng, a, all, comments, login, revision); err != nil {
+		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, eng, a, all, comments, login, revision, failures+1 >= maxAttempts); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
 			if agent := (*sandbox.Error)(nil); errors.As(err, &agent) {
@@ -178,6 +181,8 @@ func describe(err error) string {
 		return "the agent run failed"
 	case errors.Is(err, errInvalidReport):
 		return errInvalidReport.Error()
+	case errors.Is(err, errIncompleteReport):
+		return errIncompleteReport.Error()
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return "canceled"
 	default:
