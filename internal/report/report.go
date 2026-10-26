@@ -72,6 +72,8 @@ type Report struct {
 	Branch    string    `json:"-"`
 	// Removed counts the model claims dropped because they could not be verified.
 	Removed int `json:"-"`
+	// Incomplete marks a report the agent wrote before its run stopped.
+	Incomplete bool `json:"-"`
 }
 
 type Location struct {
@@ -468,6 +470,9 @@ func RenderPrivate(r Report) string {
 	b.WriteString("> Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.\n\n")
 	if !r.ScannedAt.IsZero() {
 		fmt.Fprintf(&b, "Scanned on %s UTC%s.\n\n", r.ScannedAt.UTC().Format("2006-01-02 at 15:04"), r.scope())
+	}
+	if r.Incomplete {
+		b.WriteString("_The analysis stopped before it finished, so this report may be incomplete._\n\n")
 	}
 	b.WriteString(text(r.Summary) + "\n")
 
