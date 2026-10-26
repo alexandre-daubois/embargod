@@ -44,6 +44,6 @@ Keep `persist-credentials: false` on the checkout, so no token is written to `.g
 
 ## 4. First run
 
-Trigger the workflow by hand with the `advisory` input set to a test GHSA. That advisory is triaged whatever its state and date, and the comment is posted on it. Download the private `tamis-reports` artifact and check that embargoed duplicate IDs appear only there, then let the schedule run. Artifact access follows the private runner repository's permissions; grant access only to the security team.
+Trigger the workflow by hand with the `advisory` input set to a test GHSA. That advisory is triaged whatever its state and date, and the comment is posted on it. Download the private `tamis-reports` artifact and check that the comment names embargoed advisories only as exact duplicates, then let the schedule run. Artifact access follows the private runner repository's permissions; grant access only to the security team.
 
 GitHub Actions has no trigger for security advisories, so the schedule polls every 15 minutes. Runs without a new advisory do not start the agent nor call the model.

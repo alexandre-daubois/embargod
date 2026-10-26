@@ -45,12 +45,8 @@ func advisoryRevision(a github.Advisory, comments []github.Comment, login string
 }
 
 func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string) (bool, error) {
-	var visible strings.Builder
-	type branchResult struct {
-		report           report.Report
-		path, provenance string
-	}
-	var results []branchResult
+	var visible, private strings.Builder
+	var comparisonErr error
 	var published, unpublished []github.Advisory
 	byID := map[string]github.Advisory{}
 	for _, other := range all {
@@ -95,8 +91,20 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 			return false, err
 		}
 		provenance := fmt.Sprintf("\nRepository: `%s`. Advisory: `%s`.\nSource: `%s` at `%s`. Input revision: `%s`.\n", cfg.Repo, a.GHSAID, reference, commit, revision)
+		// A failed comparison with unpublished advisories leaves them out of the comment rather than blocking it.
+		duplicates, err := findDuplicates(ctx, path, reader, eng, r, unpublished)
+		if err != nil {
+			comparisonErr = err
+			private.WriteString("\nPrivate duplicate search could not complete for this source.\n")
+		} else {
+			matches := report.Report{Duplicates: duplicates}
+			if err := (report.Checker{Advisories: byID}).Verify(ctx, &matches); err != nil {
+				return false, err
+			}
+			r.Duplicates = append(r.Duplicates, matches.Duplicates...)
+		}
 		visible.WriteString(provenance + report.Render(r))
-		results = append(results, branchResult{r, path, provenance})
+		private.WriteString(provenance + report.RenderPrivate(r))
 	}
 	current, err := gh.GetAdvisory(ctx, cfg.Repo, a.GHSAID)
 	if err != nil {
@@ -119,23 +127,6 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	}
 	if err := gh.PostComment(ctx, cfg.Repo, a.GHSAID, body); err != nil {
 		return false, err
-	}
-	// Publish before examining private candidates: neither their decisions nor failures may affect the comment.
-	var private strings.Builder
-	var comparisonErr error
-	for _, result := range results {
-		duplicates, err := findDuplicates(ctx, result.path, reader, eng, result.report, unpublished)
-		if err != nil {
-			comparisonErr = err
-			private.WriteString("\nPrivate duplicate search could not complete for this source.\n")
-		} else {
-			r := report.Report{Duplicates: duplicates}
-			if err := (report.Checker{Advisories: byID}).Verify(ctx, &r); err != nil {
-				return true, err
-			}
-			result.report.Duplicates = append(result.report.Duplicates, r.Duplicates...)
-		}
-		private.WriteString(result.provenance + report.RenderPrivate(result.report))
 	}
 	if err := os.WriteFile(base+".md", []byte(private.String()), 0o600); err != nil {
 		return true, err

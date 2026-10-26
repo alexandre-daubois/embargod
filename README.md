@@ -6,7 +6,7 @@ First-pass triage of private vulnerability reports on GitHub. When a new securit
 
 For each report, tamis:
 
-- lists public duplicates in the comment and embargoed duplicates only in a private report,
+- lists public duplicates in the comment, and embargoed advisories only when they are exact duplicates, by identifier,
 - finds public issues and pull requests already fixing or hardening the same code,
 - checks that the files and functions the report cites exist,
 - reads the security policy and flags what may exclude the report,

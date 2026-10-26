@@ -187,7 +187,7 @@ func TestRender(t *testing.T) {
 		"| Advisory | Status | Confidence |",
 		"| [GHSA-real](https://x/GHSA-real) | Unpublished | High • Exact duplicate |",
 		"| [GHSA-near](https://x/GHSA-near) | Published | Low |",
-		"_Embargoed matches are kept in the private report, never in the reporter-visible comment._",
+		"_Unpublished advisories are only listed as exact duplicates, without their title._",
 		"| Issue or PR | Title | Confidence |",
 		"| [PR #12](https://x/12) | Harden | Medium |",
 		"| [Issue #13](https://x/13) | Crash | Low |",
@@ -204,12 +204,19 @@ func TestRender(t *testing.T) {
 	}
 }
 
-func TestRenderNeverDisclosesEmbargoedMatches(t *testing.T) {
-	r := Report{Duplicates: []Duplicate{{GHSAID: "PRIVATE-ID", Confidence: "high", Exact: true}, {GHSAID: "PUBLIC-ID", Confidence: "low", Published: true}}}
+func TestRenderShowsOnlyExactUnpublishedMatches(t *testing.T) {
+	r := Report{Duplicates: []Duplicate{
+		{GHSAID: "EXACT-ID", Confidence: "high", Exact: true},
+		{GHSAID: "UNSURE-ID", Confidence: "medium", Exact: true},
+		{GHSAID: "PARTIAL-ID", Confidence: "high"},
+		{GHSAID: "PUBLIC-ID", Confidence: "low", Published: true},
+	}}
 	body := Render(r)
-	require.NotContains(t, body, "PRIVATE-ID", "private match rendered in a comment")
-	require.Contains(t, body, "PUBLIC-ID", "private match rendered in a comment")
-	require.Contains(t, RenderPrivate(r), "PRIVATE-ID", "public rendering modified the private result")
+	require.Contains(t, body, "EXACT-ID", "an exact duplicate is missing from the comment")
+	require.Contains(t, body, "PUBLIC-ID", "a published duplicate is missing from the comment")
+	require.NotContains(t, body, "UNSURE-ID", "an unpublished match below high confidence reached the comment")
+	require.NotContains(t, body, "PARTIAL-ID", "a partial unpublished match reached the comment")
+	require.Contains(t, RenderPrivate(r), "PARTIAL-ID", "public rendering modified the private result")
 }
 
 func TestRenderNeutralisesMarkup(t *testing.T) {

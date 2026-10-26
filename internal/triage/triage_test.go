@@ -143,47 +143,48 @@ func (e *fakeEngine) Read(ctx context.Context, req sandbox.Request) (json.RawMes
 	return raw, nil
 }
 
-func TestRunKeepsEmbargoedMatchesPrivateAndSkipsCompletedAdvisories(t *testing.T) {
+func TestRunShowsExactUnpublishedMatchesAndSkipsCompletedAdvisories(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
 	cfg := testConfig(t, gh, Config{Advisory: "GHSA-new"})
 	require.NoError(t, Run(t.Context(), cfg, gh, eng, eng, slog.New(slog.DiscardHandler)))
 	body := gh.posted["GHSA-new"]
-	require.NotContains(t, body, "GHSA-old", "an embargoed match reached the reporter")
-	require.NotContains(t, body, "Unpublished |", "an embargoed match reached the reporter")
-	canonical := privateReports(t, gh)
-	require.Contains(t, canonical, "GHSA-old", "the private duplicate was lost")
+	require.Contains(t, body, "| [GHSA-old](https://x/GHSA-old) | Unpublished | High • Exact duplicate |", "the exact duplicate is missing from the comment")
+	require.Contains(t, privateReports(t, gh), "GHSA-old", "the private duplicate was lost")
 	gh.comments["GHSA-new"] = []github.Comment{botComment(body)}
 	eng.calls = nil
 	require.NoError(t, Run(t.Context(), cfg, gh, eng, eng, slog.New(slog.DiscardHandler)), "an unchanged revision was retriaged")
 	require.Empty(t, eng.calls, "an unchanged revision was retriaged")
 }
 
-func TestPrivateComparatorResultsAndFailuresCannotChangeThePublicComment(t *testing.T) {
+func TestUnpublishedComparisonsShowOnlyExactMatchesAndFailuresKeepTheComment(t *testing.T) {
 	dir := gitRepo(t, map[string]string{"ext/foo/foo.c": strings.Repeat("\n", 41) + "void php_foo(void) { foo_encode(); }\n"})
-	var want string
-	for _, decision := range []string{`{"confidence":"high","exact":true}`, `{"confidence":"low","exact":false}`, `{"confidence":"high","exact":true,"notes":"SECRET-PAYLOAD"}`} {
-		gh, eng := newFixture(), &fakeEngine{comparator: decision}
-		eng.onCompare = func() {
-			require.NotEmpty(t, gh.posted["GHSA-new"], "a private candidate was examined before publication")
-		}
-		_ = run(t, Config{Advisory: "GHSA-new", RepoPath: dir}, gh, eng)
-		body := gh.posted["GHSA-new"]
-		lines := strings.Split(body, "\n")
-		for i, line := range lines {
-			if strings.HasPrefix(line, "Scanned on ") {
-				lines[i] = ""
+	for name, tc := range map[string]struct {
+		decision string
+		shown    bool
+		err      bool
+	}{
+		"exact":   {`{"confidence":"high","exact":true}`, true, false},
+		"partial": {`{"confidence":"low","exact":false}`, false, false},
+		"invalid": {`{"confidence":"high","exact":true,"notes":"SECRET-PAYLOAD"}`, false, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gh, eng := newFixture(), &fakeEngine{comparator: tc.decision}
+			eng.onCompare = func() {
+				require.Empty(t, gh.posted["GHSA-new"], "the comment was posted before the unpublished comparison")
 			}
-		}
-		body = strings.Join(lines, "\n")
-		if want == "" {
-			want = body
-		}
-		require.NotEmpty(t, body, "a private decision or failure changed the public output")
-		require.Equal(t, want, body, "a private decision or failure changed the public output")
-		gh.comments["GHSA-new"] = []github.Comment{botComment(gh.posted["GHSA-new"])}
-		eng.calls = nil
-		require.NoError(t, run(t, Config{Advisory: "GHSA-new", RepoPath: dir}, gh, eng), "private comparison outcome caused another triage")
-		require.Empty(t, eng.calls, "private comparison outcome caused another triage")
+
+			err := run(t, Config{Advisory: "GHSA-new", RepoPath: dir}, gh, eng)
+
+			require.Equal(t, tc.err, err != nil, "%v", err)
+			body := gh.posted["GHSA-new"]
+			require.Contains(t, body, report.Marker, "a comparison outcome blocked the comment")
+			require.Equal(t, tc.shown, strings.Contains(body, "GHSA-old"), "unexpected unpublished match in:\n%s", body)
+			require.NotContains(t, body, "SECRET-PAYLOAD")
+			gh.comments["GHSA-new"] = []github.Comment{botComment(body)}
+			eng.calls = nil
+			require.NoError(t, run(t, Config{Advisory: "GHSA-new", RepoPath: dir}, gh, eng), "a comparison outcome caused another triage")
+			require.Empty(t, eng.calls, "a comparison outcome caused another triage")
+		})
 	}
 }
 

@@ -447,11 +447,11 @@ func abs(n int) int {
 
 // Render formats the report as the advisory comment.
 func Render(r Report) string {
-	r.Duplicates = slices.DeleteFunc(slices.Clone(r.Duplicates), func(d Duplicate) bool { return !d.Published })
+	r.Duplicates = slices.DeleteFunc(slices.Clone(r.Duplicates), func(d Duplicate) bool { return !d.Published && !(d.Exact && d.Confidence == "high") })
 	return RenderPrivate(r)
 }
 
-// RenderPrivate may contain embargoed advisory identifiers and must stay in private storage.
+// RenderPrivate renders every duplicate it is given, Render only those the reporter may see.
 func RenderPrivate(r Report) string {
 	var b strings.Builder
 	b.WriteString(Marker + "\n### Automated triage\n\n")
@@ -479,7 +479,7 @@ func RenderPrivate(r Report) string {
 		// No title: the reporter reads this comment, and other advisories may still be under embargo.
 		fmt.Fprintf(&b, "| [%s](%s) | %s | %s |\n", d.GHSAID, d.URL, status, confidence)
 	}
-	b.WriteString("\n_Embargoed matches are kept in the private report, never in the reporter-visible comment._\n")
+	b.WriteString("\n_Unpublished advisories are only listed as exact duplicates, without their title._\n")
 
 	b.WriteString("\n#### Related issues and pull requests\n\n")
 	if len(r.Related) == 0 {

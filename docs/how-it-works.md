@@ -31,7 +31,7 @@ Before posting, tamis checks every claim against GitHub and the checkout:
 
 | Claim | Check |
 |---|---|
-| Duplicates | Must be a candidate checked in isolation. Unpublished exact matches appear only in the private report. The reporter-visible copy contains only published advisory IDs. |
+| Duplicates | Must be a candidate checked in isolation. An unpublished advisory appears, by identifier only, when the comparator calls it an exact duplicate with high confidence. Partial matches on unpublished advisories are dropped. |
 | Issues and pull requests | Must exist. Titles and links come from GitHub, not from the model. |
 | Cited code | Only references named in the report are kept, each marked as found in the repository or not. A cited line and the code the report quotes there are kept only when the report contains them. The quote is looked up in the file at the scanned commit, nearest the cited line, and when it is gone, `git log -S` names the commit that last changed it, since reports often target another version. |
 | CWE and CVSS | Must be well-formed. CWE names come from the MITRE catalogue. |
