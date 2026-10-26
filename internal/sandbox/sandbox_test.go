@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -252,4 +253,33 @@ func TestKeepFailuresKeepsNothingFromASuccessfulRun(t *testing.T) {
 	keepFailures(strings.NewReader(`{"type":"turn.completed","usage":{"input_tokens":1}}`+"\nnot json\n"), &kept)
 
 	require.Empty(t, kept.String())
+}
+
+func TestSalvageKeepsAValidReportFromAFailedRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"ok":true}`), 0o600))
+	failure := errors.New("exit status 1")
+
+	raw, err := salvage(path, func(json.RawMessage) error { return nil }, failure)
+
+	require.JSONEq(t, `{"ok":true}`, string(raw))
+	var incomplete *Incomplete
+	require.ErrorAs(t, err, &incomplete)
+	require.ErrorIs(t, err, failure, "the agent error was lost")
+}
+
+func TestSalvageFailsWithoutAValidReport(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "report.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"ok":false}`), 0o600))
+	invalid := func(json.RawMessage) error { return errors.New("invalid") }
+
+	for name, path := range map[string]string{"invalid": path, "missing": filepath.Join(dir, "missing.json")} {
+		raw, err := salvage(path, invalid, errors.New("exit status 1"))
+		require.Nil(t, raw, name)
+		var agent *Error
+		require.ErrorAs(t, err, &agent, name)
+		var incomplete *Incomplete
+		require.False(t, errors.As(err, &incomplete), name)
+	}
 }
