@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
@@ -76,9 +78,19 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		}
 		defer os.RemoveAll(dir)
 		path := filepath.Join(dir, "src")
-		if err := sandbox.SnapshotSource(ctx, cfg.RepoPath, path, reference); err != nil {
-			return false, err
+		start := time.Now()
+		if i == 0 {
+			if err := sandbox.SnapshotSource(ctx, cfg.RepoPath, path, reference); err != nil {
+				return false, err
+			}
+		} else {
+			remove, err := worktree(ctx, cfg.RepoPath, path, reference)
+			if err != nil {
+				return false, err
+			}
+			defer remove()
 		}
+		log.Info("source ready", "source", i, "duration", time.Since(start).Round(time.Second))
 		code := repo.Repo{Dir: path, Context: ctx}
 		commit, err := code.Commit()
 		if err != nil {
@@ -149,6 +161,20 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		return true, err
 	}
 	return true, comparisonErr
+}
+
+// worktree checks a reference out next to the repository and shares its objects: only tamis reads it, the
+// agent never does.
+func worktree(ctx context.Context, repoPath, target, reference string) (func(), error) {
+	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--verify", "--end-of-options", reference+"^{commit}").Output()
+	if err != nil {
+		return nil, errors.New("resolving a configured source reference")
+	}
+	if err := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "add", "--quiet", "--detach", "--", target, strings.TrimSpace(string(out))).Run(); err != nil {
+		return nil, errors.New("checking out a configured source reference")
+	}
+
+	return func() { _ = exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", "--", target).Run() }, nil
 }
 
 // reportBase names the private files of one advisory revision, without the GHSA identifier.
