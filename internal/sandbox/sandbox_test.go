@@ -228,3 +228,28 @@ func TestImagesArePinnedByDigest(t *testing.T) {
 	}
 	assert.Len(t, Images, len(agents))
 }
+
+func TestKeepFailuresKeepsOnlyCodexErrorEvents(t *testing.T) {
+	failed := `{"type":"turn.failed","error":{"message":"usage limit reached"}}`
+	stream := strings.Join([]string{
+		`{"type":"thread.started","thread_id":"t"}`,
+		`{"type":"item.completed","item":{"type":"agent_message","text":"report content"}}`,
+		`{"type":"item.completed","item":{"type":"error","message":"tool failed"}}`,
+		`not json`,
+		`{"type":"error","message":"stream disconnected"}`,
+		failed,
+	}, "\n")
+	var kept strings.Builder
+
+	keepFailures(strings.NewReader(stream), &kept)
+
+	require.Equal(t, `{"type":"item.completed","item":{"type":"error","message":"tool failed"}}`+"\n"+`{"type":"error","message":"stream disconnected"}`+"\n"+failed, kept.String())
+}
+
+func TestKeepFailuresKeepsNothingFromASuccessfulRun(t *testing.T) {
+	var kept strings.Builder
+
+	keepFailures(strings.NewReader(`{"type":"turn.completed","usage":{"input_tokens":1}}`+"\nnot json\n"), &kept)
+
+	require.Empty(t, kept.String())
+}

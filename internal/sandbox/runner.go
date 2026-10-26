@@ -1,10 +1,12 @@
 package sandbox
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -160,15 +162,44 @@ func (r *isolatedRun) Run(ctx context.Context, h harness.Harness, job harness.Jo
 	} {
 		cmd.Env = withEnv(cmd.Env, env.key, env.value)
 	}
-	var stderr boundedWriter
-	cmd.Stdout = io.Discard
+	var stderr, failures boundedWriter
 	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err != nil && strings.TrimSpace(stderr.String()) != "" {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	keepFailures(stdout, &failures)
+	err = cmd.Wait()
+	if out := strings.TrimSpace(stderr.String() + "\n" + failures.String()); err != nil && out != "" {
+		return fmt.Errorf("%w: %s", err, out)
 	}
 
 	return err
+}
+
+// keepFailures copies the error events of a JSONL agent output and discards the rest. Codex exec --json
+// reports why it stopped only there, as "error" and "turn.failed" events or "error" items.
+func keepFailures(r io.Reader, w io.Writer) {
+	br := bufio.NewReader(r)
+	for {
+		line, err := br.ReadBytes('\n')
+		var event struct {
+			Type string `json:"type"`
+			Item struct {
+				Type string `json:"type"`
+			} `json:"item"`
+		}
+		if json.Unmarshal(line, &event) == nil && (event.Type == "error" || event.Type == "turn.failed" || event.Item.Type == "error") {
+			_, _ = w.Write(line)
+		}
+		if err != nil {
+			_, _ = io.Copy(io.Discard, r)
+			return
+		}
+	}
 }
 
 func (r *isolatedRun) agentArgs(h harness.Harness, job harness.Job, workspace, source, state, reportPath, keyEnv string) []string {
