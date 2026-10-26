@@ -14,6 +14,8 @@ For each report, tamis:
 
 It informs the maintainers' decision and never makes it.
 
+The agent runs in an isolated container driven by [harness](https://github.com/alpha-omega-security/harness), the Alpha-Omega library behind [scrutineer](https://github.com/alpha-omega-security/scrutineer). [Security](docs/security.md) details what that sandbox allows.
+
 ## Quick start
 
 1. Create a GitHub App for your organisation with the "Repository security advisories" permission in read and write, and install it on the project repository only.
