@@ -181,7 +181,7 @@ func safeContent(v any, anthropic bool) bool {
 			return false
 		}
 		if !anthropic {
-			if !slices.Contains([]any{"input_text", "output_text", "refusal"}, t["type"]) || !fields(t, "type", "text", "refusal", "annotations") {
+			if !slices.Contains([]any{"input_text", "output_text", "refusal"}, t["type"]) || !fields(t, "type", "text", "refusal", "annotations", "logprobs") {
 				return false
 			}
 			continue

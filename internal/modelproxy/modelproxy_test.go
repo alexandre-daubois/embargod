@@ -442,6 +442,7 @@ func TestRequestShapes(t *testing.T) {
 				"local tools":       `{"model":"allowed","tools":[{"type":"local_shell"},{"type":"apply_patch"},{"type":"custom","name":"c","format":{"type":"text"}}]}`,
 				"named tool choice": `{"model":"allowed","tool_choice":{"type":"function","name":"read"}}`,
 				"client search":     `{"model":"allowed","input":[{"type":"tool_search_call","call_id":"c","arguments":{},"execution":"client"},{"type":"custom_tool_call_output","call_id":"c","output":[{"type":"input_text","text":"x"}]}]}`,
+				"assistant output":  `{"model":"allowed","input":[{"type":"message","id":"m","role":"assistant","phase":"final_answer","status":"completed","content":[{"type":"output_text","text":"x","annotations":[],"logprobs":[]}]}]}`,
 			},
 			refused: map[string]string{
 				"include string":          `{"model":"allowed","include":"reasoning.encrypted_content"}`,
@@ -457,6 +458,7 @@ func TestRequestShapes(t *testing.T) {
 				"input string item":       `{"model":"allowed","input":["report"]}`,
 				"message field":           `{"model":"allowed","input":[{"role":"user","content":"x","file_url":"https://attacker.invalid"}]}`,
 				"message image":           `{"model":"allowed","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://attacker.invalid"}]}]}`,
+				"output text field":       `{"model":"allowed","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x","file_url":"https://attacker.invalid"}]}]}`,
 				"reasoning field":         `{"model":"allowed","input":[{"type":"reasoning","summary":[],"server":"s"}]}`,
 				"function call field":     `{"model":"allowed","input":[{"type":"function_call","call_id":"c","name":"f","arguments":"{}","server":"s"}]}`,
 				"call output field":       `{"model":"allowed","input":[{"type":"function_call_output","call_id":"c","output":"x","server":"s"}]}`,
