@@ -74,6 +74,8 @@ type Report struct {
 	Removed int `json:"-"`
 	// Incomplete marks a report the agent wrote before its run stopped.
 	Incomplete bool `json:"-"`
+	// Elsewhere holds the code references located on the other source references.
+	Elsewhere []Report `json:"-"`
 }
 
 type Location struct {
@@ -512,7 +514,7 @@ func RenderPrivate(r Report) string {
 
 	// GitHub only renders the Markdown inside a details block after a blank line.
 	b.WriteString("\n<details>\n<summary>Show more details from the analysis</summary>\n")
-	b.WriteString(RenderCited(r))
+	b.WriteString(r.cited())
 
 	if len(r.Policies) > 0 {
 		files := make([]string, 0, len(r.Policies))
@@ -554,14 +556,19 @@ func RenderPrivate(r Report) string {
 	return b.String()
 }
 
-// RenderCited formats the table of the code the report cites, as located on the scanned commit.
-func RenderCited(r Report) string {
+// cited formats the table of the code the report cites, with a column for each source it was located on.
+func (r Report) cited() string {
 	if len(r.CodeReferences) == 0 {
 		return ""
 	}
+	sources := append([]Report{r}, r.Elsewhere...)
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n#### Code cited by the report\n\n| Cited | In the repository%s |\n|---|---|\n", r.scope())
-	for _, ref := range r.CodeReferences {
+	b.WriteString("\n#### Code cited by the report\n\n| Cited |")
+	for _, s := range sources {
+		fmt.Fprintf(&b, " In the repository%s |", s.scope())
+	}
+	b.WriteString("\n|---|" + strings.Repeat("---|", len(sources)) + "\n")
+	for i, ref := range r.CodeReferences {
 		cited := ref.Path
 		if cited != "" && ref.Line > 0 {
 			cited += ":" + strconv.Itoa(ref.Line)
@@ -572,7 +579,11 @@ func RenderCited(r Report) string {
 				parts = append(parts, code(p))
 			}
 		}
-		fmt.Fprintf(&b, "| %s | %s |\n", strings.Join(parts, " "), r.where(ref))
+		fmt.Fprintf(&b, "| %s |", strings.Join(parts, " "))
+		for _, s := range sources {
+			fmt.Fprintf(&b, " %s |", s.where(s.CodeReferences[i]))
+		}
+		b.WriteString("\n")
 	}
 
 	return b.String()
