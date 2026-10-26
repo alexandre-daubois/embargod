@@ -29,6 +29,22 @@ func Take(ctx context.Context, bytes int) bool {
 	return l.take(bytes)
 }
 
+// Has reports whether ctx still allows that many requests and bytes, without spending them.
+func Has(ctx context.Context, requests, bytes int) bool {
+	l, _ := ctx.Value(key{}).(*limit)
+	return l.has(requests, bytes)
+}
+
+func (l *limit) has(requests, bytes int) bool {
+	if l == nil {
+		return true
+	}
+	l.mu.Lock()
+	ok := l.requests >= requests && l.bytes >= bytes
+	l.mu.Unlock()
+	return ok && l.parent.has(requests, bytes)
+}
+
 func (l *limit) take(bytes int) bool {
 	if l == nil {
 		return true

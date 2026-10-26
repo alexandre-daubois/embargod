@@ -38,7 +38,7 @@ Use a dedicated provider project/account with a hard spending or credit limit. A
 
 ## 3. Add the workflow
 
-Copy the workflow from the [README](../README.md#quick-start) and replace `your-org`, `your-project`, `your-app-slug` and the Tamis commit placeholder. Pin the full SHA of a reviewed commit; the action refuses a branch or tag reference. Review updates in the private deployment repository. Set `since` to today's date: only advisories in the `triage` state created after it are processed. Set `references` to every branch covered by your security policy; a report is checked independently against each.
+Copy the workflow from the [README](../README.md#quick-start) and replace `your-org`, `your-project`, `your-app-slug` and the Tamis commit placeholder. Pin the full SHA of a reviewed commit; the action refuses a branch or tag reference. Review updates in the private deployment repository. Set `since` to today's date: only advisories in the `triage` state created after it are processed. Set `references` to every branch covered by your security policy, the default branch first. A report is analysed on the first one, and the code it cites is located on each.
 
 Keep `persist-credentials: false` on the checkout, so no token is written to `.git/config`, and `fetch-depth: 0`, so the agent can read the history.
 

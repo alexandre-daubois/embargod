@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/php/tamis/internal/budget"
 	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
 	"github.com/php/tamis/internal/repo"
@@ -251,8 +252,9 @@ func TestRunLimitsEachReporterPerExecution(t *testing.T) {
 	require.Len(t, eng.role(""), 1, "one reporter monopolized the run")
 }
 
-func TestRunAnalysesEveryConfiguredBranch(t *testing.T) {
-	gh, eng := newFixture(), &fakeEngine{reader: `{"summary":"s"}`}
+func TestRunLocatesTheCitedCodeOnEveryConfiguredBranch(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{reader: `{"summary":"s","code_references":[{"path":"head.c"}]}`}
+	gh.advisories[1].Description = "Crash in head.c"
 	dir := gitRepo(t, map[string]string{"stable.c": "stable"})
 	out, err := exec.Command("git", "-C", dir, "branch", "stable").CombinedOutput()
 	require.NoError(t, err, "branch: %s", out)
@@ -262,9 +264,12 @@ func TestRunAnalysesEveryConfiguredBranch(t *testing.T) {
 		require.NoError(t, err, "git: %s", out)
 	}
 	require.NoError(t, run(t, Config{Advisory: "GHSA-new", RepoPath: dir, References: []string{"HEAD", "stable"}}, gh, eng))
-	require.Len(t, eng.role(""), 2, "a configured branch was omitted")
-	require.Contains(t, gh.posted["GHSA-new"], "Source: `stable`", "a configured branch was omitted")
-	require.Contains(t, gh.posted["GHSA-new"], "Source: `HEAD`", "a configured branch was omitted")
+	require.Len(t, eng.role(""), 1, "the agent analysed more than the first branch")
+	head, stable, ok := strings.Cut(gh.posted["GHSA-new"], "Source: `stable`")
+	require.True(t, ok, "a configured branch was omitted")
+	require.Contains(t, head, "Source: `HEAD`", "a configured branch was omitted")
+	require.Contains(t, head, "| `head.c` | Found |", "the cited code was not located on the analysed branch")
+	require.Contains(t, stable, "| `head.c` | Not found |", "the cited code was not located on the other branch")
 	gh, eng = newFixture(), &fakeEngine{}
 	require.Error(t, run(t, Config{Advisory: "GHSA-new", RepoPath: dir, References: []string{"missing"}}, gh, eng), "a missing branch silently used HEAD")
 	require.Equal(t, report.Failed(true), gh.posted["GHSA-new"], "a missing branch silently used HEAD")
@@ -903,4 +908,16 @@ func TestRunOnlyListsCodeTheReportCites(t *testing.T) {
 	body := gh.posted["GHSA-new"]
 	require.Contains(t, body, "`foo`", "only the code named by the report should be listed")
 	require.NotContains(t, body, "php_found_by_the_reader", "only the code named by the report should be listed")
+}
+
+func TestRunLeavesAdvisoriesToTheNextRunWhenItsBudgetIsSpent(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	cfg := testConfig(t, gh, Config{Since: since})
+	var logs strings.Builder
+	ctx := budget.WithLimit(t.Context(), maxComparatorRequests-1, 32<<20)
+
+	require.NoError(t, Run(ctx, cfg, gh, eng, eng, slog.New(slog.NewTextHandler(&logs, nil))))
+	require.Empty(t, gh.posted, "an advisory started without its whole budget")
+	require.Empty(t, eng.calls, "an advisory started without its whole budget")
+	require.Contains(t, logs.String(), "the remaining advisories wait for the next run")
 }

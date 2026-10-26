@@ -362,24 +362,8 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 	}
 	r.Related = related
 
-	// A checkout without commits has no line to link to, the references are still checked.
-	r.Repo = c.Repo
-	r.Commit, r.Branch, _ = c.Code.Head()
-	for i, ref := range r.CodeReferences {
-		// A symbol cited without a file is looked up in the whole repository.
-		found := ref.Path == "" || c.Code.Exists(ref.Path)
-		if found && ref.Symbol != "" {
-			var err error
-			if found, err = c.Code.HasSymbol(ref.Path, ref.Symbol); err != nil {
-				return err
-			}
-		}
-		r.CodeReferences[i].Found = found && (ref.Path != "" || ref.Symbol != "")
-		if r.CodeReferences[i].Found && r.Commit != "" && (ref.Line > 0 || ref.Snippet != "") {
-			if err := c.place(&r.CodeReferences[i]); err != nil {
-				return err
-			}
-		}
+	if err := c.Locate(r); err != nil {
+		return err
 	}
 
 	cwes := r.CWE[:0]
@@ -395,6 +379,32 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 	if r.CVSS.Vector != "" && !cvss4.MatchString(r.CVSS.Vector) {
 		r.CVSS = CVSS{}
 		r.Removed++
+	}
+
+	return nil
+}
+
+// Locate checks the cited code on the checkout and says where each cited line stands on its commit.
+func (c Checker) Locate(r *Report) error {
+	// A checkout without commits has no line to link to, the references are still checked.
+	r.Repo = c.Repo
+	r.Commit, r.Branch, _ = c.Code.Head()
+	for i, ref := range r.CodeReferences {
+		r.CodeReferences[i] = CodeReference{Path: ref.Path, Symbol: ref.Symbol, Line: ref.Line, Snippet: ref.Snippet}
+		// A symbol cited without a file is looked up in the whole repository.
+		found := ref.Path == "" || c.Code.Exists(ref.Path)
+		if found && ref.Symbol != "" {
+			var err error
+			if found, err = c.Code.HasSymbol(ref.Path, ref.Symbol); err != nil {
+				return err
+			}
+		}
+		r.CodeReferences[i].Found = found && (ref.Path != "" || ref.Symbol != "")
+		if r.CodeReferences[i].Found && r.Commit != "" && (ref.Line > 0 || ref.Snippet != "") {
+			if err := c.place(&r.CodeReferences[i]); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
@@ -497,23 +507,7 @@ func RenderPrivate(r Report) string {
 
 	// GitHub only renders the Markdown inside a details block after a blank line.
 	b.WriteString("\n<details>\n<summary>Show more details from the analysis</summary>\n")
-
-	if len(r.CodeReferences) > 0 {
-		fmt.Fprintf(&b, "\n#### Code cited by the report\n\n| Cited | In the repository%s |\n|---|---|\n", r.scope())
-		for _, ref := range r.CodeReferences {
-			cited := ref.Path
-			if cited != "" && ref.Line > 0 {
-				cited += ":" + strconv.Itoa(ref.Line)
-			}
-			var parts []string
-			for _, p := range []string{cited, ref.Symbol} {
-				if strings.TrimSpace(p) != "" {
-					parts = append(parts, code(p))
-				}
-			}
-			fmt.Fprintf(&b, "| %s | %s |\n", strings.Join(parts, " "), r.where(ref))
-		}
-	}
+	b.WriteString(RenderCited(r))
 
 	if len(r.Policies) > 0 {
 		files := make([]string, 0, len(r.Policies))
@@ -550,6 +544,30 @@ func RenderPrivate(r Report) string {
 
 	if r.Removed > 0 {
 		fmt.Fprintf(&b, "\n_%d suggestion(s) removed because they could not be verified._\n", r.Removed)
+	}
+
+	return b.String()
+}
+
+// RenderCited formats the table of the code the report cites, as located on the scanned commit.
+func RenderCited(r Report) string {
+	if len(r.CodeReferences) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n#### Code cited by the report\n\n| Cited | In the repository%s |\n|---|---|\n", r.scope())
+	for _, ref := range r.CodeReferences {
+		cited := ref.Path
+		if cited != "" && ref.Line > 0 {
+			cited += ":" + strconv.Itoa(ref.Line)
+		}
+		var parts []string
+		for _, p := range []string{cited, ref.Symbol} {
+			if strings.TrimSpace(p) != "" {
+				parts = append(parts, code(p))
+			}
+		}
+		fmt.Fprintf(&b, "| %s | %s |\n", strings.Join(parts, " "), r.where(ref))
 	}
 
 	return b.String()

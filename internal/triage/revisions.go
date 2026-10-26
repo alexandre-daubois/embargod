@@ -66,7 +66,8 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 			input.Description += "\n\nAdditional report comment:\n" + c.Body
 		}
 	}
-	for _, reference := range cfg.References {
+	var r report.Report
+	for i, reference := range cfg.References {
 		dir, err := os.MkdirTemp("", "tamis-reference-")
 		if err != nil {
 			return false, err
@@ -81,13 +82,22 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		if err != nil {
 			return false, err
 		}
+		provenance := fmt.Sprintf("\nRepository: `%s`. Advisory: `%s`.\nSource: `%s` at `%s`. Input revision: `%s`.\n", cfg.Repo, a.GHSAID, reference, commit, revision)
+		if i > 0 {
+			cited := r
+			cited.CodeReferences = slices.Clone(r.CodeReferences)
+			if err := (report.Checker{Repo: cfg.Repo, Code: code}).Locate(&cited); err != nil {
+				return false, err
+			}
+			visible.WriteString(provenance + report.RenderCited(cited))
+			private.WriteString(provenance + report.RenderCited(cited))
+			continue
+		}
 		local := cfg
 		local.RepoPath = path
-		r, err := triage(ctx, local, gh, reader, eng, input, published)
-		if err != nil {
+		if r, err = triage(ctx, local, gh, reader, eng, input, published); err != nil {
 			return false, err
 		}
-		provenance := fmt.Sprintf("\nRepository: `%s`. Advisory: `%s`.\nSource: `%s` at `%s`. Input revision: `%s`.\n", cfg.Repo, a.GHSAID, reference, commit, revision)
 		// A failed comparison with unpublished advisories leaves them out of the comment rather than blocking it.
 		duplicates, err := findDuplicates(ctx, path, reader, eng, r, unpublished)
 		if err != nil {
