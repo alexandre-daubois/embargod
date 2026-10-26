@@ -293,7 +293,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r = r.WithContext(context.WithValue(r.Context(), runKey{}, sum))
 	if r.URL.RawPath != "" || (r.URL.RawQuery != "" && (p.provider.Query == nil || !p.provider.Query(route, r.URL.RawQuery))) || path.Clean(route) != route || !p.provider.Routes(r.Method, route) {
-		if !p.provider.Unlogged[r.Method+" "+route] {
+		if p.provider.Unlogged[r.Method+" "+route] {
+			// These refusals would otherwise spend the requests the agent needs for the model.
+			p.mu.Lock()
+			token.remaining++
+			p.mu.Unlock()
+		} else {
 			slog.Info("model proxy refused a route", "method", r.Method, "route", truncate(route, maxLoggedShape))
 		}
 		http.Error(w, "route not permitted", http.StatusForbidden)

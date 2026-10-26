@@ -591,3 +591,18 @@ func TestExpectedRefusalsAreNotLogged(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, call(t, srv, http.MethodPost, PathPrefix+"/backend-api/wham/accounts/check", header).StatusCode)
 	require.Contains(t, logs.String(), `msg="model proxy refused a route" method=POST route=/backend-api/wham/accounts/check`)
 }
+
+func TestExpectedRefusalsDoNotSpendTheQuota(t *testing.T) {
+	srv, calls, token := setup(t, ChatGPT, http.StatusOK)
+	header := withKey("Authorization", "Bearer "+token)
+	for range maxRequests + 1 {
+		require.Equal(t, http.StatusForbidden, call(t, srv, http.MethodGet, PathPrefix+"/backend-api/wham/accounts/check", header).StatusCode)
+	}
+	require.Equal(t, http.StatusOK, call(t, srv, http.MethodPost, PathPrefix+"/backend-api/codex/responses", header).StatusCode, "expected refusals spent the quota")
+
+	for range maxRequests {
+		call(t, srv, http.MethodGet, PathPrefix+"/backend-api/ps/mcp", header)
+	}
+	require.Equal(t, http.StatusUnauthorized, call(t, srv, http.MethodPost, PathPrefix+"/backend-api/codex/responses", header).StatusCode, "unexpected refusals did not spend the quota")
+	require.Len(t, *calls, 1)
+}
