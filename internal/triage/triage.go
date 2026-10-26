@@ -36,11 +36,14 @@ const (
 	maxTriagesPerRun      = 10
 	maxComparisons        = 10
 	maxAdvisoryDuration   = 30 * time.Minute
-	maxComparatorRequests = 64
+	maxComparatorRequests = 200
 	maxAttempts           = 3
 )
 
-var errInvalidReport = errors.New("the model submitted an invalid report")
+var (
+	errInvalidReport    = errors.New("the model submitted an invalid report")
+	errIncompleteReport = errors.New("the agent stopped before finishing its report")
+)
 
 type GitHub interface {
 	report.IssueGetter
@@ -75,7 +78,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	if cfg.OutputDir == "" || len(cfg.References) == 0 {
 		return errors.New("a private output directory and source references are required")
 	}
-	ctx = budget.WithLimit(ctx, 128, 32<<20)
+	ctx = budget.WithLimit(ctx, 800, 256<<20)
 	login := cfg.BotLogin
 	if login == "" {
 		var err error
@@ -129,7 +132,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		attempted++
 		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
 
-		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, eng, a, all, comments, login, revision); err != nil {
+		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, eng, a, all, comments, login, revision, failures+1 >= maxAttempts); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
 			if agent := (*sandbox.Error)(nil); errors.As(err, &agent) {
@@ -178,6 +181,8 @@ func describe(err error) string {
 		return "the agent run failed"
 	case errors.Is(err, errInvalidReport):
 		return errInvalidReport.Error()
+	case errors.Is(err, errIncompleteReport):
+		return errIncompleteReport.Error()
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return "canceled"
 	default:
@@ -255,10 +260,11 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engin
 			return report.ValidateReader(r)
 		},
 	})
-	if err != nil {
+	incomplete := (*sandbox.Incomplete)(nil)
+	if err != nil && !errors.As(err, &incomplete) {
 		return report.Report{}, err
 	}
-	r := report.Report{Policies: policies, ScannedAt: scannedAt}
+	r := report.Report{Policies: policies, ScannedAt: scannedAt, Incomplete: incomplete != nil}
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return report.Report{}, errInvalidReport
 	}
@@ -480,7 +486,7 @@ func readerPrompt(repoName string, a github.Advisory, policies []string) string 
 
 The repository is checked out read-only in /work/src, with its git history. You can search its public issues and pull requests without authentication, at most 10 searches a minute, for example: curl -s 'https://api.github.com/search/issues?q=urldecode+repo:%[1]s'. %[3]s
 
-When you are done, write your findings as JSON to /work/report.json, following the JSON schema in /work/schema.json exactly, then stop.`, repoName, a.GHSAID, policyHint)
+Write your findings as JSON to /work/report.json, following the JSON schema in /work/schema.json exactly, as soon as you have a first answer, and keep it up to date as you learn more: your model calls are limited and the run can stop at any time. Stop once it is complete.`, repoName, a.GHSAID, policyHint)
 }
 
 // strictDecode checks that raw decodes into a T without unknown fields, so a misnamed field goes back to the agent.

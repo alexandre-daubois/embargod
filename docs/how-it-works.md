@@ -17,7 +17,7 @@ An agent, Claude Code or Codex, investigates the report in a throwaway container
 - the report and its non-bot followup comments are in `/work/report.md`, and the selected source branch is mounted read-only in `/work/src` with its history,
 - it can search public issues and pull requests through the GitHub API,
 - it reads the security policy files when the repository has some,
-- it writes its findings to `/work/report.json`, following a JSON schema.
+- it writes its findings to `/work/report.json`, following a JSON schema, as soon as it has a first answer and then as it learns more. When the run stops on its budget or an error, a valid report already written is kept in the private artifact and the advisory is retried, and the last attempt posts it with a note that it may be incomplete.
 
 The JSON is decoded strictly: an unknown or mistyped field sends the error back to the agent for one correction round. The agent reports the faulty statement (file, function, line), the public entry points it goes through, the code the report cites, related issues, policy exclusions, CWE and CVSS. The agent analyses the first configured source reference. The code the report cites is then located on each other reference, and the final report names every exact commit. A missing branch fails closed.
 

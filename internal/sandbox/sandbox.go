@@ -214,7 +214,7 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		// Agent output is discarded: it holds the report and the agent's reasoning about it.
 		err := run.Run(ctx, r.harness, job, workspace, source, state, r.backend.keyEnv, token)
 		if err != nil {
-			return nil, &Error{Err: err}
+			return salvage(filepath.Join(workspace, outputFile), req.Validate, err)
 		}
 
 		raw, err := readOutput(filepath.Join(workspace, outputFile))
@@ -227,6 +227,16 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 	}
 
 	return nil, ErrNoReport
+}
+
+// salvage keeps a valid report the agent wrote before failing: Codex has no turn limit to stop on before its budget.
+func salvage(path string, validate func(json.RawMessage) error, failure error) (json.RawMessage, error) {
+	raw, err := readOutput(path)
+	if err != nil || validate(raw) != nil {
+		return nil, &Error{Err: failure}
+	}
+
+	return raw, &Incomplete{Err: &Error{Err: failure}}
 }
 
 func readOutput(path string) ([]byte, error) {
@@ -301,3 +311,12 @@ type Error struct {
 func (e *Error) Error() string { return "the agent run failed" }
 
 func (e *Error) Unwrap() error { return e.Err }
+
+// Incomplete comes with the report an agent wrote before its run failed, which may miss what it had left to check.
+type Incomplete struct {
+	Err error
+}
+
+func (e *Incomplete) Error() string { return "the agent stopped before finishing its report" }
+
+func (e *Incomplete) Unwrap() error { return e.Err }

@@ -44,7 +44,7 @@ func advisoryRevision(a github.Advisory, comments []github.Comment, login string
 	return hex.EncodeToString(sum[:])
 }
 
-func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string) (bool, error) {
+func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool) (bool, error) {
 	var visible, private strings.Builder
 	var comparisonErr error
 	var published, unpublished []github.Advisory
@@ -129,6 +129,13 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		return false, err
 	}
 	base := reportBase(cfg, a.GHSAID, revision)
+	// A posted report closes the advisory, so a partial one is only posted by the last attempt.
+	if r.Incomplete && !final {
+		if err := os.WriteFile(base+".md", []byte(private.String()), 0o600); err != nil {
+			return false, err
+		}
+		return false, errIncompleteReport
+	}
 	if err := os.WriteFile(base+".comment.md", []byte(body), 0o600); err != nil {
 		return false, err
 	}
