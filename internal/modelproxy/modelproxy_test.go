@@ -178,7 +178,9 @@ func TestChatGPTRefusesTheOtherBackendRoutes(t *testing.T) {
 	srv, calls, token := setup(t, ChatGPT, http.StatusOK)
 
 	for _, tc := range []struct{ method, path string }{
-		{http.MethodGet, "/backend-api/codex/models"},
+		{http.MethodGet, "/backend-api/codex/models?client_version=0.163.0&extra=1"},
+		{http.MethodGet, "/backend-api/codex/models?model=other"},
+		{http.MethodPost, "/backend-api/codex/responses?client_version=0.163.0"},
 		{http.MethodGet, "/backend-api/wham/accounts/check"},
 		{http.MethodPost, "/backend-api/ps/mcp"},
 		{http.MethodPost, "/auth/v1/user-auth-credential/whoami"},
@@ -565,4 +567,27 @@ func FuzzProviderRequest(f *testing.F) {
 			_, _ = proxy.safeBody(strings.NewReader(body))
 		}
 	})
+}
+
+func TestChatGPTServesTheModelCatalogue(t *testing.T) {
+	srv, calls, token := setup(t, ChatGPT, http.StatusOK)
+
+	resp := call(t, srv, http.MethodGet, PathPrefix+"/backend-api/codex/models?client_version=0.163.0", withKey("Authorization", "Bearer "+token))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, *calls, 1)
+	require.Equal(t, "/backend-api/codex/models", (*calls)[0].path)
+}
+
+func TestExpectedRefusalsAreNotLogged(t *testing.T) {
+	logs := captureLogs(t)
+	srv, _, token := setup(t, ChatGPT, http.StatusOK)
+	header := withKey("Authorization", "Bearer "+token)
+
+	require.Equal(t, http.StatusForbidden, call(t, srv, http.MethodGet, PathPrefix+"/backend-api/wham/accounts/check", header).StatusCode)
+	require.Equal(t, http.StatusForbidden, call(t, srv, http.MethodGet, PathPrefix+"/backend-api/wham/settings/user", header).StatusCode)
+	require.Empty(t, logs.String(), "an expected refusal was logged")
+
+	require.Equal(t, http.StatusForbidden, call(t, srv, http.MethodPost, PathPrefix+"/backend-api/wham/accounts/check", header).StatusCode)
+	require.Contains(t, logs.String(), `msg="model proxy refused a route" method=POST route=/backend-api/wham/accounts/check`)
 }

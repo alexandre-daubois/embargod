@@ -20,6 +20,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -42,6 +43,8 @@ const (
 
 var errUpstreamRedirect = errors.New("model proxy: upstream redirect refused")
 
+var clientVersion = regexp.MustCompile(`^client_version=[0-9]+(\.[0-9]+)*$`)
+
 // runKey carries the hash of the token a request came with, so its response is counted for that run.
 type runKey struct{}
 
@@ -58,7 +61,10 @@ type Provider struct {
 	// StoreOff forces store to false only, for an upstream that rejects the other NoStore defaults.
 	StoreOff     bool
 	UntypedTools bool
-	BetaQuery    bool
+	// Query permits a query string on a route, none is permitted without it.
+	Query func(route, query string) bool
+	// Unlogged lists the "METHOD route" refusals a CLI makes on every run, which would hide unexpected ones.
+	Unlogged map[string]bool
 	// PrivateWorkspace redacts ChatGPT identity and managed configuration before they reach Codex.
 	PrivateWorkspace bool
 }
@@ -75,7 +81,7 @@ var Anthropic = Provider{
 	},
 	SetKey:       func(h http.Header, key string) { h.Set("X-Api-Key", key) },
 	UntypedTools: true,
-	BetaQuery:    true,
+	Query:        func(_, query string) bool { return query == "beta=true" },
 }
 
 var OpenAI = Provider{
@@ -102,14 +108,20 @@ var ChatGPT = Provider{
 	Routes: func(method, route string) bool {
 		switch method {
 		case http.MethodGet:
-			// Codex refuses to start without the workspace's managed configuration.
-			return route == "/auth/v1/user-auth-credential/whoami" || route == "/backend-api/wham/config/bundle"
+			// Codex refuses to start without the workspace's managed configuration, and asks for its model
+			// catalogue again on every turn while it cannot read it.
+			return route == "/auth/v1/user-auth-credential/whoami" || route == "/backend-api/wham/config/bundle" || route == "/backend-api/codex/models"
 		case http.MethodPost:
 			return route == "/backend-api/codex/responses"
 		default:
 			return false
 		}
 	},
+	Query: func(route, query string) bool {
+		return route == "/backend-api/codex/models" && clientVersion.MatchString(query)
+	},
+	// Codex checks the account and its settings at start-up and runs without them.
+	Unlogged:         map[string]bool{"GET /backend-api/wham/accounts/check": true, "GET /backend-api/wham/settings/user": true},
 	TokenPrefix:      "at-" + tokenPrefix,
 	SetKey:           func(h http.Header, key string) { h.Set("Authorization", "Bearer "+key) },
 	StoreOff:         true,
@@ -280,8 +292,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(context.WithValue(r.Context(), runKey{}, sum))
-	if r.URL.RawPath != "" || (r.URL.RawQuery != "" && (!p.provider.BetaQuery || r.URL.RawQuery != "beta=true")) || path.Clean(route) != route || !p.provider.Routes(r.Method, route) {
-		slog.Info("model proxy refused a route", "method", r.Method, "route", truncate(route, maxLoggedShape))
+	if r.URL.RawPath != "" || (r.URL.RawQuery != "" && (p.provider.Query == nil || !p.provider.Query(route, r.URL.RawQuery))) || path.Clean(route) != route || !p.provider.Routes(r.Method, route) {
+		if !p.provider.Unlogged[r.Method+" "+route] {
+			slog.Info("model proxy refused a route", "method", r.Method, "route", truncate(route, maxLoggedShape))
+		}
 		http.Error(w, "route not permitted", http.StatusForbidden)
 		return
 	}
