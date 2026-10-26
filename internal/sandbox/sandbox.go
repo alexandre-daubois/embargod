@@ -209,7 +209,7 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		// Agent output is discarded: it holds the report and the agent's reasoning about it.
 		err := run.Run(ctx, r.harness, job, workspace, state, r.backend.keyEnv, token)
 		if err != nil {
-			return nil, &Error{err: err}
+			return nil, &Error{Err: err}
 		}
 
 		raw, err := readOutput(filepath.Join(workspace, outputFile))
@@ -294,9 +294,9 @@ var ErrNoReport = errors.New("the agent did not write a valid report")
 
 // Error wraps a failed agent run. Its message stays generic: the container's stderr may quote the report.
 type Error struct {
-	err error
+	Err error
 }
 
 func (e *Error) Error() string { return "the agent run failed" }
 
-func (e *Error) Unwrap() error { return e.err }
+func (e *Error) Unwrap() error { return e.Err }

@@ -1,8 +1,10 @@
 package modelproxy
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -514,6 +516,42 @@ func TestMCPBetaHeaderIsRefused(t *testing.T) {
 	header.Set("Anthropic-Beta", "mcp-client-2025-04-04")
 	require.Equal(t, http.StatusForbidden, call(t, srv, http.MethodPost, PathPrefix+"/v1/messages", header).StatusCode)
 	require.Empty(t, *calls)
+}
+
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	return &logs
+}
+
+func TestRefusalsAreLoggedWithoutTheConversation(t *testing.T) {
+	logs := captureLogs(t)
+	srv, _, token := setup(t, OpenAI, http.StatusOK)
+	header := withKey("Authorization", "Bearer "+token)
+
+	require.Equal(t, http.StatusOK, callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", `{"model":"allowed","input":"SECRET-PAYLOAD"}`, header).StatusCode)
+	require.Empty(t, logs.String(), "a permitted request was logged")
+
+	require.Equal(t, http.StatusForbidden, callBody(t, srv, http.MethodPost, PathPrefix+"/v1/responses", `{"model":"allowed","input":[{"role":"user","content":[{"type":"input_text","text":"SECRET-PAYLOAD","future_field":true}]}]}`, header).StatusCode)
+	require.Equal(t, http.StatusForbidden, call(t, srv, http.MethodGet, PathPrefix+"/v1/models", header).StatusCode)
+	got := logs.String()
+	assert.Contains(t, got, `msg="model proxy refused a request" route=/v1/responses shape="{input:[{content:[{future_field:bool text:string type=input_text}] role=user}] model:string}"`)
+	assert.Contains(t, got, `msg="model proxy refused a route" method=GET route=/v1/models`)
+	assert.NotContains(t, got, "SECRET-PAYLOAD")
+}
+
+func TestProviderRefusalsAreLoggedWithoutTheirBody(t *testing.T) {
+	logs := captureLogs(t)
+	srv, _, token := setup(t, OpenAI, http.StatusBadRequest)
+
+	require.Equal(t, http.StatusBadRequest, call(t, srv, http.MethodPost, PathPrefix+"/v1/responses", withKey("Authorization", "Bearer "+token)).StatusCode)
+	assert.Contains(t, logs.String(), `msg="model provider refused a request" method=POST route=/v1/responses status=400`)
+	assert.NotContains(t, logs.String(), `"ok"`)
+	assert.NotContains(t, logs.String(), `\"ok\"`)
 }
 
 func FuzzProviderRequest(f *testing.F) {

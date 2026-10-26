@@ -14,7 +14,7 @@ tamis reads text written by an outside reporter, with access to embargoed adviso
 | A report changes while being triaged | The title, description, metadata and non-bot comments are hashed. They are re-read before publication; a changed revision cancels the post. Completed advisories are not automatically triaged again after later edits. |
 | A reporter consumes the model budget | Advisory and run budgets are shared across branches, agents and comparators. Requests, bytes, output tokens and runtime are bounded; one known reporter cannot monopolise a run. A dedicated provider spending ceiling bounds costs across runs. |
 | A release tag is replaced | The action requires a full reviewed commit SHA. Agent images are additionally pinned by digest and verified against their build attestation. |
-| Logs of a public repository expose the report | tamis only logs counters and status codes, never report text, GHSA identifiers or provider error bodies. GitHub still prints step inputs, so run the workflow from a private repository. |
+| Logs of a public repository expose the report | tamis only logs counters, status codes and the routes and JSON keys of requests the model proxy refuses, never report text, GHSA identifiers or provider error bodies. A hostile agent chooses the keys of the requests it sends, so these logs stay meant for a private repository. GitHub still prints step inputs, so run the workflow from a private repository. |
 
 ## The agent container
 

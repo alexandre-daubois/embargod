@@ -91,7 +91,7 @@ func TestNewRejectsUnknownAgents(t *testing.T) {
 }
 
 func TestErrorHidesTheAgentOutput(t *testing.T) {
-	err := &Error{err: errors.New("exit status 1: stderr quoting SECRET-PAYLOAD")}
+	err := &Error{Err: errors.New("exit status 1: stderr quoting SECRET-PAYLOAD")}
 
 	require.EqualError(t, err, "the agent run failed")
 	require.ErrorContains(t, errors.Unwrap(err), "SECRET-PAYLOAD")

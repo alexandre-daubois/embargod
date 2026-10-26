@@ -113,8 +113,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	if err := os.MkdirAll(cfg.OutputDir, 0o700); err != nil {
 		return false, err
 	}
-	name := sha256.Sum256([]byte(a.GHSAID))
-	base := filepath.Join(cfg.OutputDir, hex.EncodeToString(name[:])+"-"+revision)
+	base := reportBase(cfg, a.GHSAID, revision)
 	if err := os.WriteFile(base+".comment.md", []byte(body), 0o600); err != nil {
 		return false, err
 	}
@@ -142,4 +141,11 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		return true, err
 	}
 	return true, comparisonErr
+}
+
+// reportBase names the private files of one advisory revision, without the GHSA identifier.
+func reportBase(cfg Config, ghsa, revision string) string {
+	name := sha256.Sum256([]byte(ghsa))
+
+	return filepath.Join(cfg.OutputDir, hex.EncodeToString(name[:])+"-"+revision)
 }

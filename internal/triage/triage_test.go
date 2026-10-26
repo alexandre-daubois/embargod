@@ -104,8 +104,10 @@ type engineCall struct {
 
 // fakeEngine answers as the reader or as the comparator depending on the system prompt.
 type fakeEngine struct {
-	calls      []engineCall
-	fail       string
+	calls []engineCall
+	fail  string
+	// crash makes fail look like an agent container exiting on an error.
+	crash      bool
 	reader     string
 	comparator string
 	onCompare  func()
@@ -128,7 +130,11 @@ func (e *fakeEngine) Read(ctx context.Context, req sandbox.Request) (json.RawMes
 	}
 	e.calls = append(e.calls, call)
 	if e.fail != "" && strings.Contains(call.prompt, e.fail) {
-		return nil, errors.New("model unavailable while reading SECRET-PAYLOAD from " + call.prompt)
+		err := errors.New("model unavailable while reading SECRET-PAYLOAD from " + call.prompt)
+		if e.crash {
+			return nil, &sandbox.Error{Err: err}
+		}
+		return nil, err
 	}
 	if err := req.Validate(raw); err != nil {
 		return nil, sandbox.ErrNoReport
@@ -602,6 +608,30 @@ func TestRunReportsFailuresAndContinues(t *testing.T) {
 	err := run(t, Config{Since: since}, gh, eng)
 	require.ErrorContains(t, err, "1 advisory")
 	require.NotEmpty(t, gh.posted["GHSA-other"], "the other advisory should still be triaged")
+}
+
+func TestRunKeepsTheAgentErrorInThePrivateReports(t *testing.T) {
+	for name, crash := range map[string]bool{"agent crash": true, "other failure": false} {
+		t.Run(name, func(t *testing.T) {
+			gh, eng := newFixture(), &fakeEngine{fail: "GHSA-new", crash: crash}
+			var logs bytes.Buffer
+
+			require.Error(t, runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs))
+
+			files, err := filepath.Glob(filepath.Join(gh.outputDir, "*.agent-error.txt"))
+			require.NoError(t, err)
+			require.NotContains(t, logs.String(), "SECRET-PAYLOAD")
+			if !crash {
+				require.Empty(t, files, "only an agent run failure has an agent error")
+				return
+			}
+			require.Len(t, files, 1)
+			require.NotContains(t, filepath.Base(files[0]), "GHSA-")
+			got, err := os.ReadFile(files[0])
+			require.NoError(t, err)
+			require.Contains(t, string(got), "model unavailable while reading SECRET-PAYLOAD")
+		})
+	}
 }
 
 func TestRunAppendsProjectProfile(t *testing.T) {

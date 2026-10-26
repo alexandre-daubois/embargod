@@ -126,6 +126,11 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, eng, a, all, comments, login, revision); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
+			if agent := (*sandbox.Error)(nil); errors.As(err, &agent) {
+				if os.MkdirAll(cfg.OutputDir, 0o700) != nil || os.WriteFile(reportBase(cfg, a.GHSAID, revision)+".agent-error.txt", []byte(agent.Err.Error()), 0o600) != nil {
+					log.Error("the agent error could not be kept in the private reports")
+				}
+			}
 			if !published {
 				_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed(failures+1 < maxAttempts))
 			}

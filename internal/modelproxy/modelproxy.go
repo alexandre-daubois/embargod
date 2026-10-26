@@ -14,6 +14,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -34,6 +36,8 @@ const (
 	maxRequests = 32
 	maxTokens   = 16_000
 	tokenPrefix = "tamis-"
+	// maxLoggedShape bounds what one refusal adds to the workflow log.
+	maxLoggedShape = 8 << 10
 )
 
 var errUpstreamRedirect = errors.New("model proxy: upstream redirect refused")
@@ -199,6 +203,9 @@ func New(provider Provider, key, model string) (*Proxy, error) {
 			if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
 				return errUpstreamRedirect
 			}
+			if resp.StatusCode >= http.StatusBadRequest {
+				slog.Warn("model provider refused a request", "method", resp.Request.Method, "route", resp.Request.URL.Path, "status", resp.StatusCode)
+			}
 			if provider.PrivateWorkspace && resp.StatusCode < http.StatusMultipleChoices {
 				switch {
 				case strings.HasSuffix(resp.Request.URL.Path, "/v1/user-auth-credential/whoami"):
@@ -274,16 +281,25 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r = r.WithContext(context.WithValue(r.Context(), runKey{}, sum))
 	if r.URL.RawPath != "" || (r.URL.RawQuery != "" && (!p.provider.BetaQuery || r.URL.RawQuery != "beta=true")) || path.Clean(route) != route || !p.provider.Routes(r.Method, route) {
+		slog.Info("model proxy refused a route", "method", r.Method, "route", truncate(route, maxLoggedShape))
 		http.Error(w, "route not permitted", http.StatusForbidden)
 		return
 	}
 	if r.Method == http.MethodPost {
-		body, err := p.safeBody(r.Body)
+		raw, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
+		if err != nil {
+			http.Error(w, "invalid provider request", http.StatusForbidden)
+			return
+		}
+		body, err := p.safeBody(bytes.NewReader(raw))
 		if err != nil {
 			if errors.Is(err, errRequestTooLarge) {
 				http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
 				return
 			}
+			var v any
+			_ = json.Unmarshal(raw, &v)
+			slog.Warn("model proxy refused a request", "route", route, "shape", truncate(shape(v), maxLoggedShape))
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
@@ -419,4 +435,40 @@ func (p *Proxy) safeBody(body io.Reader) ([]byte, error) {
 	}
 
 	return json.Marshal(v)
+}
+
+// shape describes a refused request by its keys and protocol type names, so a log shows which position the
+// filter refused without the conversation text it carries.
+func shape(v any) string {
+	switch v := v.(type) {
+	case map[string]any:
+		keys := slices.Sorted(maps.Keys(v))
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			if s, ok := v[k].(string); ok && (k == "type" || k == "role" || k == "execution") {
+				parts = append(parts, k+"="+s)
+				continue
+			}
+			parts = append(parts, k+":"+shape(v[k]))
+		}
+		return "{" + strings.Join(parts, " ") + "}"
+	case []any:
+		var parts []string
+		for _, item := range v {
+			if s := shape(item); !slices.Contains(parts, s) {
+				parts = append(parts, s)
+			}
+		}
+		return "[" + strings.Join(parts, " ") + "]"
+	default:
+		return fmt.Sprintf("%T", v)
+	}
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+
+	return s[:n] + "..."
 }

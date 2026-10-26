@@ -23,6 +23,7 @@ const defaultCodexTokenModel = "gpt-6.1-sol"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	slog.SetDefault(log)
 
 	// A panic value may hold report content, and logs of public repositories are public.
 	// The triage runs on this goroutine only, so this recover sees every panic of ours.
