@@ -108,7 +108,9 @@ type fakeEngine struct {
 	calls []engineCall
 	fail  string
 	// crash makes fail look like an agent container exiting on an error.
-	crash      bool
+	crash bool
+	// incomplete makes the reader hand back its report with a failed agent run.
+	incomplete bool
 	reader     string
 	comparator string
 	onCompare  func()
@@ -139,6 +141,9 @@ func (e *fakeEngine) Read(ctx context.Context, req sandbox.Request) (json.RawMes
 	}
 	if err := req.Validate(raw); err != nil {
 		return nil, sandbox.ErrNoReport
+	}
+	if e.incomplete && req.System != skill.Compare {
+		return raw, &sandbox.Incomplete{Err: &sandbox.Error{Err: errors.New("budget exhausted")}}
 	}
 
 	return raw, nil
@@ -920,4 +925,29 @@ func TestRunLeavesAdvisoriesToTheNextRunWhenItsBudgetIsSpent(t *testing.T) {
 	require.Empty(t, gh.posted, "an advisory started without its whole budget")
 	require.Empty(t, eng.calls, "an advisory started without its whole budget")
 	require.Contains(t, logs.String(), "the remaining advisories wait for the next run")
+}
+
+func TestRunRetriesAnIncompleteReportBeforeItsLastAttempt(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{incomplete: true}
+	var logs strings.Builder
+
+	require.Error(t, runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs))
+	require.Equal(t, report.Failed(true), gh.posted["GHSA-new"], "a partial report closed the advisory before its last attempt")
+	require.Contains(t, logs.String(), `reason="the agent stopped before finishing its report"`)
+}
+
+func TestRunPostsTheReportAnAgentWroteBeforeStoppingOnItsLastAttempt(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{incomplete: true}
+	gh.comments["GHSA-new"] = []github.Comment{botComment(report.Failed(true)), botComment(report.Failed(true))}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new"}, gh, eng))
+	require.Contains(t, gh.posted["GHSA-new"], "this report may be incomplete", "the partial report was not flagged")
+	require.Contains(t, gh.posted["GHSA-new"], "Looks like a heap overflow.", "the partial report was dropped")
+}
+
+func TestRunMarksNoCompleteReportAsIncomplete(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new"}, gh, eng))
+	require.NotContains(t, gh.posted["GHSA-new"], "may be incomplete")
 }
