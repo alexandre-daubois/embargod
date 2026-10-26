@@ -100,7 +100,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		}
 		r.Branch = reference
 		// A failed comparison with unpublished advisories leaves them out of the comment rather than blocking it.
-		duplicates, err := findDuplicates(ctx, path, reader, eng, r, unpublished)
+		duplicates, err := findDuplicates(ctx, path, reader, eng, r, unpublished, reportText(input))
 		if err != nil {
 			comparisonErr = err
 			privateNote = "\nPrivate duplicate search could not complete.\n"

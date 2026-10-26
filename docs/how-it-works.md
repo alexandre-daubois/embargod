@@ -23,7 +23,7 @@ The JSON is decoded strictly: an unknown or mistyped field sends the error back 
 
 ## 3. Duplicate search
 
-Potential candidates are selected without a model when their text contains the filtered location, entry points or CWE. Public and private candidates are selected independently, with at most ten in each group. The location must exist in the selected checkout before it can select candidates. Each candidate is checked in a separate model context with the clues and that one advisory. The clues remain hostile even after syntax and existence checks. The comparator answers with confidence and an exact flag; tamis supplies the identifier itself. With a Codex access token, each check runs in an offline throwaway container. All models share the advisory and run budgets.
+Potential candidates are selected without a model when their text contains the filtered location or entry points, and a shared CWE ranks them higher. Public and private candidates are selected independently, with at most ten in each group. The location must exist in the selected checkout before it can select candidates. Each candidate is checked in a separate model context with the report text, its clues and that one advisory, and up to four checks run at once. The comparator decides from the two texts when it can and reads the code only when they leave the root cause open. The report and the clues remain hostile even after syntax and existence checks. The comparator answers with confidence and an exact flag; tamis supplies the identifier itself. With a Codex access token, each check runs in an offline throwaway container. All models share the advisory and run budgets.
 
 ## 4. Verification and comment
 

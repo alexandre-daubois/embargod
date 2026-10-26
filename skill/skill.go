@@ -8,7 +8,7 @@ import _ "embed"
 //go:embed SKILL.md
 var Text string
 
-// Compare is the method of the comparator, which looks for duplicates without seeing the report.
+// Compare is the method of the comparator, which decides whether one candidate advisory is a duplicate.
 //
 //go:embed compare.md
 var Compare string
