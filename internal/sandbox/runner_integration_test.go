@@ -79,6 +79,8 @@ func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuff
 			_, _ = io.WriteString(w, `{"email":"private@example.com","chatgpt_user_id":"private-user","chatgpt_account_id":"private-account","chatgpt_plan_type":"enterprise","chatgpt_account_is_fedramp":false}`)
 		case strings.HasSuffix(r.URL.Path, "/wham/config/bundle"):
 			_, _ = io.WriteString(w, `{}`)
+		case strings.HasSuffix(r.URL.Path, "/codex/models"):
+			_, _ = io.WriteString(w, `{"models":[]}`)
 		default:
 			if calls.Add(1) == 1 {
 				body, _ := io.ReadAll(r.Body)
