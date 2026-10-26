@@ -67,6 +67,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		}
 	}
 	var r report.Report
+	var sources, privateNote string
 	for i, reference := range cfg.References {
 		dir, err := os.MkdirTemp("", "tamis-reference-")
 		if err != nil {
@@ -82,15 +83,14 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		if err != nil {
 			return false, err
 		}
-		provenance := fmt.Sprintf("\nRepository: `%s`. Advisory: `%s`.\nSource: `%s` at `%s`. Input revision: `%s`.\n", cfg.Repo, a.GHSAID, reference, commit, revision)
+		sources += fmt.Sprintf("Source: `%s` at `%s`.\n", reference, commit)
 		if i > 0 {
-			cited := r
-			cited.CodeReferences = slices.Clone(r.CodeReferences)
+			cited := report.Report{CodeReferences: slices.Clone(r.CodeReferences)}
 			if err := (report.Checker{Repo: cfg.Repo, Code: code}).Locate(&cited); err != nil {
 				return false, err
 			}
-			visible.WriteString(provenance + report.RenderCited(cited))
-			private.WriteString(provenance + report.RenderCited(cited))
+			cited.Branch = reference
+			r.Elsewhere = append(r.Elsewhere, cited)
 			continue
 		}
 		local := cfg
@@ -98,11 +98,12 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		if r, err = triage(ctx, local, gh, reader, eng, input, published); err != nil {
 			return false, err
 		}
+		r.Branch = reference
 		// A failed comparison with unpublished advisories leaves them out of the comment rather than blocking it.
 		duplicates, err := findDuplicates(ctx, path, reader, eng, r, unpublished)
 		if err != nil {
 			comparisonErr = err
-			private.WriteString("\nPrivate duplicate search could not complete for this source.\n")
+			privateNote = "\nPrivate duplicate search could not complete.\n"
 		} else {
 			matches := report.Report{Duplicates: duplicates}
 			if err := (report.Checker{Advisories: byID}).Verify(ctx, &matches); err != nil {
@@ -110,9 +111,10 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 			}
 			r.Duplicates = append(r.Duplicates, matches.Duplicates...)
 		}
-		visible.WriteString(provenance + report.Render(r))
-		private.WriteString(provenance + report.RenderPrivate(r))
 	}
+	provenance := fmt.Sprintf("\nRepository: `%s`. Advisory: `%s`. Input revision: `%s`.\n%s", cfg.Repo, a.GHSAID, revision, sources)
+	visible.WriteString(provenance + report.Render(r))
+	private.WriteString(provenance + privateNote + report.RenderPrivate(r))
 	current, err := gh.GetAdvisory(ctx, cfg.Repo, a.GHSAID)
 	if err != nil {
 		return false, err

@@ -270,11 +270,15 @@ func TestRunLocatesTheCitedCodeOnEveryConfiguredBranch(t *testing.T) {
 	}
 	require.NoError(t, run(t, Config{Advisory: "GHSA-new", RepoPath: dir, References: []string{"HEAD", "stable"}}, gh, eng))
 	require.Len(t, eng.role(""), 1, "the agent analysed more than the first branch")
-	head, stable, ok := strings.Cut(gh.posted["GHSA-new"], "Source: `stable`")
-	require.True(t, ok, "a configured branch was omitted")
-	require.Contains(t, head, "Source: `HEAD`", "a configured branch was omitted")
-	require.Contains(t, head, "| `head.c` | Found |", "the cited code was not located on the analysed branch")
-	require.Contains(t, stable, "| `head.c` | Not found |", "the cited code was not located on the other branch")
+	posted := gh.posted["GHSA-new"]
+	require.Contains(t, posted, "Source: `HEAD`", "a configured branch was omitted")
+	require.Contains(t, posted, "Source: `stable`", "a configured branch was omitted")
+	require.Equal(t, 1, strings.Count(posted, "#### Code cited by the report"), "the cited code was rendered once per branch")
+	require.Regexp(t, "\\| Cited \\| In the repository on `HEAD` at `[0-9a-f]{7}` \\| In the repository on `stable` at `[0-9a-f]{7}` \\|", posted)
+	row := strings.Index(posted, "| `head.c` | Found | Not found |")
+	require.Positive(t, row, "the cited code was not located on each branch")
+	require.Less(t, strings.Index(posted, "<details>"), row, "the cited code is outside the details block")
+	require.Less(t, row, strings.Index(posted, "</details>"), "the cited code is outside the details block")
 	gh, eng = newFixture(), &fakeEngine{}
 	require.Error(t, run(t, Config{Advisory: "GHSA-new", RepoPath: dir, References: []string{"missing"}}, gh, eng), "a missing branch silently used HEAD")
 	require.Equal(t, report.Failed(true), gh.posted["GHSA-new"], "a missing branch silently used HEAD")
