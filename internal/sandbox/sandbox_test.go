@@ -283,3 +283,25 @@ func TestSalvageFailsWithoutAValidReport(t *testing.T) {
 		require.False(t, errors.As(err, &incomplete), name)
 	}
 }
+
+func TestWriteWorkspaceWritesTheRequestFiles(t *testing.T) {
+	workspace := t.TempDir()
+
+	require.NoError(t, writeWorkspace(workspace, Request{Report: "report", Schema: []byte(`{}`), Files: map[string][]byte{"advisories/GHSA-a.md": []byte("advisory")}}))
+
+	got, err := os.ReadFile(filepath.Join(workspace, "advisories", "GHSA-a.md"))
+	require.NoError(t, err)
+	require.Equal(t, "advisory", string(got))
+	got, err = os.ReadFile(filepath.Join(workspace, "report.md"))
+	require.NoError(t, err)
+	require.Equal(t, "report", string(got))
+}
+
+func TestWriteWorkspaceRefusesFilesOutsideIt(t *testing.T) {
+	for _, name := range []string{"../escape.md", "/tmp/escape.md", ""} {
+		workspace := t.TempDir()
+		require.Error(t, writeWorkspace(workspace, Request{Files: map[string][]byte{name: []byte("x")}}), name)
+		_, err := os.Stat(filepath.Join(filepath.Dir(workspace), "escape.md"))
+		require.True(t, os.IsNotExist(err), name)
+	}
+}

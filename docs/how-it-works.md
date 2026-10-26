@@ -23,7 +23,7 @@ The JSON is decoded strictly: an unknown or mistyped field sends the error back 
 
 ## 3. Duplicate search
 
-Potential candidates are selected without a model when their text contains the filtered location or entry points, and a shared CWE ranks them higher. Public and private candidates are selected independently, with at most ten in each group. The location must exist in the selected checkout before it can select candidates. Each candidate is checked in a separate model context with the report text, its clues and that one advisory, and up to four checks run at once. The comparator decides from the two texts when it can and reads the code only when they leave the root cause open. The report and the clues remain hostile even after syntax and existence checks. The comparator answers with confidence and an exact flag; tamis supplies the identifier itself. With a Codex access token, each check runs in an offline throwaway container. All models share the advisory and run budgets.
+One offline agent then searches every other advisory of the repository for the same bug, whatever their state: published, in triage, draft or closed, since a closed duplicate tells the maintainers the issue was already handled. It gets the report, the clues whose location exists in the checkout, and one file per advisory, which it greps and reads the way a maintainer would, and the code read-only for the cases the texts leave open. The report, the clues and the advisories remain hostile data. It answers with the identifiers of the duplicates it found, each with a confidence and an exact flag, and an identifier outside the advisories it was given is refused. All models share the advisory and run budgets.
 
 ## 4. Verification and comment
 
@@ -31,12 +31,12 @@ Before posting, tamis checks every claim against GitHub and the checkout:
 
 | Claim | Check |
 |---|---|
-| Duplicates | Must be a candidate checked in isolation. An unpublished advisory appears, by identifier only, when the comparator calls it an exact duplicate with high confidence. Partial matches on unpublished advisories are dropped. |
+| Duplicates | Must be one of the advisories the search was given. An unpublished advisory appears, by identifier only, when the search calls it an exact duplicate with high confidence. Partial matches on unpublished advisories are dropped. |
 | Issues and pull requests | Must exist. Titles and links come from GitHub, not from the model. |
 | Cited code | Only references named in the report are kept, each marked as found in the repository or not. A cited line and the code the report quotes there are kept only when the report contains them. The quote is looked up in the file at the scanned commit, nearest the cited line, and when it is gone, `git log -S` names the commit that last changed it, since reports often target another version. |
 | CWE and CVSS | Must be well-formed. CWE names come from the MITRE catalogue. |
 
-Claims that fail a check are dropped, and the comment counts them. Just before publication, the current report and non-bot comments are read again; if they changed, no result is posted. The public comment is saved before publication. Only then does Tamis examine private candidates and save the full report: their decisions, failures and counts cannot change the comment. A failed private comparison is marked incomplete in the artifact. A failure before publication leaves the advisory retriable; a failed private search does not invalidate its already-published public triage.
+Claims that fail a check are dropped, and the comment counts them. Just before publication, the current report and non-bot comments are read again; if they changed, no result is posted. The public comment is saved before publication. A failed duplicate search leaves the duplicates out of the comment, is marked in the private report, and does not invalidate the published triage. A failure before publication leaves the advisory retriable.
 
 ## The comment
 

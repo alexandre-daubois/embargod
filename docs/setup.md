@@ -34,7 +34,7 @@ In that repository, create an `tamis` environment and add:
 
 Restrict the environment to the default branch so other workflows cannot read its secrets.
 
-Use a dedicated provider project/account with a hard spending or credit limit. Alerts alone do not stop charges. Approve the configured models and their retention/residency terms; the Anthropic comparator does not switch models on refusal. See [resource budgets](configuration.md#resource-budgets) for the application limits.
+Use a dedicated provider project/account with a hard spending or credit limit. Alerts alone do not stop charges. Approve the configured models and their retention/residency terms. See [resource budgets](configuration.md#resource-budgets) for the application limits.
 
 ## 3. Add the workflow
 

@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
 	"github.com/php/tamis/internal/repo"
 	"github.com/php/tamis/internal/report"
@@ -47,21 +46,17 @@ func advisoryRevision(a github.Advisory, comments []github.Comment, login string
 	return hex.EncodeToString(sum[:])
 }
 
-func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, analysed string, log *slog.Logger) (bool, error) {
+func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, analysed string, log *slog.Logger) (bool, error) {
 	var visible, private strings.Builder
 	var comparisonErr error
-	var published, unpublished []github.Advisory
+	var others []github.Advisory
 	byID := map[string]github.Advisory{}
 	for _, other := range all {
 		if other.GHSAID == a.GHSAID {
 			continue
 		}
 		byID[other.GHSAID] = other
-		if other.State == "published" {
-			published = append(published, other)
-		} else {
-			unpublished = append(unpublished, other)
-		}
+		others = append(others, other)
 	}
 	input := a
 	for _, c := range comments {
@@ -114,21 +109,21 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		}
 		local := cfg
 		local.RepoPath = path
-		if r, err = triage(ctx, local, gh, reader, eng, input, published, log); err != nil {
+		if r, err = triage(ctx, local, gh, reader, input, log); err != nil {
 			return false, err
 		}
 		r.Branch = reference
-		// A failed comparison with unpublished advisories leaves them out of the comment rather than blocking it.
-		duplicates, err := findDuplicates(ctx, path, reader, eng, r, unpublished, reportText(input), "unpublished", log)
+		// A failed duplicate search leaves the duplicates out of the comment rather than blocking it.
+		duplicates, err := findDuplicates(ctx, path, reader, r, input, others, log)
 		if err != nil {
 			comparisonErr = err
-			privateNote = "\nPrivate duplicate search could not complete.\n"
+			privateNote = "\nThe duplicate search could not complete.\n"
 		} else {
 			matches := report.Report{Duplicates: duplicates}
 			if err := (report.Checker{Advisories: byID}).Verify(ctx, &matches); err != nil {
 				return false, err
 			}
-			r.Duplicates = append(r.Duplicates, matches.Duplicates...)
+			r.Duplicates = matches.Duplicates
 		}
 	}
 	provenance := fmt.Sprintf("\nRepository: `%s`. Advisory: `%s`. Input revision: `%s`.\n%s", cfg.Repo, a.GHSAID, revision, sources)

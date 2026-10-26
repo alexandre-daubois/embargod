@@ -96,6 +96,8 @@ type Request struct {
 	Validate func(json.RawMessage) error
 	// Offline cuts the agent off from GitHub, leaving it the model only.
 	Offline bool
+	// Files are written in the workspace, under their relative path, next to the report.
+	Files map[string][]byte
 }
 
 // New starts the model proxy and the egress proxy for the whole process. Close stops the model proxy.
@@ -167,10 +169,8 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		return nil, err
 	}
 	defer os.RemoveAll(state)
-	for name, content := range map[string][]byte{"report.md": []byte(req.Report), "schema.json": req.Schema} {
-		if err := os.WriteFile(filepath.Join(workspace, name), content, 0o600); err != nil {
-			return nil, err
-		}
+	if err := writeWorkspace(workspace, req); err != nil {
+		return nil, err
 	}
 	source, err := filepath.Abs(req.RepoPath)
 	if err != nil {
@@ -227,6 +227,27 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 	}
 
 	return nil, ErrNoReport
+}
+
+func writeWorkspace(workspace string, req Request) error {
+	files := map[string][]byte{"report.md": []byte(req.Report), "schema.json": req.Schema}
+	for name, content := range req.Files {
+		if !filepath.IsLocal(name) {
+			return errors.New("a request file escapes the workspace")
+		}
+		files[name] = content
+	}
+	for name, content := range files {
+		path := filepath.Join(workspace, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // salvage keeps a valid report the agent wrote before failing: Codex has no turn limit to stop on before its budget.
