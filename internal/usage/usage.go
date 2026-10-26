@@ -23,15 +23,18 @@ func (u Usage) LogValue() slog.Value {
 }
 
 type counter struct {
-	mu    sync.Mutex
-	total Usage
+	mu     sync.Mutex
+	total  Usage
+	parent *counter
 }
 
 type key struct{}
 
-// Track returns a context collecting what Add records with it, and a function reading the total.
+// Track returns a context collecting what Add records with it, and a function reading the total. What it
+// collects also adds up in the contexts tracked above it.
 func Track(ctx context.Context) (context.Context, func() Usage) {
-	c := &counter{}
+	parent, _ := ctx.Value(key{}).(*counter)
+	c := &counter{parent: parent}
 
 	return context.WithValue(ctx, key{}, c), func() Usage {
 		c.mu.Lock()
@@ -42,11 +45,10 @@ func Track(ctx context.Context) (context.Context, func() Usage) {
 }
 
 func Add(ctx context.Context, u Usage) {
-	c, ok := ctx.Value(key{}).(*counter)
-	if !ok {
-		return
+	c, _ := ctx.Value(key{}).(*counter)
+	for ; c != nil; c = c.parent {
+		c.mu.Lock()
+		c.total = c.total.Plus(u)
+		c.mu.Unlock()
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.total = c.total.Plus(u)
 }

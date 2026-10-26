@@ -1014,7 +1014,7 @@ func TestFindDuplicatesComparesInParallel(t *testing.T) {
 	dir, r, others := comparisonFixture(t)
 	reader := &slowComparator{}
 
-	got, err := findDuplicates(t.Context(), dir, reader, nil, r, others, "Title: report")
+	got, err := findDuplicates(t.Context(), dir, reader, nil, r, others, "Title: report", "published", slog.New(slog.DiscardHandler))
 
 	require.NoError(t, err)
 	require.Len(t, got, len(others))
@@ -1025,8 +1025,25 @@ func TestFindDuplicatesComparesInParallel(t *testing.T) {
 func TestFindDuplicatesFailsWhenOneComparisonFails(t *testing.T) {
 	dir, r, others := comparisonFixture(t)
 
-	got, err := findDuplicates(t.Context(), dir, &slowComparator{fail: "GHSA-3"}, nil, r, others, "Title: report")
+	got, err := findDuplicates(t.Context(), dir, &slowComparator{fail: "GHSA-3"}, nil, r, others, "Title: report", "published", slog.New(slog.DiscardHandler))
 
 	require.Error(t, err)
 	require.Nil(t, got)
+}
+
+func TestRunLogsEachStepWithoutTheReport(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.advisories[1].Description = "SECRET-PAYLOAD"
+	var logs strings.Builder
+
+	require.NoError(t, runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs))
+
+	got := logs.String()
+	require.Regexp(t, `msg="reader finished" duration=\S+ usage.requests=1 `, got)
+	require.Regexp(t, `msg="comparison finished" group=unpublished duration=\S+ usage.requests=1 `, got)
+	require.Regexp(t, `msg="comparisons finished" group=published candidates=0`, got)
+	require.Regexp(t, `msg="comparisons finished" group=unpublished candidates=1 duration=\S+ usage.requests=1 `, got)
+	require.Regexp(t, `msg=triaged usage.requests=2 `, got, "the advisory total lost the steps")
+	require.NotContains(t, got, "SECRET-PAYLOAD")
+	require.NotContains(t, got, "GHSA-")
 }
