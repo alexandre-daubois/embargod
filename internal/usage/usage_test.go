@@ -39,3 +39,15 @@ func TestLogValue(t *testing.T) {
 
 	require.Contains(t, logs.String(), "usage.requests=2 usage.input_tokens=30 usage.output_tokens=4")
 }
+
+func TestNestedTracksAddUpInTheirParents(t *testing.T) {
+	advisory, advisoryTotal := Track(context.Background())
+	reader, readerTotal := Track(advisory)
+	comparison, comparisonTotal := Track(advisory)
+	Add(reader, Usage{Requests: 2})
+	Add(comparison, Usage{Requests: 1})
+
+	require.Equal(t, int64(2), readerTotal().Requests)
+	require.Equal(t, int64(1), comparisonTotal().Requests, "a sibling track counted another one's usage")
+	require.Equal(t, int64(3), advisoryTotal().Requests)
+}

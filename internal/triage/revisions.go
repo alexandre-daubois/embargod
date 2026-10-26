@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -44,7 +45,7 @@ func advisoryRevision(a github.Advisory, comments []github.Comment, login string
 	return hex.EncodeToString(sum[:])
 }
 
-func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool) (bool, error) {
+func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, log *slog.Logger) (bool, error) {
 	var visible, private strings.Builder
 	var comparisonErr error
 	var published, unpublished []github.Advisory
@@ -95,12 +96,12 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		}
 		local := cfg
 		local.RepoPath = path
-		if r, err = triage(ctx, local, gh, reader, eng, input, published); err != nil {
+		if r, err = triage(ctx, local, gh, reader, eng, input, published, log); err != nil {
 			return false, err
 		}
 		r.Branch = reference
 		// A failed comparison with unpublished advisories leaves them out of the comment rather than blocking it.
-		duplicates, err := findDuplicates(ctx, path, reader, eng, r, unpublished, reportText(input))
+		duplicates, err := findDuplicates(ctx, path, reader, eng, r, unpublished, reportText(input), "unpublished", log)
 		if err != nil {
 			comparisonErr = err
 			privateNote = "\nPrivate duplicate search could not complete.\n"

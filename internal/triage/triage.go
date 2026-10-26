@@ -135,7 +135,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		attempted++
 		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
 
-		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, eng, a, all, comments, login, revision, failures+1 >= maxAttempts); err != nil {
+		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, eng, a, all, comments, login, revision, failures+1 >= maxAttempts, log); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
 			if agent := (*sandbox.Error)(nil); errors.As(err, &agent) {
@@ -222,7 +222,7 @@ func attempts(comments []github.Comment, login string) (done bool, failures int)
 // triage runs two models so that no context holds both the untrusted report and the embargoed
 // advisories. The reader sees the report in a sandboxed agent with public data only. The comparator
 // gets one advisory and checked code locations from the reader, and only answers with enums.
-func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory) (report.Report, error) {
+func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory, log *slog.Logger) (report.Report, error) {
 	scannedAt := time.Now().UTC()
 	code := repo.Repo{Dir: cfg.RepoPath, Context: ctx}
 	others := make([]github.Advisory, 0, len(all))
@@ -245,7 +245,8 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engin
 	if err != nil {
 		return report.Report{}, err
 	}
-	raw, err := reader.Read(ctx, sandbox.Request{
+	readCtx, spent := usage.Track(ctx)
+	raw, err := reader.Read(readCtx, sandbox.Request{
 		RepoPath: cfg.RepoPath,
 		System:   system,
 		Prompt:   readerPrompt(cfg.Repo, a, policies),
@@ -263,6 +264,7 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engin
 			return report.ValidateReader(r)
 		},
 	})
+	log.Info("reader finished", "duration", time.Since(scannedAt).Round(time.Second), "usage", spent())
 	incomplete := (*sandbox.Incomplete)(nil)
 	if err != nil && !errors.As(err, &incomplete) {
 		return report.Report{}, err
@@ -273,7 +275,7 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engin
 	}
 	r.KeepCited(a.Summary + "\n" + a.Description)
 
-	r.Duplicates, err = findDuplicates(ctx, cfg.RepoPath, reader, eng, r, others, reportText(a))
+	r.Duplicates, err = findDuplicates(ctx, cfg.RepoPath, reader, eng, r, others, reportText(a), "published", log)
 	if err != nil {
 		return report.Report{}, err
 	}
@@ -292,12 +294,13 @@ func reportText(a github.Advisory) string {
 }
 
 // findDuplicates compares the report with each candidate in its own context, most of them from the texts alone.
-func findDuplicates(ctx context.Context, repoPath string, reader Reader, eng engine.Engine, r report.Report, others []github.Advisory, text string) ([]report.Duplicate, error) {
+func findDuplicates(ctx context.Context, repoPath string, reader Reader, eng engine.Engine, r report.Report, others []github.Advisory, text, group string, log *slog.Logger) ([]report.Duplicate, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	clues := verifiedClues(repo.Repo{Dir: repoPath, Context: ctx}, r)
 	if len(others) == 0 || clues.Location.Path == "" {
+		log.Info("comparisons finished", "group", group, "candidates", 0)
 		return nil, nil
 	}
 	properties := map[string]any{
@@ -306,11 +309,19 @@ func findDuplicates(ctx context.Context, repoPath string, reader Reader, eng eng
 	}
 	candidates := comparisonCandidates(others, clues)
 	duplicates := make([]report.Duplicate, len(candidates))
+	start := time.Now()
+	ctx, spent := usage.Track(ctx)
+	defer func() {
+		log.Info("comparisons finished", "group", group, "candidates", len(candidates), "duration", time.Since(start).Round(time.Second), "usage", spent())
+	}()
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(parallelComparisons)
 	for i, candidate := range candidates {
 		g.Go(func() error {
-			raw, err := compare(gctx, repoPath, reader, eng, clues, text, candidate, properties)
+			compareStart := time.Now()
+			compareCtx, compareSpent := usage.Track(gctx)
+			raw, err := compare(compareCtx, repoPath, reader, eng, clues, text, candidate, properties)
+			log.Info("comparison finished", "group", group, "duration", time.Since(compareStart).Round(time.Second), "usage", compareSpent())
 			if err != nil {
 				return err
 			}
