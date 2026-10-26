@@ -284,6 +284,12 @@ func TestRunLocatesTheCitedCodeOnEveryConfiguredBranch(t *testing.T) {
 	require.Positive(t, row, "the cited code was not located on each branch")
 	require.Less(t, strings.Index(posted, "<details>"), row, "the cited code is outside the details block")
 	require.Less(t, row, strings.Index(posted, "</details>"), "the cited code is outside the details block")
+	out, err = exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").CombinedOutput()
+	require.NoError(t, err, "worktree list: %s", out)
+	require.Equal(t, 1, strings.Count(string(out), "worktree "), "a branch checkout was left behind: %s", out)
+	gh, eng = newFixture(), &fakeEngine{}
+	require.Error(t, run(t, Config{Advisory: "GHSA-new", RepoPath: dir, References: []string{"HEAD", "missing"}}, gh, eng), "a missing second branch was skipped")
+	require.Equal(t, report.Failed(true), gh.posted["GHSA-new"], "a missing second branch was skipped")
 	gh, eng = newFixture(), &fakeEngine{}
 	require.Error(t, run(t, Config{Advisory: "GHSA-new", RepoPath: dir, References: []string{"missing"}}, gh, eng), "a missing branch silently used HEAD")
 	require.Equal(t, report.Failed(true), gh.posted["GHSA-new"], "a missing branch silently used HEAD")
