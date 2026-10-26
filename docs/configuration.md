@@ -27,7 +27,7 @@ Fetch the configured references with `fetch-depth: 0`. For php-src, include the 
 
 ## Private reports
 
-The private artifact contains a full `.md` report and a `.comment.md` copy of the reporter-visible text. Both list the same duplicates, and the full report also notes a duplicate search that could not complete. Each copy names the source commit and input revision it covers. When an agent run fails, an `.agent-error.txt` file keeps the agent's error output, which may quote the report.
+The private artifact contains a full `.md` report and a `.comment.md` copy of the reporter-visible text. Both list the same duplicates, and the full report also notes a duplicate search that could not complete. Each copy names the source commit and input revision it covers. When an agent run fails, an `.agent-error.txt` file keeps the agent's error output and the error events of its JSON output, which may quote the report.
 
 ## Resource budgets
 
