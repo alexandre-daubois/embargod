@@ -36,7 +36,7 @@ const (
 	maxTriagesPerRun      = 10
 	maxComparisons        = 10
 	maxAdvisoryDuration   = 30 * time.Minute
-	maxComparatorRequests = 64
+	maxComparatorRequests = 200
 	maxAttempts           = 3
 )
 
@@ -75,7 +75,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	if cfg.OutputDir == "" || len(cfg.References) == 0 {
 		return errors.New("a private output directory and source references are required")
 	}
-	ctx = budget.WithLimit(ctx, 128, 32<<20)
+	ctx = budget.WithLimit(ctx, 800, 256<<20)
 	login := cfg.BotLogin
 	if login == "" {
 		var err error

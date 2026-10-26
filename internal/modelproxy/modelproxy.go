@@ -34,7 +34,7 @@ const (
 	PathPrefix = "/model-proxy"
 	// maxBody caps a forwarded request so a hostile agent cannot make the host buffer unbounded data.
 	maxBody     = 1 << 20
-	maxRequests = 32
+	maxRequests = 150
 	maxTokens   = 16_000
 	tokenPrefix = "tamis-"
 	// maxLoggedShape bounds what one refusal adds to the workflow log.

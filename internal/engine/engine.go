@@ -56,7 +56,7 @@ type Engine interface {
 }
 
 // RequestLimitBytes caps the cumulative request bodies of a WithRequestLimit budget.
-const RequestLimitBytes = 8 << 20
+const RequestLimitBytes = 64 << 20
 
 // WithRequestLimit shares one provider-request budget across every model call made with ctx.
 func WithRequestLimit(ctx context.Context, n int) context.Context {
