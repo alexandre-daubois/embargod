@@ -253,7 +253,7 @@ func (r *Reader) writeConfig(state, origin string) error {
 		}
 	}
 	// The ChatGPT features are off: they would call routes the model proxy refuses.
-	config := fmt.Sprintf("model_provider = \"tamis\"\ndaybreak = %t\nweb_search = \"disabled\"\nchatgpt_base_url = %q\n\n[analytics]\nenabled = false\n\n[features]\napps = false\nplugins = false\nremote_plugin = false\nplugin_sharing = false\ngoals = false\nimage_generation = false\nskill_mcp_dependency_install = false\n\n[model_providers.tamis]\nname = \"Tamis\"\nbase_url = %q\n%s\nwire_api = \"responses\"\nsupports_websockets = false\nsupports_standalone_web_search = false\nrequest_max_retries = 0\nstream_max_retries = 0\n", r.Daybreak, origin+modelproxy.PathPrefix+"/backend-api", origin+r.backend.basePath, auth)
+	config := fmt.Sprintf("model_provider = \"tamis\"\nmodel_reasoning_effort = \"medium\"\ndaybreak = %t\nweb_search = \"disabled\"\nchatgpt_base_url = %q\n\n[analytics]\nenabled = false\n\n[features]\napps = false\nplugins = false\nremote_plugin = false\nplugin_sharing = false\ngoals = false\nimage_generation = false\nskill_mcp_dependency_install = false\n\n[model_providers.tamis]\nname = \"Tamis\"\nbase_url = %q\n%s\nwire_api = \"responses\"\nsupports_websockets = false\nsupports_standalone_web_search = false\nrequest_max_retries = 0\nstream_max_retries = 0\n", r.Daybreak, origin+modelproxy.PathPrefix+"/backend-api", origin+r.backend.basePath, auth)
 	return os.WriteFile(filepath.Join(state, "config.toml"), []byte(config), 0o600)
 }
 

@@ -62,7 +62,7 @@ func TestCodexCanReachTheFilteredModelProxy(t *testing.T) {
 }
 
 func TestCodexWithAnAccessTokenCanReachTheFilteredModelProxy(t *testing.T) {
-	testAgentCanReachTheFilteredModelProxy(t, "codex-token", "gpt-5.5", ":codex")
+	testAgentCanReachTheFilteredModelProxy(t, "codex-token", "gpt-6.1-sol", ":codex")
 }
 
 func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuffix string) {
@@ -72,6 +72,7 @@ func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuff
 		t.Skip("TAMIS_TEST_IMAGE must end in " + imageSuffix)
 	}
 	var calls atomic.Int32
+	var first atomic.Value
 	upstream, port := testServerHandler(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/v1/user-auth-credential/whoami"):
@@ -80,6 +81,8 @@ func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuff
 			_, _ = io.WriteString(w, `{}`)
 		default:
 			if calls.Add(1) == 1 {
+				body, _ := io.ReadAll(r.Body)
+				first.Store(string(body))
 				w.Header().Set("Content-Type", "text/event-stream")
 				event := func(kind string, data any) {
 					raw, _ := json.Marshal(data)
@@ -158,6 +161,9 @@ func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuff
 	})
 	_, readErr := reader.Read(t.Context(), Request{RepoPath: gitRepo(t), Prompt: "Answer", System: "System", Report: "Report", Schema: []byte(`{}`), Validate: func(json.RawMessage) error { return nil }})
 	require.GreaterOrEqual(t, calls.Load(), int32(2), "the legitimate %s request was blocked before the model provider: %v", name, errors.Unwrap(readErr))
+	if name != "claude" {
+		require.Contains(t, first.Load(), `"effort":"medium"`, "Codex does not request medium reasoning")
+	}
 }
 
 func TestReaderGetsOneCorrectionRound(t *testing.T) {

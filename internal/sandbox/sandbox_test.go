@@ -205,7 +205,7 @@ func TestWriteConfig(t *testing.T) {
 			} else {
 				require.Empty(t, got)
 			}
-			for _, want := range []string{"model_provider = \"tamis\"", "supports_websockets = false", "plugins = false", "[analytics]\nenabled = false", "chatgpt_base_url = \"https://proxy:1/model-proxy/backend-api\"", "base_url = \"https://proxy:1" + backends[tc.backend].basePath + "\""} {
+			for _, want := range []string{"model_provider = \"tamis\"", "model_reasoning_effort = \"medium\"", "supports_websockets = false", "plugins = false", "[analytics]\nenabled = false", "chatgpt_base_url = \"https://proxy:1/model-proxy/backend-api\"", "base_url = \"https://proxy:1" + backends[tc.backend].basePath + "\""} {
 				if tc.wantConfig {
 					require.Contains(t, string(got), want)
 				}
