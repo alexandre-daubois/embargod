@@ -927,8 +927,18 @@ func TestRunLeavesAdvisoriesToTheNextRunWhenItsBudgetIsSpent(t *testing.T) {
 	require.Contains(t, logs.String(), "the remaining advisories wait for the next run")
 }
 
-func TestRunPostsTheReportAnAgentWroteBeforeStopping(t *testing.T) {
+func TestRunRetriesAnIncompleteReportBeforeItsLastAttempt(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{incomplete: true}
+	var logs strings.Builder
+
+	require.Error(t, runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs))
+	require.Equal(t, report.Failed(true), gh.posted["GHSA-new"], "a partial report closed the advisory before its last attempt")
+	require.Contains(t, logs.String(), `reason="the agent stopped before finishing its report"`)
+}
+
+func TestRunPostsTheReportAnAgentWroteBeforeStoppingOnItsLastAttempt(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{incomplete: true}
+	gh.comments["GHSA-new"] = []github.Comment{botComment(report.Failed(true)), botComment(report.Failed(true))}
 
 	require.NoError(t, run(t, Config{Advisory: "GHSA-new"}, gh, eng))
 	require.Contains(t, gh.posted["GHSA-new"], "this report may be incomplete", "the partial report was not flagged")
