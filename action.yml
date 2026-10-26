@@ -40,7 +40,7 @@ inputs:
     description: Image the agent runs in, instead of the tamis agent image pinned by digest and checked against its build attestation. It needs the agent CLI, git, curl and harness-proxy, and is not checked.
     required: false
   references:
-    description: Whitespace-separated local git references to analyse, including each supported release branch. All must have been fetched.
+    description: Whitespace-separated local git references, including each supported release branch. The first is analysed, the cited code is located on all of them. All must have been fetched.
     required: true
 
 runs:

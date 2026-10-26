@@ -55,9 +55,12 @@ type Engine interface {
 	Run(ctx context.Context, system, prompt string, ts []tools.Tool) (json.RawMessage, error)
 }
 
+// RequestLimitBytes caps the cumulative request bodies of a WithRequestLimit budget.
+const RequestLimitBytes = 8 << 20
+
 // WithRequestLimit shares one provider-request budget across every model call made with ctx.
 func WithRequestLimit(ctx context.Context, n int) context.Context {
-	return budget.WithLimit(ctx, n, 8<<20)
+	return budget.WithLimit(ctx, n, RequestLimitBytes)
 }
 
 func takeRequest(ctx context.Context, params any) bool {

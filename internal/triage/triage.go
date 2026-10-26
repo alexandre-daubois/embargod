@@ -35,7 +35,7 @@ const ProfilePath = ".github/tamis.md"
 const (
 	maxTriagesPerRun      = 10
 	maxComparisons        = 10
-	maxAdvisoryDuration   = 10 * time.Minute
+	maxAdvisoryDuration   = 30 * time.Minute
 	maxComparatorRequests = 64
 	maxAttempts           = 3
 )
@@ -118,6 +118,12 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		if a.Author.Login != "" && reporters[strings.ToLower(a.Author.Login)] {
 			cancel()
 			continue
+		}
+		// An advisory started without its whole budget would fail, the next run picks it up instead.
+		if !budget.Has(ctx, maxComparatorRequests, engine.RequestLimitBytes) {
+			cancel()
+			log.Info("the run budget is spent, the remaining advisories wait for the next run")
+			break
 		}
 		reporters[strings.ToLower(a.Author.Login)] = true
 		attempted++

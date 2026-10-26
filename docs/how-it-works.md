@@ -19,11 +19,11 @@ An agent, Claude Code or Codex, investigates the report in a throwaway container
 - it reads the security policy files when the repository has some,
 - it writes its findings to `/work/report.json`, following a JSON schema.
 
-The JSON is decoded strictly: an unknown or mistyped field sends the error back to the agent for one correction round. The agent reports the faulty statement (file, function, line), the public entry points it goes through, the code the report cites, related issues, policy exclusions, CWE and CVSS. Each configured source reference is analysed separately; the final report names its exact commit. A missing branch fails closed.
+The JSON is decoded strictly: an unknown or mistyped field sends the error back to the agent for one correction round. The agent reports the faulty statement (file, function, line), the public entry points it goes through, the code the report cites, related issues, policy exclusions, CWE and CVSS. The agent analyses the first configured source reference. The code the report cites is then located on each other reference, and the final report names every exact commit. A missing branch fails closed.
 
 ## 3. Duplicate search
 
-Potential candidates are selected without a model when their text contains the filtered location, entry points or CWE. Public and private candidates are selected independently, with at most ten in each group per source branch. The location must exist in the selected checkout before it can select candidates. Each candidate is checked in a separate model context with the clues and that one advisory. The clues remain hostile even after syntax and existence checks. The comparator answers with confidence and an exact flag; tamis supplies the identifier itself. With a Codex access token, each check runs in an offline throwaway container. All models share the advisory and run budgets.
+Potential candidates are selected without a model when their text contains the filtered location, entry points or CWE. Public and private candidates are selected independently, with at most ten in each group. The location must exist in the selected checkout before it can select candidates. Each candidate is checked in a separate model context with the clues and that one advisory. The clues remain hostile even after syntax and existence checks. The comparator answers with confidence and an exact flag; tamis supplies the identifier itself. With a Codex access token, each check runs in an offline throwaway container. All models share the advisory and run budgets.
 
 ## 4. Verification and comment
 

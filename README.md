@@ -38,7 +38,7 @@ concurrency:
 jobs:
   triage:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     environment: tamis
     permissions:
       contents: read

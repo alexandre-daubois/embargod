@@ -32,3 +32,13 @@ func TestCanceledAndNegativeChargesFail(t *testing.T) {
 	require.False(t, Take(t.Context(), -1), "invalid charge")
 	require.True(t, Take(t.Context(), 0))
 }
+
+func TestHasChecksEveryLevelWithoutSpending(t *testing.T) {
+	run := WithLimit(t.Context(), 3, 10)
+	advisory := WithLimit(run, 2, 8)
+	require.True(t, Has(advisory, 2, 8))
+	require.True(t, Take(advisory, 0), "Has spent the budget")
+	require.False(t, Has(advisory, 2, 0), "the advisory limit was ignored")
+	require.False(t, Has(WithLimit(run, 5, 20), 3, 11), "the run limit was ignored")
+	require.True(t, Has(t.Context(), 1000, 1<<30), "no limit refused a request")
+}
