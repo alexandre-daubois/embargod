@@ -76,7 +76,8 @@ type Reader interface {
 	Read(ctx context.Context, req sandbox.Request) (json.RawMessage, error)
 }
 
-// Run never logs report content, GHSA identifiers nor raw errors: logs of public repositories are public.
+// Run logs which advisory it works on and its steps, never report content nor raw errors. The action only
+// runs from a private repository, so its logs stay with the security team.
 func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, log *slog.Logger) error {
 	if cfg.OutputDir == "" || len(cfg.References) == 0 {
 		return errors.New("a private output directory and source references are required")
@@ -94,6 +95,15 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	if err != nil {
 		return errors.New("listing advisories: " + describe(err))
 	}
+	log.Info("advisories to check", "count", len(slices.DeleteFunc(slices.Clone(all), func(a github.Advisory) bool { return !selected(cfg, a) })))
+
+	// The first reference is copied once, then mounted read-only in every agent run of this execution.
+	sourceDir, err := os.MkdirTemp("", "tamis-source-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(sourceDir)
+	analysed := filepath.Join(sourceDir, "src")
 
 	var triaged, skipped, failed, attempted int
 	reporters := map[string]bool{}
@@ -101,6 +111,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		if !selected(cfg, a) {
 			continue
 		}
+		log := log.With("advisory", a.GHSAID)
 		advisoryCtx, cancel := context.WithTimeout(ctx, maxAdvisoryDuration)
 
 		comments, err := gh.ListComments(advisoryCtx, cfg.Repo, a.GHSAID)
@@ -114,6 +125,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		done, failures := attempts(comments, login)
 		if done || failures >= maxAttempts {
 			cancel()
+			log.Info("skipped, already triaged or out of attempts")
 			skipped++
 			continue
 		}
@@ -123,6 +135,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		}
 		if a.Author.Login != "" && reporters[strings.ToLower(a.Author.Login)] {
 			cancel()
+			log.Info("waits for the next run, its reporter already has a report in this one")
 			continue
 		}
 		// An advisory started without its whole budget would fail, the next run picks it up instead.
@@ -133,9 +146,10 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		}
 		reporters[strings.ToLower(a.Author.Login)] = true
 		attempted++
+		log.Info("triaging", "attempt", failures+1)
 		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
 
-		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, eng, a, all, comments, login, revision, failures+1 >= maxAttempts, log); err != nil {
+		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, eng, a, all, comments, login, revision, failures+1 >= maxAttempts, analysed, log); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
 			if agent := (*sandbox.Error)(nil); errors.As(err, &agent) {
@@ -245,6 +259,7 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engin
 	if err != nil {
 		return report.Report{}, err
 	}
+	log.Info("reading the report and the code")
 	readCtx, spent := usage.Track(ctx)
 	raw, err := reader.Read(readCtx, sandbox.Request{
 		RepoPath: cfg.RepoPath,
@@ -308,6 +323,7 @@ func findDuplicates(ctx context.Context, repoPath string, reader Reader, eng eng
 		"exact":      map[string]any{"type": "boolean"},
 	}
 	candidates := comparisonCandidates(others, clues)
+	log.Info("comparing with other advisories", "group", group, "candidates", len(candidates))
 	duplicates := make([]report.Duplicate, len(candidates))
 	start := time.Now()
 	ctx, spent := usage.Track(ctx)

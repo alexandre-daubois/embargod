@@ -685,7 +685,7 @@ func TestRunIgnoresAnUntrackedProjectProfile(t *testing.T) {
 	require.NotContains(t, eng.role("")[0].system, "SECRET-PAYLOAD", "untracked project guidance reached the model")
 }
 
-func TestRunLogsNothingAboutTheAdvisories(t *testing.T) {
+func TestRunLogsOnlyTheAdvisoryItWorksOn(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{fail: "GHSA-new"}
 	gh.advisories = append(gh.advisories,
 		github.Advisory{GHSAID: "GHSA-other", State: "triage", CreatedAt: since.Add(2 * time.Hour)},
@@ -701,10 +701,10 @@ func TestRunLogsNothingAboutTheAdvisories(t *testing.T) {
 	require.NotContains(t, err.Error(), "SECRET-PAYLOAD")
 	require.NotEmpty(t, gh.posted["GHSA-third"], "the third advisory should be triaged")
 	got := logs.String()
-	for _, leak := range []string{"GHSA-", "SECRET-PAYLOAD", "Overflow in foo"} {
+	for _, leak := range []string{"GHSA-old", "listing GHSA-other", "SECRET-PAYLOAD", "Overflow in foo"} {
 		assert.NotContains(t, got, leak, "logs leak %q", leak)
 	}
-	for _, want := range []string{"reason=\"unexpected error\"", "reason=\"github: HTTP 403\"", "triaged=1 already_triaged=1 failed=2"} {
+	for _, want := range []string{"reason=\"unexpected error\"", "reason=\"github: HTTP 403\"", "triaged=1 already_triaged=1 failed=2", "msg=triaged advisory=GHSA-third"} {
 		assert.Contains(t, got, want)
 	}
 }
@@ -775,7 +775,7 @@ func TestRunFailures(t *testing.T) {
 			require.Equal(t, tc.published, got != "", "unexpected public comment:\n%s", got)
 			require.NotContains(t, got, "SECRET-PAYLOAD")
 			require.Contains(t, logs.String(), fmt.Sprintf("reason=%q", tc.reason))
-			require.NotContains(t, logs.String(), "GHSA-")
+			require.NotContains(t, logs.String(), "GHSA-old", "a candidate identifier reached the logs")
 			require.NotContains(t, logs.String(), "SECRET-PAYLOAD")
 		})
 	}
@@ -843,7 +843,7 @@ func TestRunLogsTheUsageOfEachAdvisory(t *testing.T) {
 	require.NoError(t, runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs))
 
 	// One reader and one comparator run, each recording one request of the fake engine.
-	require.Contains(t, logs.String(), "msg=triaged usage.requests=2 usage.input_tokens=20 usage.output_tokens=4", "logs miss the usage")
+	require.Contains(t, logs.String(), "msg=triaged advisory=GHSA-new usage.requests=2 usage.input_tokens=20 usage.output_tokens=4", "logs miss the usage")
 }
 
 func TestRunWithoutOtherAdvisoriesSkipsTheComparator(t *testing.T) {
@@ -1045,11 +1045,32 @@ func TestRunLogsEachStepWithoutTheReport(t *testing.T) {
 	require.NoError(t, runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs))
 
 	got := logs.String()
-	require.Regexp(t, `msg="reader finished" duration=\S+ usage.requests=1 `, got)
-	require.Regexp(t, `msg="comparison finished" group=unpublished duration=\S+ usage.requests=1 `, got)
-	require.Regexp(t, `msg="comparisons finished" group=published candidates=0`, got)
-	require.Regexp(t, `msg="comparisons finished" group=unpublished candidates=1 duration=\S+ usage.requests=1 `, got)
-	require.Regexp(t, `msg=triaged usage.requests=2 `, got, "the advisory total lost the steps")
-	require.NotContains(t, got, "SECRET-PAYLOAD")
-	require.NotContains(t, got, "GHSA-")
+	require.Regexp(t, `msg="reader finished" advisory=GHSA-new duration=\S+ usage.requests=1 `, got)
+	require.Regexp(t, `msg="comparison finished" advisory=GHSA-new group=unpublished duration=\S+ usage.requests=1 `, got)
+	require.Regexp(t, `msg="comparisons finished" advisory=GHSA-new group=published candidates=0`, got)
+	require.Regexp(t, `msg="comparisons finished" advisory=GHSA-new group=unpublished candidates=1 duration=\S+ usage.requests=1 `, got)
+	require.Regexp(t, `msg=triaged advisory=GHSA-new usage.requests=2 `, got, "the advisory total lost the steps")
+	for _, step := range []string{`msg="advisories to check" count=1`, `msg=triaging advisory=GHSA-new attempt=1`, `msg="reading the report and the code" advisory=GHSA-new`, `msg="comparing with other advisories" advisory=GHSA-new group=unpublished candidates=1`, `msg="posting the comment" advisory=GHSA-new`} {
+		require.Contains(t, got, step)
+	}
+	require.NotContains(t, got, "SECRET-PAYLOAD", "the report text reached the logs")
+}
+
+func TestRunCopiesTheAnalysedSourceOncePerExecution(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.advisories[1].Author.Login = "first"
+	second := gh.advisories[1]
+	second.GHSAID = "GHSA-second"
+	second.Author.Login = "second"
+	gh.advisories = append(gh.advisories, second)
+	var logs strings.Builder
+
+	require.NoError(t, runLogged(t, Config{Since: since}, gh, eng, &logs))
+
+	require.Contains(t, gh.posted["GHSA-new"], report.Marker)
+	require.Contains(t, gh.posted["GHSA-second"], report.Marker)
+	require.Equal(t, 1, strings.Count(logs.String(), `msg="copying the analysed source"`), "the analysed source was copied for each advisory")
+	readers := eng.role("")
+	require.Len(t, readers, 2)
+	require.Equal(t, readers[0].repoPath, readers[1].repoPath, "the advisories did not share the analysed source")
 }

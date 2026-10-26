@@ -14,14 +14,14 @@ tamis reads text written by an outside reporter, with access to embargoed adviso
 | A report changes while being triaged | The title, description, metadata and non-bot comments are hashed. They are re-read before publication; a changed revision cancels the post. Completed advisories are not automatically triaged again after later edits. |
 | A reporter consumes the model budget | Advisory and run budgets are shared across branches, agents and comparators. Requests, bytes, output tokens and runtime are bounded; one known reporter cannot monopolise a run. A dedicated provider spending ceiling bounds costs across runs. |
 | A release tag is replaced | The action requires a full reviewed commit SHA. Agent images are additionally pinned by digest and verified against their build attestation. |
-| Logs of a public repository expose the report | tamis only logs counters, status codes and the routes and JSON keys of requests the model proxy refuses, never report text, GHSA identifiers or provider error bodies. A hostile agent chooses the keys of the requests it sends, so these logs stay meant for a private repository. GitHub still prints step inputs, so run the workflow from a private repository. |
+| Logs of a public repository expose the report | tamis logs the identifier of the advisory it works on, its steps, counters, status codes and the routes and JSON keys of requests the model proxy refuses, never report text, the identifiers of other advisories or provider error bodies. A hostile agent chooses the keys of the requests it sends, and GitHub prints step inputs, so the action refuses to run from a public repository. |
 
 ## The agent container
 
 The agent runs through [harness](https://github.com/alpha-omega-security/harness), the isolation layer of [scrutineer](https://github.com/alpha-omega-security/scrutineer):
 
 - a throwaway container per advisory, with a read-only root filesystem, all capabilities dropped and no new privileges,
-- one single-branch clone per source branch, mounted read-only into every agent run for that branch, containing no untracked files and an empty `.git/config`,
+- one single-branch clone of the analysed branch per execution, mounted read-only into every agent run, containing no untracked files and an empty `.git/config`, while the other branches are worktrees that only tamis reads,
 - an internal bridge network with both gateway modes set to `isolated` and IPv6 explicitly disabled, whose only peer is an authenticated egress proxy allowing the model proxy and `api.github.com`,
 - the workspace mounted read-only except for `report.json`, with memory, CPU, process, file-size, output-capture and Docker-log limits,
 - an image containing only the agent CLI, git, curl, ripgrep and `harness-proxy`, with every download checked against a pinned checksum,

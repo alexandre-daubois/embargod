@@ -8,7 +8,7 @@ tamis lists the repository's advisories and keeps those in the `triage` state cr
 
 A failed triage posts a comment saying so, with its own marker, and is retried on the next runs. After three failures, the comment asks a maintainer to review the report and the advisory is left alone. An advisory is triaged once: editing the report afterwards does not start a new triage.
 
-Each triaged or failed advisory logs the model requests and the input and output tokens it spent, with cached input tokens counted as input.
+The log names the advisory being triaged and each step as it starts: copying the source, reading the report, comparing with other advisories, posting the comment. Each step and each triaged or failed advisory also logs its duration, the model requests and the input and output tokens it spent, with cached input tokens counted as input.
 
 ## 2. Reading the report
 

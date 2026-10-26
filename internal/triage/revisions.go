@@ -47,7 +47,7 @@ func advisoryRevision(a github.Advisory, comments []github.Comment, login string
 	return hex.EncodeToString(sum[:])
 }
 
-func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, log *slog.Logger) (bool, error) {
+func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, analysed string, log *slog.Logger) (bool, error) {
 	var visible, private strings.Builder
 	var comparisonErr error
 	var published, unpublished []github.Advisory
@@ -72,25 +72,31 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	var r report.Report
 	var sources, privateNote string
 	for i, reference := range cfg.References {
-		dir, err := os.MkdirTemp("", "tamis-reference-")
-		if err != nil {
-			return false, err
-		}
-		defer os.RemoveAll(dir)
-		path := filepath.Join(dir, "src")
+		log.Info("preparing the source", "source", reference)
 		start := time.Now()
+		path := analysed
 		if i == 0 {
-			if err := sandbox.SnapshotSource(ctx, cfg.RepoPath, path, reference); err != nil {
-				return false, err
+			if _, err := os.Stat(path); err != nil {
+				log.Info("copying the analysed source", "source", reference)
+				if err := sandbox.SnapshotSource(ctx, cfg.RepoPath, path, reference); err != nil {
+					_ = os.RemoveAll(path)
+					return false, err
+				}
 			}
 		} else {
+			dir, err := os.MkdirTemp("", "tamis-reference-")
+			if err != nil {
+				return false, err
+			}
+			defer os.RemoveAll(dir)
+			path = filepath.Join(dir, "src")
 			remove, err := worktree(ctx, cfg.RepoPath, path, reference)
 			if err != nil {
 				return false, err
 			}
 			defer remove()
 		}
-		log.Info("source ready", "source", i, "duration", time.Since(start).Round(time.Second))
+		log.Info("source ready", "source", reference, "duration", time.Since(start).Round(time.Second))
 		code := repo.Repo{Dir: path, Context: ctx}
 		commit, err := code.Commit()
 		if err != nil {
@@ -146,6 +152,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	base := reportBase(cfg, a.GHSAID, revision)
 	// A posted report closes the advisory, so a partial one is only posted by the last attempt.
 	if r.Incomplete && !final {
+		log.Info("the report is incomplete, the advisory will be retried")
 		if err := os.WriteFile(base+".md", []byte(private.String()), 0o600); err != nil {
 			return false, err
 		}
@@ -154,6 +161,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	if err := os.WriteFile(base+".comment.md", []byte(body), 0o600); err != nil {
 		return false, err
 	}
+	log.Info("posting the comment")
 	if err := gh.PostComment(ctx, cfg.Repo, a.GHSAID, body); err != nil {
 		return false, err
 	}
