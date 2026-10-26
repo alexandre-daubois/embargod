@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,8 +47,7 @@ func advisoryRevision(a github.Advisory, comments []github.Comment, login string
 	return hex.EncodeToString(sum[:])
 }
 
-func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, analysed string, log *slog.Logger) (bool, error) {
-	var visible, private strings.Builder
+func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, sourceDir string, log *slog.Logger) (bool, error) {
 	var comparisonErr error
 	var others []github.Advisory
 	byID := map[string]github.Advisory{}
@@ -69,27 +69,17 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	for i, reference := range cfg.References {
 		log.Info("preparing the source", "source", reference)
 		start := time.Now()
-		path := analysed
-		if i == 0 {
-			if _, err := os.Stat(path); err != nil {
+		path := filepath.Join(sourceDir, strconv.Itoa(i))
+		if _, err := os.Stat(path); err != nil {
+			prepare := worktree
+			if i == 0 {
 				log.Info("copying the analysed source", "source", reference)
-				if err := sandbox.SnapshotSource(ctx, cfg.RepoPath, path, reference); err != nil {
-					_ = os.RemoveAll(path)
-					return false, err
-				}
+				prepare = sandbox.SnapshotSource
 			}
-		} else {
-			dir, err := os.MkdirTemp("", "tamis-reference-")
-			if err != nil {
+			if err := prepare(ctx, cfg.RepoPath, path, reference); err != nil {
+				_ = os.RemoveAll(path)
 				return false, err
 			}
-			defer os.RemoveAll(dir)
-			path = filepath.Join(dir, "src")
-			remove, err := worktree(ctx, cfg.RepoPath, path, reference)
-			if err != nil {
-				return false, err
-			}
-			defer remove()
 		}
 		log.Info("source ready", "source", reference, "duration", time.Since(start).Round(time.Second))
 		code := repo.Repo{Dir: path, Context: ctx}
@@ -113,6 +103,9 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 			return false, err
 		}
 		r.Branch = reference
+		if r.Incomplete != nil {
+			continue
+		}
 		// A failed duplicate search leaves the duplicates out of the comment rather than blocking it.
 		duplicates, err := findDuplicates(ctx, path, reader, r, input, others, log)
 		if err != nil {
@@ -127,8 +120,8 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		}
 	}
 	provenance := fmt.Sprintf("\nRepository: `%s`. Advisory: `%s`. Input revision: `%s`.\n%s", cfg.Repo, a.GHSAID, revision, sources)
-	visible.WriteString(provenance + report.Render(r))
-	private.WriteString(provenance + privateNote + report.RenderPrivate(r))
+	body := provenance + report.Render(r)
+	private := provenance + privateNote + report.RenderPrivate(r)
 	current, err := gh.GetAdvisory(ctx, cfg.Repo, a.GHSAID)
 	if err != nil {
 		return false, err
@@ -140,15 +133,17 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	if advisoryRevision(current, latestComments, login, cfg.References) != revision {
 		return false, errors.New("the report changed during triage")
 	}
-	body := visible.String()
 	if err := os.MkdirAll(cfg.OutputDir, 0o700); err != nil {
 		return false, err
 	}
 	base := reportBase(cfg, a.GHSAID, revision)
+	if keepAgentError(cfg, a.GHSAID, revision, r.Incomplete) != nil {
+		log.Error("the agent error could not be kept in the private reports")
+	}
 	// A posted report closes the advisory, so a partial one is only posted by the last attempt.
-	if r.Incomplete && !final {
+	if r.Incomplete != nil && !final {
 		log.Info("the report is incomplete, the advisory will be retried")
-		if err := os.WriteFile(base+".md", []byte(private.String()), 0o600); err != nil {
+		if err := os.WriteFile(base+".md", []byte(private), 0o600); err != nil {
 			return false, err
 		}
 		return false, errIncompleteReport
@@ -160,7 +155,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	if err := gh.PostComment(ctx, cfg.Repo, a.GHSAID, body); err != nil {
 		return false, err
 	}
-	if err := os.WriteFile(base+".md", []byte(private.String()), 0o600); err != nil {
+	if err := os.WriteFile(base+".md", []byte(private), 0o600); err != nil {
 		return true, err
 	}
 	return true, comparisonErr
@@ -168,16 +163,16 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 
 // worktree checks a reference out next to the repository and shares its objects: only tamis reads it, the
 // agent never does.
-func worktree(ctx context.Context, repoPath, target, reference string) (func(), error) {
+func worktree(ctx context.Context, repoPath, target, reference string) error {
 	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--verify", "--end-of-options", reference+"^{commit}").Output()
 	if err != nil {
-		return nil, errors.New("resolving a configured source reference")
+		return errors.New("resolving a configured source reference")
 	}
 	if err := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "add", "--quiet", "--detach", "--", target, strings.TrimSpace(string(out))).Run(); err != nil {
-		return nil, errors.New("checking out a configured source reference")
+		return errors.New("checking out a configured source reference")
 	}
 
-	return func() { _ = exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", "--", target).Run() }, nil
+	return nil
 }
 
 // reportBase names the private files of one advisory revision, without the GHSA identifier.

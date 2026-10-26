@@ -473,8 +473,10 @@ func shape(v any) string {
 		return "{" + strings.Join(parts, " ") + "}"
 	case []any:
 		var parts []string
+		seen := map[string]bool{}
 		for _, item := range v {
-			if s := shape(item); !slices.Contains(parts, s) {
+			if s := shape(item); !seen[s] {
+				seen[s] = true
 				parts = append(parts, s)
 			}
 		}

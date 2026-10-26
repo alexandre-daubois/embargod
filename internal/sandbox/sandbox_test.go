@@ -247,6 +247,16 @@ func TestKeepFailuresKeepsOnlyCodexErrorEvents(t *testing.T) {
 	require.Equal(t, `{"type":"item.completed","item":{"type":"error","message":"tool failed"}}`+"\n"+`{"type":"error","message":"stream disconnected"}`+"\n"+failed, kept.String())
 }
 
+func TestKeepFailuresSkipsALineLongerThanTheOutputLimit(t *testing.T) {
+	failed := `{"type":"turn.failed","error":{"message":"usage limit"}}`
+	stream := `{"type":"error","message":"` + strings.Repeat("a", 2*maxAgentOutput) + `"}` + "\n" + failed
+	var kept strings.Builder
+
+	keepFailures(strings.NewReader(stream), &kept)
+
+	require.Equal(t, failed, kept.String())
+}
+
 func TestKeepFailuresKeepsNothingFromASuccessfulRun(t *testing.T) {
 	var kept strings.Builder
 

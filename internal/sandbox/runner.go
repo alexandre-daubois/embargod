@@ -180,12 +180,17 @@ func (r *isolatedRun) Run(ctx context.Context, h harness.Harness, job harness.Jo
 	return err
 }
 
-// keepFailures copies the error events of a JSONL agent output and discards the rest. Codex exec --json
+// keepFailures copies the error events of a JSONL agent output and discards the rest, lines longer than
+// maxAgentOutput included. Codex exec --json
 // reports why it stopped only there, as "error" and "turn.failed" events or "error" items.
 func keepFailures(r io.Reader, w io.Writer) {
-	br := bufio.NewReader(r)
+	br := bufio.NewReaderSize(r, maxAgentOutput)
 	for {
-		line, err := br.ReadBytes('\n')
+		line, err := br.ReadSlice('\n')
+		for errors.Is(err, bufio.ErrBufferFull) {
+			line = nil
+			_, err = br.ReadSlice('\n')
+		}
 		var event struct {
 			Type string `json:"type"`
 			Item struct {

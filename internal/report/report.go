@@ -72,8 +72,8 @@ type Report struct {
 	Branch    string    `json:"-"`
 	// Removed counts the model claims dropped because they could not be verified.
 	Removed int `json:"-"`
-	// Incomplete marks a report the agent wrote before its run stopped.
-	Incomplete bool `json:"-"`
+	// Incomplete holds why the agent stopped before finishing the report it wrote.
+	Incomplete error `json:"-"`
 	// Elsewhere holds the code references located on the other source references.
 	Elsewhere []Report `json:"-"`
 }
@@ -84,9 +84,8 @@ type Location struct {
 	Line   int    `json:"line"`
 }
 
-// Comparison is everything the comparator learns about the report being triaged: identifiers,
-// numbers and CWEs only, the comparator reads the code at the location to understand the bug.
-// It holds a single location, so the same pattern elsewhere cannot pass for the same bug.
+// Comparison holds the clues the comparator gets next to the report text: identifiers, numbers and
+// CWEs only. It holds a single location, so the same pattern elsewhere cannot pass for the same bug.
 type Comparison struct {
 	Location    Location `json:"location"`
 	EntryPoints []string `json:"entry_points"`
@@ -99,6 +98,13 @@ type Duplicate struct {
 	Exact      bool   `json:"exact"`
 	URL        string `json:"-"`
 	Published  bool   `json:"-"`
+}
+
+// visible says whether the reporter may see d.
+func (d Duplicate) visible() bool {
+	// A reporter learns nothing from an exact duplicate of their own bug, a partial match on an
+	// unpublished advisory would reveal another report.
+	return d.Published || d.Exact && d.Confidence == "high"
 }
 
 type Related struct {
@@ -338,9 +344,7 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 		}
 		seen[key] = true
 		d.URL, d.Published = a.HTMLURL, a.State == "published"
-		// A reporter learns nothing from an exact duplicate of their own bug, a partial match on an
-		// unpublished advisory would reveal another report.
-		if !d.Published && !(d.Exact && d.Confidence == "high") {
+		if !d.visible() {
 			continue
 		}
 		dups = append(dups, d)
@@ -461,7 +465,7 @@ func abs(n int) int {
 
 // Render formats the report as the advisory comment.
 func Render(r Report) string {
-	r.Duplicates = slices.DeleteFunc(slices.Clone(r.Duplicates), func(d Duplicate) bool { return !d.Published && !(d.Exact && d.Confidence == "high") })
+	r.Duplicates = slices.DeleteFunc(slices.Clone(r.Duplicates), func(d Duplicate) bool { return !d.visible() })
 	return RenderPrivate(r)
 }
 
@@ -473,7 +477,7 @@ func RenderPrivate(r Report) string {
 	if !r.ScannedAt.IsZero() {
 		fmt.Fprintf(&b, "Scanned on %s UTC%s.\n\n", r.ScannedAt.UTC().Format("2006-01-02 at 15:04"), r.scope())
 	}
-	if r.Incomplete {
+	if r.Incomplete != nil {
 		b.WriteString("_The analysis stopped before it finished, so this report may be incomplete._\n\n")
 	}
 	b.WriteString(text(r.Summary) + "\n")
