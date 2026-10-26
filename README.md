@@ -59,6 +59,7 @@ jobs:
       - uses: alexandre-daubois/tamis@REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA
         with:
           repository: your-org/your-project
+          # A date, or an RFC 3339 time with its offset: "2026-10-22T14:30:00+02:00"
           since: "2026-10-22"
           advisory: ${{ inputs.advisory }}
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
