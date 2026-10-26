@@ -37,7 +37,7 @@ The agent images are built from [`docker/agent/Dockerfile`](../docker/agent/Dock
 docker build --target claude -t tamis-agent:claude docker/agent
 ```
 
-The `Agent image` workflow publishes both to `ghcr.io/alexandre-daubois/tamis-agent` with a build attestation when that directory changes on `main`, then opens a pull request updating the digests in [`internal/sandbox/images.json`](../internal/sandbox/images.json). tamis only runs the images pinned there, so new images reach users once that pull request is merged and released.
+The `Agent image` workflow publishes both to `ghcr.io/php/tamis-agent` with a build attestation when that directory changes on `main`, then opens a pull request updating the digests in [`internal/sandbox/images.json`](../internal/sandbox/images.json). tamis only runs the images pinned there, so new images reach users once that pull request is merged and released.
 
 To bump an agent CLI, update its tag and the sha256 of each architecture's asset together in the Dockerfile. The workflow needs "Allow GitHub Actions to create and approve pull requests" in the repository settings.
 

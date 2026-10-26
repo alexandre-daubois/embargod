@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/alexandre-daubois/tamis/internal/tools"
-	"github.com/alexandre-daubois/tamis/internal/usage"
+	"github.com/php/tamis/internal/tools"
+	"github.com/php/tamis/internal/usage"
 )
 
 // scripted serves the given responses in order and records the request bodies.

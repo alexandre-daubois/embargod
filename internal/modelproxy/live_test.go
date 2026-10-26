@@ -18,7 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/alexandre-daubois/tamis/internal/usage"
+	"github.com/php/tamis/internal/usage"
 )
 
 // These tests pin that the usage the proxy counts for a real agent CLI run equals the one the CLI reports:

@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/alexandre-daubois/tamis/internal/budget"
-	"github.com/alexandre-daubois/tamis/internal/tools"
+	"github.com/php/tamis/internal/budget"
+	"github.com/php/tamis/internal/tools"
 )
 
 const (

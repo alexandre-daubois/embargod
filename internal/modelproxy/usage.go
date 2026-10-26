@@ -6,7 +6,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/alexandre-daubois/tamis/internal/usage"
+	"github.com/php/tamis/internal/usage"
 )
 
 // usageReader reads the tokens a model response reports, as one JSON body or as server-sent events, while the

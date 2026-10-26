@@ -47,4 +47,4 @@ CI builds both agent images and runs the Docker isolation tests on `ubuntu-lates
 
 ## Reporting a vulnerability
 
-Report vulnerabilities in tamis privately through [GitHub security advisories](https://github.com/alexandre-daubois/tamis/security/advisories/new).
+Report vulnerabilities in tamis privately through [GitHub security advisories](https://github.com/php/tamis/security/advisories/new).

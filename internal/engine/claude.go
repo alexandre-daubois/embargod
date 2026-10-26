@@ -8,8 +8,8 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"github.com/alexandre-daubois/tamis/internal/tools"
-	"github.com/alexandre-daubois/tamis/internal/usage"
+	"github.com/php/tamis/internal/tools"
+	"github.com/php/tamis/internal/usage"
 )
 
 const DefaultClaudeModel = "claude-opus-5-5"

@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/alexandre-daubois/tamis/internal/budget"
+	"github.com/php/tamis/internal/budget"
 )
 
 type upstreamCall struct {

@@ -7,7 +7,7 @@ tamis runs as a scheduled GitHub Actions workflow. Installing it takes a GitHub 
 Open this address with `YOUR-ORG` replaced by your organisation name. The form is pre-filled with the only permission tamis needs, "Repository security advisories" in read and write, and no webhook.
 
 ```text
-https://github.com/organizations/YOUR-ORG/settings/apps/new?name=YOUR-ORG-tamis&description=First-pass%20triage%20of%20new%20security%20advisories&url=https://github.com/alexandre-daubois/tamis&public=false&webhook_active=false&repository_advisories=write
+https://github.com/organizations/YOUR-ORG/settings/apps/new?name=YOUR-ORG-tamis&description=First-pass%20triage%20of%20new%20security%20advisories&url=https://github.com/php/tamis&public=false&webhook_active=false&repository_advisories=write
 ```
 
 After creating it:

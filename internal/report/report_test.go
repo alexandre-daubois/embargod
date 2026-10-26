@@ -17,8 +17,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/alexandre-daubois/tamis/internal/github"
-	"github.com/alexandre-daubois/tamis/internal/repo"
+	"github.com/php/tamis/internal/github"
+	"github.com/php/tamis/internal/repo"
 )
 
 type fakeIssues map[int]github.Issue

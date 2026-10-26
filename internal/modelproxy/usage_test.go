@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/alexandre-daubois/tamis/internal/usage"
+	"github.com/php/tamis/internal/usage"
 )
 
 // spend relays one request to an upstream answering with body, and returns what the run spent once revoked.

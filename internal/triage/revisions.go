@@ -12,11 +12,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/alexandre-daubois/tamis/internal/engine"
-	"github.com/alexandre-daubois/tamis/internal/github"
-	"github.com/alexandre-daubois/tamis/internal/repo"
-	"github.com/alexandre-daubois/tamis/internal/report"
-	"github.com/alexandre-daubois/tamis/internal/sandbox"
+	"github.com/php/tamis/internal/engine"
+	"github.com/php/tamis/internal/github"
+	"github.com/php/tamis/internal/repo"
+	"github.com/php/tamis/internal/report"
+	"github.com/php/tamis/internal/sandbox"
 )
 
 func advisoryRevision(a github.Advisory, comments []github.Comment, login string, references []string) string {

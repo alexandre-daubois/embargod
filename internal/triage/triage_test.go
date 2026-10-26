@@ -20,14 +20,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/alexandre-daubois/tamis/internal/engine"
-	"github.com/alexandre-daubois/tamis/internal/github"
-	"github.com/alexandre-daubois/tamis/internal/repo"
-	"github.com/alexandre-daubois/tamis/internal/report"
-	"github.com/alexandre-daubois/tamis/internal/sandbox"
-	"github.com/alexandre-daubois/tamis/internal/tools"
-	"github.com/alexandre-daubois/tamis/internal/usage"
-	"github.com/alexandre-daubois/tamis/skill"
+	"github.com/php/tamis/internal/engine"
+	"github.com/php/tamis/internal/github"
+	"github.com/php/tamis/internal/repo"
+	"github.com/php/tamis/internal/report"
+	"github.com/php/tamis/internal/sandbox"
+	"github.com/php/tamis/internal/tools"
+	"github.com/php/tamis/internal/usage"
+	"github.com/php/tamis/skill"
 )
 
 var since = time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
