@@ -87,6 +87,7 @@ type Reader struct {
 
 // Request is one report to read. Validate checks the JSON the agent wrote, its error goes back to the agent.
 type Request struct {
+	// RepoPath is a snapshot from SnapshotSource, mounted read-only and shared by the runs of one source.
 	RepoPath string
 	System   string
 	Prompt   string
@@ -171,7 +172,11 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 			return nil, err
 		}
 	}
-	if err := snapshotSource(ctx, req.RepoPath, filepath.Join(workspace, srcDir)); err != nil {
+	source, err := filepath.Abs(req.RepoPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Mkdir(filepath.Join(workspace, srcDir), 0o700); err != nil {
 		return nil, err
 	}
 
@@ -207,7 +212,7 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 
 	for attempt := 0; attempt < 2; attempt++ {
 		// Agent output is discarded: it holds the report and the agent's reasoning about it.
-		err := run.Run(ctx, r.harness, job, workspace, state, r.backend.keyEnv, token)
+		err := run.Run(ctx, r.harness, job, workspace, source, state, r.backend.keyEnv, token)
 		if err != nil {
 			return nil, &Error{Err: err}
 		}
@@ -257,11 +262,7 @@ func (r *Reader) writeConfig(state, origin string) error {
 	return os.WriteFile(filepath.Join(state, "config.toml"), []byte(config), 0o600)
 }
 
-// snapshotSource keeps the sandbox on tracked content while retaining the current commit's public history.
-func snapshotSource(ctx context.Context, repoPath, target string) error {
-	return SnapshotSource(ctx, repoPath, target, "HEAD")
-}
-
+// SnapshotSource keeps the sandbox on tracked content while retaining the current commit's public history.
 // SnapshotSource resolves only a configured local reference; it never fetches from the project's origin.
 func SnapshotSource(ctx context.Context, repoPath, target, reference string) error {
 	abs, err := filepath.Abs(repoPath)

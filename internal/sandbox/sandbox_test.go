@@ -28,7 +28,7 @@ func TestSnapshotSourceCopiesOnlyTrackedContentAndHistory(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, append(config, []byte("\n[http]\nextraheader = AUTHORIZATION: basic SECRET\n")...), 0o600))
 
 	target := filepath.Join(t.TempDir(), "src")
-	require.NoError(t, snapshotSource(t.Context(), repo, target))
+	require.NoError(t, SnapshotSource(t.Context(), repo, target, "HEAD"))
 	got, err := os.ReadFile(filepath.Join(target, "tracked.txt"))
 	assert.NoError(t, err)
 	assert.Equal(t, "tracked", string(got))
@@ -43,13 +43,13 @@ func TestSnapshotSourceCopiesOnlyTrackedContentAndHistory(t *testing.T) {
 }
 
 func TestSnapshotSourceRejectsADirectoryWithoutGit(t *testing.T) {
-	require.Error(t, snapshotSource(t.Context(), t.TempDir(), filepath.Join(t.TempDir(), "src")), "a source without git must be refused")
+	require.Error(t, SnapshotSource(t.Context(), t.TempDir(), filepath.Join(t.TempDir(), "src"), "HEAD"), "a source without git must be refused")
 }
 
 func TestSnapshotSourceStopsWithItsContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	require.Error(t, snapshotSource(ctx, gitRepo(t), filepath.Join(t.TempDir(), "src")), "a canceled snapshot must fail")
+	require.Error(t, SnapshotSource(ctx, gitRepo(t), filepath.Join(t.TempDir(), "src"), "HEAD"), "a canceled snapshot must fail")
 }
 
 func TestSnapshotSourceUsesTheConfiguredBranch(t *testing.T) {
@@ -119,9 +119,9 @@ func TestAgentContainerUsesOnlyThePrivateProxyAndLimitsResources(t *testing.T) {
 	h, err := harness.ByName("claude")
 	require.NoError(t, err)
 	run := &isolatedRun{runtime: container.Runtime{Bin: "docker"}, image: "agent", network: "private", proxyIP: "172.20.0.2", agent: "work"}
-	args := run.agentArgs(h, harness.Job{Workspace: container.WorkMount}, "/host/work", "/host/state", "/host/work/report.json", "ANTHROPIC_API_KEY")
+	args := run.agentArgs(h, harness.Job{Workspace: container.WorkMount}, "/host/work", "/host/snapshot", "/host/state", "/host/work/report.json", "ANTHROPIC_API_KEY")
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"host.docker.internal:172.20.0.2", "--network private", "--pids-limit 256", "--memory 2g", "--cpus 2", "src=/host/work,dst=/work,readonly", "--name work", "--log-driver none"} {
+	for _, want := range []string{"host.docker.internal:172.20.0.2", "--network private", "--pids-limit 256", "--memory 2g", "--cpus 2", "src=/host/work,dst=/work,readonly", "src=/host/snapshot,dst=/work/src,readonly", "--name work", "--log-driver none"} {
 		assert.Contains(t, joined, want)
 	}
 	require.NotContains(t, joined, "host.docker.internal:host-gateway", "the hostile container can reach the host gateway")
@@ -132,7 +132,7 @@ func TestAccessTokenContainerGetsNoAmbientAPIKey(t *testing.T) {
 	h, err := harness.ByName("codex")
 	require.NoError(t, err)
 	run := &isolatedRun{image: "agent", network: "private", proxyIP: "172.20.0.2", agent: "work"}
-	args := run.agentArgs(h, harness.Job{Workspace: container.WorkMount}, "/host/work", "/host/state", "/host/work/report.json", "CODEX_ACCESS_TOKEN")
+	args := run.agentArgs(h, harness.Job{Workspace: container.WorkMount}, "/host/work", "/host/snapshot", "/host/state", "/host/work/report.json", "CODEX_ACCESS_TOKEN")
 	for i, arg := range args {
 		require.NotEqual(t, "CODEX_API_KEY", arg, "ambient API key reached argument %d", i)
 		require.False(t, strings.HasPrefix(arg, "CODEX_API_KEY="), "ambient API key reached argument %d: %s", i, arg)

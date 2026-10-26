@@ -21,7 +21,7 @@ tamis reads text written by an outside reporter, with access to embargoed adviso
 The agent runs through [harness](https://github.com/alpha-omega-security/harness), the isolation layer of [scrutineer](https://github.com/alpha-omega-security/scrutineer):
 
 - a throwaway container per advisory, with a read-only root filesystem, all capabilities dropped and no new privileges,
-- a single-branch clone copied into the read-only workspace, containing no untracked files and an empty `.git/config`,
+- one single-branch clone per source branch, mounted read-only into every agent run for that branch, containing no untracked files and an empty `.git/config`,
 - an internal bridge network with both gateway modes set to `isolated` and IPv6 explicitly disabled, whose only peer is an authenticated egress proxy allowing the model proxy and `api.github.com`,
 - the workspace mounted read-only except for `report.json`, with memory, CPU, process, file-size, output-capture and Docker-log limits,
 - an image containing only the agent CLI, git, curl, ripgrep and `harness-proxy`, with every download checked against a pinned checksum,

@@ -833,6 +833,8 @@ func TestRunRefusesASymlinkedProfile(t *testing.T) {
 	require.NoError(t, os.Symlink("../.git/config", filepath.Join(dir, ProfilePath)))
 	out, err := exec.Command("git", "-C", dir, "add", "--", ProfilePath).CombinedOutput()
 	require.NoError(t, err, "git add: %s", out)
+	out, err = exec.Command("git", "-C", dir, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--quiet", "--no-gpg-sign", "-m", "profile").CombinedOutput()
+	require.NoError(t, err, "git commit: %s", out)
 
 	require.Error(t, run(t, Config{Advisory: "GHSA-new", RepoPath: dir}, gh, eng), "a symlinked profile should fail the triage")
 	require.Empty(t, eng.calls, "the model should not run")

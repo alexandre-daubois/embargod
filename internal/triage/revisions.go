@@ -67,17 +67,14 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		}
 	}
 	for _, reference := range cfg.References {
-		path := cfg.RepoPath
-		if reference != "HEAD" {
-			dir, err := os.MkdirTemp("", "tamis-reference-")
-			if err != nil {
-				return false, err
-			}
-			defer os.RemoveAll(dir)
-			path = filepath.Join(dir, "src")
-			if err := sandbox.SnapshotSource(ctx, cfg.RepoPath, path, reference); err != nil {
-				return false, err
-			}
+		dir, err := os.MkdirTemp("", "tamis-reference-")
+		if err != nil {
+			return false, err
+		}
+		defer os.RemoveAll(dir)
+		path := filepath.Join(dir, "src")
+		if err := sandbox.SnapshotSource(ctx, cfg.RepoPath, path, reference); err != nil {
+			return false, err
 		}
 		code := repo.Repo{Dir: path, Context: ctx}
 		commit, err := code.Commit()

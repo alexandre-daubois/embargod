@@ -135,7 +135,7 @@ func (r *isolatedRun) waitReady(ctx context.Context) error {
 	}
 }
 
-func (r *isolatedRun) Run(ctx context.Context, h harness.Harness, job harness.Job, workspace, state, keyEnv, key string) error {
+func (r *isolatedRun) Run(ctx context.Context, h harness.Harness, job harness.Job, workspace, source, state, keyEnv, key string) error {
 	if err := harness.WriteSystemPrompt(h, job); err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func (r *isolatedRun) Run(ctx context.Context, h harness.Harness, job harness.Jo
 		return err
 	}
 	job.Workspace = container.WorkMount
-	args := r.agentArgs(h, job, workspace, state, reportPath, keyEnv)
+	args := r.agentArgs(h, job, workspace, source, state, reportPath, keyEnv)
 
 	cmd := exec.CommandContext(ctx, r.runtime.Bin, args...)
 	cmd.Env = withEnv(os.Environ(), keyEnv, key)
@@ -171,12 +171,13 @@ func (r *isolatedRun) Run(ctx context.Context, h harness.Harness, job harness.Jo
 	return err
 }
 
-func (r *isolatedRun) agentArgs(h harness.Harness, job harness.Job, workspace, state, reportPath, keyEnv string) []string {
+func (r *isolatedRun) agentArgs(h harness.Harness, job harness.Job, workspace, source, state, reportPath, keyEnv string) []string {
 	args := []string{
 		"run", "--rm", "--name", r.agent, "--log-driver", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
 		"--memory", workMemory, "--cpus", workCPUs, "--pids-limit", workPIDs, "--ulimit", "fsize=" + workFile + ":" + workFile,
 		"--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()), "-e", "HOME=/tmp", "--tmpfs", "/tmp:rw,exec,nosuid,size=256m",
 		"--mount", "type=bind,src=" + workspace + ",dst=" + container.WorkMount + ",readonly",
+		"--mount", "type=bind,src=" + source + ",dst=" + container.WorkMount + "/" + srcDir + ",readonly",
 		"--mount", "type=bind,src=" + reportPath + ",dst=" + container.WorkMount + "/" + outputFile,
 		"--tmpfs", container.StateMount + ":rw,noexec,nosuid,size=256m",
 		"-w", container.WorkMount, "--network", r.network, "--add-host", egress.HostGatewayAlias + ":" + r.proxyIP,
