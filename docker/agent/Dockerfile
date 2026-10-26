@@ -5,8 +5,8 @@
 
 # Each release tag sits beside the digest of its asset, as in scrutineer's Dockerfile.runner, so a version
 # bump updates both and a mismatch fails sha256sum below.
-ARG CLAUDE_AMD64_LOCK=v2.1.302@sha256:0d865f10fe49f2e731ab9d4f7bdcce082cad4f7bbf71d2cbbf7be47b9d8ae5dc
-ARG CLAUDE_ARM64_LOCK=v2.1.302@sha256:812a10792bf91bccba6de57b86c2ff055264037b99011cfd558db8e6967760c3
+ARG CLAUDE_AMD64_LOCK=v2.1.303@sha256:9ef730488e8b75d47f23c156282a73c89db3342aaf756ed7ec0b78a88fb31f3e
+ARG CLAUDE_ARM64_LOCK=v2.1.303@sha256:0c219f6d5fadf1ce5771f7976fe18d6a57a9b8267def5198b58d3e121eeb98c1
 ARG CODEX_AMD64_LOCK=rust-v0.163.0@sha256:582646c6bf0561eb0de540f7fc85b9121b0091a826bc6e96830b7f1722122182
 ARG CODEX_ARM64_LOCK=rust-v0.163.0@sha256:9d8ecf2d19d3e184877983902d6c85de48b3888dcb72c382a8a0c975845927fb
 ARG HARNESS_VERSION=v0.1.16
