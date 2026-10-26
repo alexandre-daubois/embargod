@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -300,6 +301,35 @@ func TestRunLocatesTheCitedCodeOnEveryConfiguredBranch(t *testing.T) {
 	gh, eng = newFixture(), &fakeEngine{}
 	require.Error(t, run(t, Config{Advisory: "GHSA-new", RepoPath: dir, References: []string{"missing"}}, gh, eng), "a missing branch silently used HEAD")
 	require.Equal(t, report.Failed(true), gh.posted["GHSA-new"], "a missing branch silently used HEAD")
+}
+
+func TestRunChecksTheOtherBranchesOutOncePerExecution(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.advisories[1].Author.Login = "first"
+	second := gh.advisories[1]
+	second.GHSAID = "GHSA-second"
+	second.Author.Login = "second"
+	gh.advisories = append(gh.advisories, second)
+	dir := gitRepo(t, map[string]string{"stable.c": "stable"})
+	for _, args := range [][]string{{"branch", "stable"}, {"-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--no-gpg-sign", "--allow-empty", "-qm", "head"}} {
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		require.NoError(t, err, "git: %s", out)
+	}
+	gh.beforeGet = func() {
+		// Moving the branch after the first advisory shows whether the second one checked it out again.
+		out, err := exec.Command("git", "-C", dir, "branch", "--force", "stable", "HEAD").CombinedOutput()
+		require.NoError(t, err, "branch: %s", out)
+	}
+	stable := regexp.MustCompile("Source: `stable` at `[0-9a-f]+`")
+
+	require.NoError(t, run(t, Config{Since: since, RepoPath: dir, References: []string{"HEAD", "stable"}}, gh, eng))
+
+	first := stable.FindString(gh.posted["GHSA-new"])
+	require.NotEmpty(t, first, "the second branch was omitted")
+	require.Equal(t, first, stable.FindString(gh.posted["GHSA-second"]), "the second branch was checked out for each advisory")
+	out, err := exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").CombinedOutput()
+	require.NoError(t, err, "worktree list: %s", out)
+	require.Equal(t, 1, strings.Count(string(out), "worktree "), "a branch checkout was left behind: %s", out)
 }
 
 func (e *fakeEngine) Run(ctx context.Context, system, prompt string, ts []tools.Tool) (json.RawMessage, error) {
@@ -921,6 +951,8 @@ func TestRunRetriesAnIncompleteReportBeforeItsLastAttempt(t *testing.T) {
 	require.Error(t, runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs))
 	require.Equal(t, report.Failed(true), gh.posted["GHSA-new"], "a partial report closed the advisory before its last attempt")
 	require.Contains(t, logs.String(), `reason="the agent stopped before finishing its report"`)
+	require.Contains(t, agentErrors(t, gh), "budget exhausted", "the agent error of the partial report was lost")
+	require.Empty(t, eng.role(skill.Compare), "a retried partial report spent comparisons")
 }
 
 func TestRunPostsTheReportAnAgentWroteBeforeStoppingOnItsLastAttempt(t *testing.T) {
@@ -930,6 +962,8 @@ func TestRunPostsTheReportAnAgentWroteBeforeStoppingOnItsLastAttempt(t *testing.
 	require.NoError(t, run(t, Config{Advisory: "GHSA-new"}, gh, eng))
 	require.Contains(t, gh.posted["GHSA-new"], "this report may be incomplete", "the partial report was not flagged")
 	require.Contains(t, gh.posted["GHSA-new"], "Looks like a heap overflow.", "the partial report was dropped")
+	require.Contains(t, agentErrors(t, gh), "budget exhausted", "the agent error of the posted partial report was lost")
+	require.Empty(t, eng.role(skill.Compare), "a partial report compared on the budget its reader stopped on")
 }
 
 func TestRunMarksNoCompleteReportAsIncomplete(t *testing.T) {
@@ -937,6 +971,23 @@ func TestRunMarksNoCompleteReportAsIncomplete(t *testing.T) {
 
 	require.NoError(t, run(t, Config{Advisory: "GHSA-new"}, gh, eng))
 	require.NotContains(t, gh.posted["GHSA-new"], "may be incomplete")
+	require.Empty(t, agentErrors(t, gh), "a complete report kept an agent error")
+	require.NotEmpty(t, eng.role(skill.Compare), "a complete report skipped its comparisons")
+}
+
+// agentErrors reads the agent errors kept in the private reports.
+func agentErrors(t *testing.T, gh *fakeGitHub) string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(gh.outputDir, "*.agent-error.txt"))
+	require.NoError(t, err)
+	var kept strings.Builder
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		require.NoError(t, err)
+		kept.Write(data)
+	}
+
+	return kept.String()
 }
 
 func TestRunLogsEachStepWithoutTheReport(t *testing.T) {

@@ -3,6 +3,7 @@ package modelproxy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -544,6 +545,13 @@ func TestRefusalsAreLoggedWithoutTheConversation(t *testing.T) {
 	assert.Contains(t, got, `msg="model proxy refused a request" route=/v1/responses shape="{input:[{content:[{future_field:bool text:string type=input_text}] role=user}] model:string}"`)
 	assert.Contains(t, got, `msg="model proxy refused a route" method=GET route=/v1/models`)
 	assert.NotContains(t, got, "SECRET-PAYLOAD")
+}
+
+func TestShapeListsEachItemShapeOnceInOrder(t *testing.T) {
+	var v any
+	require.NoError(t, json.Unmarshal([]byte(`[{"type":"b"},{"type":"a"},{"type":"b"},1,{"type":"a"}]`), &v))
+
+	require.Equal(t, "[{type=b} {type=a} float64]", shape(v))
 }
 
 func TestProviderRefusalsAreLoggedWithoutTheirBody(t *testing.T) {

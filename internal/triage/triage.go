@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -91,13 +92,14 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	}
 	log.Info("advisories to check", "count", len(slices.DeleteFunc(slices.Clone(all), func(a github.Advisory) bool { return !selected(cfg, a) })))
 
-	// The first reference is copied once, then mounted read-only in every agent run of this execution.
+	// The first reference is copied once, then mounted read-only in every agent run of this execution. The
+	// other references are checked out once as worktrees, which the prune unregisters once their directory is gone.
 	sourceDir, err := os.MkdirTemp("", "tamis-source-")
 	if err != nil {
 		return err
 	}
+	defer func() { _ = exec.Command("git", "-C", cfg.RepoPath, "worktree", "prune").Run() }()
 	defer os.RemoveAll(sourceDir)
-	analysed := filepath.Join(sourceDir, "src")
 
 	var triaged, skipped, failed, attempted int
 	reporters := map[string]bool{}
@@ -143,13 +145,11 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		log.Info("triaging", "attempt", failures+1)
 		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
 
-		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, a, all, comments, login, revision, failures+1 >= maxAttempts, analysed, log); err != nil {
+		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, a, all, comments, login, revision, failures+1 >= maxAttempts, sourceDir, log); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
-			if agent := (*sandbox.Error)(nil); errors.As(err, &agent) {
-				if os.MkdirAll(cfg.OutputDir, 0o700) != nil || os.WriteFile(reportBase(cfg, a.GHSAID, revision)+".agent-error.txt", []byte(agent.Err.Error()), 0o600) != nil {
-					log.Error("the agent error could not be kept in the private reports")
-				}
+			if keepAgentError(cfg, a.GHSAID, revision, err) != nil {
+				log.Error("the agent error could not be kept in the private reports")
 			}
 			if !published {
 				_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed(failures+1 < maxAttempts))
@@ -168,6 +168,19 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	}
 
 	return nil
+}
+
+// keepAgentError keeps the output of a failed agent run in the private reports, since it may quote the report.
+func keepAgentError(cfg Config, ghsa, revision string, err error) error {
+	agent := (*sandbox.Error)(nil)
+	if !errors.As(err, &agent) {
+		return nil
+	}
+	if err := os.MkdirAll(cfg.OutputDir, 0o700); err != nil {
+		return err
+	}
+
+	return os.WriteFile(reportBase(cfg, ghsa, revision)+".agent-error.txt", []byte(agent.Err.Error()), 0o600)
 }
 
 // describe turns an error into text that is safe to log, keeping only status codes and known reasons.
@@ -248,7 +261,7 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, a github.
 		RepoPath: cfg.RepoPath,
 		System:   system,
 		Prompt:   readerPrompt(cfg.Repo, a, policies),
-		Report:   "Title: " + a.Summary + "\n\n" + a.Description,
+		Report:   reportText(a),
 		Schema:   schema,
 		Validate: func(raw json.RawMessage) error {
 			if err := strictDecode[report.Report](raw); err != nil {
@@ -263,11 +276,10 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, a github.
 		},
 	})
 	log.Info("reader finished", "duration", time.Since(scannedAt).Round(time.Second), "usage", spent())
-	incomplete := (*sandbox.Incomplete)(nil)
-	if err != nil && !errors.As(err, &incomplete) {
+	if err != nil && !errors.As(err, new(*sandbox.Incomplete)) {
 		return report.Report{}, err
 	}
-	r := report.Report{Policies: policies, ScannedAt: scannedAt, Incomplete: incomplete != nil}
+	r := report.Report{Policies: policies, ScannedAt: scannedAt, Incomplete: err}
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return report.Report{}, errInvalidReport
 	}
