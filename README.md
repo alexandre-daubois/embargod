@@ -1,6 +1,6 @@
 # tamis
 
-[![CI](https://github.com/alexandre-daubois/tamis/actions/workflows/ci.yml/badge.svg)](https://github.com/alexandre-daubois/tamis/actions/workflows/ci.yml)
+[![CI](https://github.com/php/tamis/actions/workflows/ci.yml/badge.svg)](https://github.com/php/tamis/actions/workflows/ci.yml)
 
 First-pass triage of private vulnerability reports on GitHub. When a new security advisory comes in, tamis has an LLM agent investigate it against the repository and posts its findings as a comment on the advisory.
 
@@ -56,7 +56,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # Replace this placeholder with the full SHA of a reviewed Tamis commit.
-      - uses: alexandre-daubois/tamis@REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA
+      - uses: php/tamis@REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA
         with:
           repository: your-org/your-project
           # A date, or an RFC 3339 time with its offset: "2026-10-22T14:30:00+02:00"

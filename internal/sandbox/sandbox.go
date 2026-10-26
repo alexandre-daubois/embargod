@@ -23,8 +23,8 @@ import (
 	"github.com/alpha-omega-security/harness/container"
 	"github.com/alpha-omega-security/harness/egress"
 
-	"github.com/alexandre-daubois/tamis/internal/modelproxy"
-	"github.com/alexandre-daubois/tamis/internal/usage"
+	"github.com/php/tamis/internal/modelproxy"
+	"github.com/php/tamis/internal/usage"
 )
 
 const (

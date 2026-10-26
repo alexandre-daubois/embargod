@@ -1,4 +1,4 @@
-module github.com/alexandre-daubois/tamis
+module github.com/php/tamis
 
 go 1.27.3
 

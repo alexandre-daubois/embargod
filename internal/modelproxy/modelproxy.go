@@ -24,8 +24,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/alexandre-daubois/tamis/internal/budget"
-	"github.com/alexandre-daubois/tamis/internal/usage"
+	"github.com/php/tamis/internal/budget"
+	"github.com/php/tamis/internal/usage"
 )
 
 const (

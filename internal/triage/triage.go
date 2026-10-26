@@ -18,15 +18,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alexandre-daubois/tamis/internal/budget"
-	"github.com/alexandre-daubois/tamis/internal/engine"
-	"github.com/alexandre-daubois/tamis/internal/github"
-	"github.com/alexandre-daubois/tamis/internal/repo"
-	"github.com/alexandre-daubois/tamis/internal/report"
-	"github.com/alexandre-daubois/tamis/internal/sandbox"
-	"github.com/alexandre-daubois/tamis/internal/tools"
-	"github.com/alexandre-daubois/tamis/internal/usage"
-	"github.com/alexandre-daubois/tamis/skill"
+	"github.com/php/tamis/internal/budget"
+	"github.com/php/tamis/internal/engine"
+	"github.com/php/tamis/internal/github"
+	"github.com/php/tamis/internal/repo"
+	"github.com/php/tamis/internal/report"
+	"github.com/php/tamis/internal/sandbox"
+	"github.com/php/tamis/internal/tools"
+	"github.com/php/tamis/internal/usage"
+	"github.com/php/tamis/skill"
 )
 
 // ProfilePath holds project-specific guidance, relative to the repository root.

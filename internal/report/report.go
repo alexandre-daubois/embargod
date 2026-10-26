@@ -16,8 +16,8 @@ import (
 
 	"github.com/git-pkgs/cwe"
 
-	"github.com/alexandre-daubois/tamis/internal/github"
-	"github.com/alexandre-daubois/tamis/internal/repo"
+	"github.com/php/tamis/internal/github"
+	"github.com/php/tamis/internal/repo"
 )
 
 // Marker identifies comments posted by tamis.

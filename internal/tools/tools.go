@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/alexandre-daubois/tamis/internal/github"
-	"github.com/alexandre-daubois/tamis/internal/repo"
+	"github.com/php/tamis/internal/github"
+	"github.com/php/tamis/internal/repo"
 )
 
 // Submit is the tool the model calls with its final answer, which ends the run.
