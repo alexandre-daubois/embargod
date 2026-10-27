@@ -1,4 +1,4 @@
 {
-  "claude": "ghcr.io/php/tamis-agent@sha256:55c5f52b81411b73f27b74d9624ce61a6068c91065b5df1261889120f6217ccf",
-  "codex": "ghcr.io/php/tamis-agent@sha256:7910969905b5ad8a6e5527bfaf946043573909cd47c952317b7d3e1ddcdbc217"
+  "claude": "ghcr.io/php/tamis-agent@sha256:0326f492dc34293602c9e82069afacdc8f73ad1f13655fc1073a142d6b2db78c",
+  "codex": "ghcr.io/php/tamis-agent@sha256:0b96c8a46958e097bbded99a7e23c16f07bf23213dd9d449bed19b1f891a9498"
 }
