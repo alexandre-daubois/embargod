@@ -104,7 +104,7 @@ func TestVerifyDropsWhatDoesNotExist(t *testing.T) {
 	}
 }
 
-func TestVerifyOnlyKeepsExactUnpublishedDuplicates(t *testing.T) {
+func TestVerifyKeepsUnpublishedDuplicatesForThePrivateReport(t *testing.T) {
 	c := checker(t)
 	c.Advisories = map[string]github.Advisory{
 		"GHSA-pub":    {State: "published", HTMLURL: "https://x/pub"},
@@ -116,7 +116,7 @@ func TestVerifyOnlyKeepsExactUnpublishedDuplicates(t *testing.T) {
 	}
 	r := Report{Duplicates: []Duplicate{
 		{GHSAID: "GHSA-pub", Confidence: "low"},
-		{GHSAID: "GHSA-exact", Confidence: "high", Exact: true},
+		{GHSAID: "GHSA-exact", Confidence: "high", Exact: true, Confirmed: true},
 		{GHSAID: "GHSA-near", Confidence: "high"},
 		{GHSAID: "GHSA-draft", Confidence: "medium"},
 		{GHSAID: "GHSA-closed", Confidence: "high", Exact: true},
@@ -129,11 +129,13 @@ func TestVerifyOnlyKeepsExactUnpublishedDuplicates(t *testing.T) {
 	for _, d := range r.Duplicates {
 		kept = append(kept, d.GHSAID)
 	}
-	require.Equal(t, []string{"GHSA-pub", "GHSA-exact", "GHSA-closed"}, kept)
+	require.Equal(t, []string{"GHSA-pub", "GHSA-exact", "GHSA-near", "GHSA-draft", "GHSA-closed", "GHSA-mixed"}, kept)
 	require.True(t, r.Duplicates[0].Published)
 	require.False(t, r.Duplicates[1].Published)
 	require.Equal(t, "https://x/exact", r.Duplicates[1].URL)
 	require.Zero(t, r.Removed)
+	require.Contains(t, RenderPrivate(r), "GHSA-near")
+	require.NotContains(t, Render(r), "GHSA-near")
 }
 
 func TestVerifyFailsOnGitHubErrors(t *testing.T) {
@@ -187,9 +189,9 @@ func TestRender(t *testing.T) {
 		"> Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.",
 		"Heap overflow claimed, cc @\u200bsomeone\n",
 		"| Advisory | Status | Confidence |",
-		"| [GHSA-real](https://x/GHSA-real) | Unpublished | High • Exact duplicate |",
+		"| [GHSA-real](https://x/GHSA-real) | Unpublished | High • Proposed exact duplicate |",
 		"| [GHSA-near](https://x/GHSA-near) | Published | Low |",
-		"_Unpublished advisories are only listed as exact duplicates, without their title._",
+		"_The reporter-visible comment only lists unpublished advisories after a separate exact-duplicate confirmation, without their title._",
 		"| Issue or PR | Title | Confidence |",
 		"| [PR #12](https://x/12) | Harden | Medium |",
 		"| [Issue #13](https://x/13) | Crash | Low |",
@@ -208,7 +210,7 @@ func TestRender(t *testing.T) {
 
 func TestRenderShowsOnlyExactUnpublishedMatches(t *testing.T) {
 	r := Report{Duplicates: []Duplicate{
-		{GHSAID: "EXACT-ID", Confidence: "high", Exact: true},
+		{GHSAID: "EXACT-ID", Confidence: "high", Exact: true, Confirmed: true},
 		{GHSAID: "UNSURE-ID", Confidence: "medium", Exact: true},
 		{GHSAID: "PARTIAL-ID", Confidence: "high"},
 		{GHSAID: "PUBLIC-ID", Confidence: "low", Published: true},

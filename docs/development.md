@@ -67,8 +67,8 @@ The comment is posted for real. An advisory with a completed comment from the co
 | `internal/triage` | Advisory selection and the triage pipeline |
 | `internal/sandbox` | The agent container, through harness |
 | `internal/modelproxy` | The proxy keeping the model key on the host |
-| `internal/engine` | The in-process model loop of the duplicate search |
-| `internal/tools` | The duplicate search's read-only tools |
+| `internal/engine` | The in-process model loop of exact duplicate confirmation |
+| `internal/tools` | The exact duplicate confirmation's read-only tools |
 | `internal/report` | Report schema, verification and rendering |
 | `internal/repo` | Read-only access to tracked files |
 | `internal/github` | GitHub REST client |

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
 	"github.com/php/tamis/internal/repo"
 	"github.com/php/tamis/internal/report"
@@ -47,7 +48,7 @@ func advisoryRevision(a github.Advisory, comments []github.Comment, login string
 	return hex.EncodeToString(sum[:])
 }
 
-func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, sourceDir string, log *slog.Logger) (bool, error) {
+func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, sourceDir string, log *slog.Logger) (bool, error) {
 	var comparisonErr error
 	var others []github.Advisory
 	byID := map[string]github.Advisory{}
@@ -115,6 +116,14 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 			matches := report.Report{Duplicates: duplicates}
 			if err := (report.Checker{Advisories: byID}).Verify(ctx, &matches); err != nil {
 				return false, err
+			}
+			skipped, err := confirmPrivateDuplicates(ctx, path, reader, eng, r, input, matches.Duplicates, byID, log)
+			if skipped > 0 {
+				privateNote += fmt.Sprintf("\n%d private exact candidate(s) were not confirmed.\n", skipped)
+			}
+			if err != nil {
+				comparisonErr = errors.Join(comparisonErr, err)
+				privateNote += "\nPrivate exact duplicate confirmation could not complete.\n"
 			}
 			r.Duplicates = matches.Duplicates
 		}

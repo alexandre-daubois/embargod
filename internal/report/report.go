@@ -101,13 +101,15 @@ type Duplicate struct {
 	URL        string    `json:"-"`
 	Published  bool      `json:"-"`
 	CreatedAt  time.Time `json:"-"`
+	// Confirmed records a separate, single-candidate check owned by the host.
+	Confirmed bool `json:"-"`
 }
 
 // visible says whether the reporter may see d.
 func (d Duplicate) visible() bool {
 	// A reporter learns nothing from an exact duplicate of their own bug, a partial match on an
 	// unpublished advisory would reveal another report.
-	return d.Published || d.Exact && d.Confidence == "high"
+	return d.Published || d.Confirmed && d.Exact && d.Confidence == "high"
 }
 
 type Related struct {
@@ -335,8 +337,7 @@ type Checker struct {
 
 // Verify drops claims pointing at things that do not exist and fills the facts from GitHub.
 func (c Checker) Verify(ctx context.Context, r *Report) error {
-	// Dropped duplicates are not counted in Removed: the count would tell the reporter that an
-	// unpublished advisory came close.
+	// Duplicates stay available to RenderPrivate. Render applies the public disclosure boundary.
 	dups := r.Duplicates[:0]
 	seen := map[string]bool{}
 	for _, d := range r.Duplicates {
@@ -347,9 +348,6 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 		}
 		seen[key] = true
 		d.URL, d.Published, d.CreatedAt = a.HTMLURL, a.State == "published", a.CreatedAt
-		if !d.visible() {
-			continue
-		}
 		dups = append(dups, d)
 	}
 	r.Duplicates = dups
@@ -504,8 +502,10 @@ func RenderPrivate(r Report) string {
 			advisory += " (oldest report)"
 		}
 		confidence := label(d.Confidence)
-		if d.Exact {
+		if d.Exact && (d.Published || d.Confirmed) {
 			confidence += " • Exact duplicate"
+		} else if d.Exact {
+			confidence += " • Proposed exact duplicate"
 		}
 		status := "Unpublished"
 		if d.Published {
@@ -514,7 +514,7 @@ func RenderPrivate(r Report) string {
 		// No title: the reporter reads this comment, and other advisories may still be under embargo.
 		fmt.Fprintf(&b, "| %s | %s | %s |\n", advisory, status, confidence)
 	}
-	b.WriteString("\n_Unpublished advisories are only listed as exact duplicates, without their title._\n")
+	b.WriteString("\n_The reporter-visible comment only lists unpublished advisories after a separate exact-duplicate confirmation, without their title._\n")
 
 	b.WriteString("\n#### Related issues and pull requests\n\n")
 	if len(r.Related) == 0 {

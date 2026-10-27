@@ -23,7 +23,9 @@ The JSON is decoded strictly: an unknown or mistyped field sends the error back 
 
 ## 3. Duplicate search
 
-One offline agent then searches every other advisory of the repository for the same bug, whatever their state: published, in triage, draft or closed, since a closed duplicate tells the maintainers the issue was already handled. It gets the report, the clues whose location exists in the checkout, and one file per advisory, which it greps and reads the way a maintainer would, and the code read-only for the cases the texts leave open. The report, the clues and the advisories remain hostile data. It answers with the identifiers of the duplicates it found, each with a confidence and an exact flag, and an identifier outside the advisories it was given is refused. All models share the advisory and run budgets.
+One offline agent then searches every other advisory of the repository for the same bug, whatever their state: published, in triage, draft or closed, since a closed duplicate tells the maintainers the issue was already handled. It gets the report, the clues whose location exists in the checkout, and one file per advisory, which it greps and reads the way a maintainer would, and the code read-only for the cases the texts leave open. The report, the clues and the advisories remain hostile data. It answers with the identifiers of the duplicates it found, each with a confidence and an exact flag, and an identifier outside the advisories it was given is refused.
+
+The full search result is preserved in the private report. Each unpublished candidate called exact with high confidence is checked again in its own model context, which receives the report, that candidate without its identifier, the checked clues and the code. It returns one `exact` boolean. Only the host knows which candidate that answer belongs to and copies a confirmed identifier into the public comment. All models share the advisory and run budgets.
 
 ## 4. Verification and comment
 
@@ -31,12 +33,12 @@ Before posting, tamis checks every claim against GitHub and the checkout:
 
 | Claim | Check |
 |---|---|
-| Duplicates | Must be one of the advisories the search was given. An unpublished advisory appears, by identifier only, when the search calls it an exact duplicate with high confidence. Partial matches on unpublished advisories are dropped. |
+| Duplicates | Must be one of the advisories the search was given. Its complete result is preserved privately. An unpublished advisory appears publicly, by identifier only, after its exact, high-confidence result passes a separate one-candidate confirmation. |
 | Issues and pull requests | Must exist. Titles and links come from GitHub, not from the model. |
 | Cited code | Only references named in the report are kept, each marked as found in the repository or not. A cited line and the code the report quotes there are kept only when the report contains them. The quote is looked up in the file at the scanned commit, nearest the cited line, and when it is gone, `git log -S` names the commit that last changed it, since reports often target another version. |
 | CWE and CVSS | Must be well-formed. CWE names come from the MITRE catalogue. |
 
-Claims that fail a check are dropped, and the comment counts them. Just before publication, the current report and non-bot comments are read again; if they changed, no result is posted. The public comment is saved before publication. A failed duplicate search leaves the duplicates out of the comment, is marked in the private report, and does not invalidate the published triage. A failure before publication leaves the advisory retriable.
+Claims that fail a check are dropped, and the comment counts them. Just before publication, the current report and non-bot comments are read again; if they changed, no result is posted. The public comment is saved before publication. A failed duplicate search leaves the duplicates out of the comment; a failed exact confirmation leaves that unpublished candidate out. Both are marked in the private report and do not invalidate the published triage. A failure before publication leaves the advisory retriable.
 
 ## The comment
 
