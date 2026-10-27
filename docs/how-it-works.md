@@ -25,7 +25,11 @@ The JSON is decoded strictly: an unknown or mistyped field sends the error back 
 
 One offline agent then searches every other advisory of the repository for the same bug, whatever their state: published, in triage, draft or closed, since a closed duplicate tells the maintainers the issue was already handled. It gets the report, the clues whose location exists in the checkout, and one file per advisory, which it greps and reads the way a maintainer would, and the code read-only for the cases the texts leave open. The report, the clues and the advisories remain hostile data. It answers with the identifiers of the duplicates it found, each with a confidence and an exact flag, and an identifier outside the advisories it was given is refused.
 
-The full search result is preserved in the private report. Each unpublished candidate called exact with high confidence is checked again in its own model context, which receives the report, that candidate without its identifier, the checked clues and the code. It returns one `exact` boolean. Only the host knows which candidate that answer belongs to and copies a confirmed identifier into the public comment. All models share the advisory and run budgets.
+The full search result is preserved in the private report. Each unpublished candidate called exact with high confidence is checked again in its own model context, which receives the report, that candidate without its identifier, the checked clues and the code. It returns one `exact` boolean. Only the host knows which candidate that answer belongs to and copies a confirmed identifier into the public comment. All models share the advisory and run budgets. The log records the confirmation duration, usage and number of confirmed candidates.
+
+Both stages compare concrete defects, including secondary findings in a report. A different PoC, version, configuration or severity estimate does not turn the same defective operation into a different bug. An exact match requires positive evidence of a shared defect; a similar symptom or a broad patch fixing several independent defects is insufficient. An exact match does not settle any additional findings in either report, which maintainers must still review before closing it.
+
+Matching is separate from judging validity: an issue already fixed or rejected under the security policy can still be a duplicate. A finding explicitly split into a separate advisory, however, no longer belongs to the current report's scope.
 
 ## 4. Verification and comment
 

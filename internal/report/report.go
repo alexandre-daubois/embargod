@@ -514,7 +514,7 @@ func RenderPrivate(r Report) string {
 		// No title: the reporter reads this comment, and other advisories may still be under embargo.
 		fmt.Fprintf(&b, "| %s | %s | %s |\n", advisory, status, confidence)
 	}
-	b.WriteString("\n_The reporter-visible comment only lists unpublished advisories after a separate exact-duplicate confirmation, without their title._\n")
+	b.WriteString("\n_The reporter-visible comment only lists unpublished advisories after a separate exact-duplicate confirmation, without their title. A match covers the shared vulnerability; review any additional findings before closing the report._\n")
 
 	b.WriteString("\n#### Related issues and pull requests\n\n")
 	if len(r.Related) == 0 {

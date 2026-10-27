@@ -198,6 +198,8 @@ func TestRunPublishesAPrivateExactMatchOnlyAfterSeparateConfirmation(t *testing.
 			require.Len(t, eng.role(skill.Compare), 1, "the global duplicate search changed")
 			confirmations := eng.confirmations()
 			require.Len(t, confirmations, 1, "the private candidate was not confirmed separately")
+			require.Equal(t, skill.Confirm, confirmations[0].system)
+			require.ElementsMatch(t, []string{"grep_code", "read_file", "git_log", tools.Submit}, confirmations[0].tools)
 			require.Contains(t, confirmations[0].prompt, "Overflow in php_foo", "the confirmation misses the candidate")
 			require.NotContains(t, confirmations[0].prompt, "GHSA-old", "the model, rather than the host, received the private identifier")
 		})
@@ -211,10 +213,89 @@ func TestRunConfirmsAPrivateExactMatchInASeparateOfflineAgentWithAnAccessToken(t
 
 	confirmations := eng.confirmations()
 	require.Len(t, confirmations, 1)
+	require.Equal(t, skill.Confirm, confirmations[0].system)
 	require.True(t, confirmations[0].offline)
 	require.Contains(t, string(confirmations[0].files["candidate.md"]), "Overflow in php_foo")
 	require.NotContains(t, string(confirmations[0].files["candidate.md"]), "GHSA-old", "the model, rather than the host, received the private identifier")
 	require.Len(t, confirmations[0].files, 1, "the separate agent received more than its one candidate")
+}
+
+func TestExactConfirmationRequiresOneBooleanAndNoOtherData(t *testing.T) {
+	for name, tc := range map[string]struct {
+		raw   string
+		valid bool
+	}{
+		"confirmed":       {`{"exact":true}`, true},
+		"rejected":        {`{"exact":false}`, true},
+		"missing":         {`{}`, false},
+		"null":            {`{"exact":null}`, false},
+		"wrong type":      {`{"exact":"true"}`, false},
+		"private text":    {`{"exact":true,"reason":"SECRET-PAYLOAD"}`, false},
+		"identifier":      {`{"exact":true,"ghsa_id":"GHSA-other"}`, false},
+		"trailing object": {`{"exact":true}{"exact":false}`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.valid, validateExactConfirmation(json.RawMessage(tc.raw)) == nil)
+		})
+	}
+}
+
+func TestDuplicateSearchRejectsIncompleteAndAmbiguousAnswers(t *testing.T) {
+	for name, tc := range map[string]struct {
+		raw   string
+		valid bool
+	}{
+		"empty search":       {`{"duplicates":[]}`, true},
+		"exact match":        {`{"duplicates":[{"ghsa_id":"GHSA-known","confidence":"high","exact":true}]}`, true},
+		"partial match":      {`{"duplicates":[{"ghsa_id":"GHSA-known","confidence":"medium","exact":false}]}`, true},
+		"missing search":     {`{}`, false},
+		"null search":        {`{"duplicates":null}`, false},
+		"missing decision":   {`{"duplicates":[{"ghsa_id":"GHSA-known","confidence":"high"}]}`, false},
+		"null decision":      {`{"duplicates":[{"ghsa_id":"GHSA-known","confidence":"high","exact":null}]}`, false},
+		"unknown identifier": {`{"duplicates":[{"ghsa_id":"GHSA-other","confidence":"high","exact":true}]}`, false},
+		"unknown confidence": {`{"duplicates":[{"ghsa_id":"GHSA-known","confidence":"certain","exact":true}]}`, false},
+		"extra text":         {`{"duplicates":[{"ghsa_id":"GHSA-known","confidence":"high","exact":true,"reason":"SECRET-PAYLOAD"}]}`, false},
+		"contradictory matches": {`{"duplicates":[{"ghsa_id":"GHSA-known","confidence":"high","exact":false},
+{"ghsa_id":"GHSA-known","confidence":"high","exact":true}]}`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := decodeDuplicateSearch(json.RawMessage(tc.raw), map[string][]byte{"advisories/GHSA-known.md": []byte("candidate")})
+			require.Equal(t, tc.valid, err == nil, "%v", err)
+		})
+	}
+}
+
+func TestPrivateConfirmationsOnlySpendBudgetOnEligibleCandidates(t *testing.T) {
+	var duplicates []report.Duplicate
+	advisories := map[string]github.Advisory{}
+	for i := range maxPrivateConfirmations + 2 {
+		id := fmt.Sprintf("GHSA-candidate-%02d", i)
+		advisories[id] = github.Advisory{GHSAID: id, State: "closed", Summary: id}
+		duplicates = append(duplicates, report.Duplicate{GHSAID: id, Confidence: "high", Exact: true})
+	}
+	for _, d := range []report.Duplicate{
+		{GHSAID: "GHSA-public", Published: true, Confidence: "high", Exact: true},
+		{GHSAID: "GHSA-partial", Confidence: "high"},
+		{GHSAID: "GHSA-unsure", Confidence: "medium", Exact: true},
+	} {
+		state := "triage"
+		if d.Published {
+			state = "published"
+		}
+		advisories[d.GHSAID] = github.Advisory{GHSAID: d.GHSAID, State: state}
+		duplicates = append(duplicates, d)
+	}
+	eng := &fakeEngine{}
+	skipped, err := confirmPrivateDuplicates(t.Context(), gitRepo(t, nil), eng, eng, report.Report{}, github.Advisory{}, duplicates, advisories, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	require.Equal(t, 2, skipped)
+	require.Len(t, eng.confirmations(), maxPrivateConfirmations)
+	for i, d := range duplicates {
+		require.Equal(t, i < maxPrivateConfirmations, d.Confirmed, "%s", d.GHSAID)
+	}
+	for _, call := range eng.confirmations() {
+		require.Equal(t, 1, strings.Count(call.prompt, "GHSA-candidate-"), "another candidate reached a confirmation context")
+	}
 }
 
 func TestUnpublishedComparisonsShowOnlyExactMatchesAndFailuresKeepTheComment(t *testing.T) {
@@ -1057,6 +1138,7 @@ func TestRunLogsEachStepWithoutTheReport(t *testing.T) {
 	got := logs.String()
 	require.Regexp(t, `msg="reader finished" advisory=GHSA-new duration=\S+ usage.requests=1 `, got)
 	require.Regexp(t, `msg="duplicate search finished" advisory=GHSA-new duration=\S+ usage.requests=1 `, got)
+	require.Regexp(t, `msg="exact confirmations finished" advisory=GHSA-new duration=\S+ candidates=1 confirmed=1 complete=true usage.requests=1 `, got)
 	require.Regexp(t, `msg=triaged advisory=GHSA-new usage.requests=3 `, got, "the advisory total lost the steps")
 	for _, step := range []string{`msg="advisories to check" count=1`, `msg=triaging advisory=GHSA-new attempt=1`, `msg="reading the report and the code" advisory=GHSA-new`, `msg="searching duplicates" advisory=GHSA-new advisories=3`, `msg="confirming unpublished exact duplicates" advisory=GHSA-new candidates=1`, `msg="posting the comment" advisory=GHSA-new`} {
 		require.Contains(t, got, step)
