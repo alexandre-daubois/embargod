@@ -12,3 +12,8 @@ var Text string
 //
 //go:embed compare.md
 var Compare string
+
+// Confirm is the method for checking one candidate in a separate context.
+//
+//go:embed confirm.md
+var Confirm string

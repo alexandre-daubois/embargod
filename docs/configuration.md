@@ -12,7 +12,7 @@
 | `since` | | Only advisories created after this date (`2026-10-22` or RFC 3339) are triaged. Required unless `advisory` is set. |
 | `advisory` | | Triage this GHSA only, whatever its state and creation date. |
 | `engine` | `claude` | `claude` (Claude Code and the Anthropic API) or `openai` (Codex and the OpenAI API). |
-| `model` | `claude-opus-5-5` / `gpt-5.5` | Model used by both the agent and the duplicate search. `gpt-6.1-sol` with a Codex access token. |
+| `model` | `claude-opus-5-5` / `gpt-5.5` | Model used by the reader, duplicate search and exact confirmation. `gpt-6.1-sol` with a Codex access token. |
 | `daybreak` | `false` | Turn on OpenAI's Daybreak cyber access program in Codex. `openai` engine only, and the API key's organisation must be approved for it. |
 | `runner-image` | tamis agent image, pinned by digest | Image the agent runs in. It must contain the agent CLI, git, curl and `harness-proxy`. A custom image skips the attestation check. |
 | `references` | | Whitespace-separated local git references, one for each supported branch. The first is analysed, the code the report cites is located on all of them. Required, at most ten. A missing reference fails the analysis. |
@@ -27,11 +27,11 @@ Fetch the configured references with `fetch-depth: 0`. For php-src, include the 
 
 ## Private reports
 
-The private artifact contains a full `.md` report and a `.comment.md` copy of the reporter-visible text. Both list the same duplicates, and the full report also notes a duplicate search that could not complete. Each copy names the source commit and input revision it covers. When an agent run fails, an `.agent-error.txt` file keeps the agent's error output and the error events of its JSON output, which may quote the report.
+The private artifact contains a full `.md` report with every duplicate proposed by the global search and a `.comment.md` copy of the reporter-visible text, limited to published duplicates and separately confirmed exact unpublished duplicates. The full report also notes a duplicate search or confirmation that could not complete. Each copy names the source commit and input revision it covers. When an agent run fails, an `.agent-error.txt` file keeps the agent's error output and the error events of its JSON output, which may quote the report.
 
 ## Resource budgets
 
-An execution permits at most 800 provider requests and 256 MiB of cumulative request bodies. Each advisory shares 200 requests and 64 MiB across its reader run and comparisons; each agent token additionally permits 150 requests, not counting the refused routes Codex calls on every run. A request body cannot exceed 1 MiB. API responses request at most 16,000 output tokens; the ChatGPT backend has its own output limits. The thirty-minute advisory deadline also cancels host-side git commands. At most ten reports and one report per known reporter are attempted per execution, and a report is only started while the execution still has a whole advisory budget, otherwise it waits for the next execution. SDK retries are disabled.
+An execution permits at most 800 provider requests and 256 MiB of cumulative request bodies. Each advisory shares 200 requests and 64 MiB across its reader run and comparisons; each agent token additionally permits 150 requests, not counting the refused routes Codex calls on every run. A request body cannot exceed 1 MiB. API responses request at most 16,000 output tokens; the ChatGPT backend has its own output limits. The thirty-minute advisory deadline also cancels host-side git commands. At most ten unpublished exact candidates are separately confirmed. At most ten reports and one report per known reporter are attempted per execution, and a report is only started while the execution still has a whole advisory budget, otherwise it waits for the next execution. SDK retries are disabled.
 
 These bounds limit each execution, not spending across scheduled runs. Use a dedicated provider account/project with an enforced spending or credit ceiling, restrict models, disable hosted tools and network allowlists there, and configure billing alerts. Provider pricing, tokenisation and ChatGPT credit policies differ, so byte/request limits are not a monetary guarantee. Keep a workflow `timeout-minutes` and a single concurrency group. Budget exhaustion leaves a report retriable rather than marking it permanently complete.
 
@@ -50,7 +50,7 @@ The comment lists the files it was checked against. Without any of them, the sec
 
 ## Engines
 
-| Engine | Agent CLI | Duplicate search | Model API |
+| Engine | Reader and global search | Exact confirmation | Model API |
 |---|---|---|---|
 | `claude` | Claude Code | Anthropic API | `api.anthropic.com` |
 | `openai` | Codex | OpenAI Chat Completions | `api.openai.com` |

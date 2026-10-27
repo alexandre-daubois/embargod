@@ -18,12 +18,15 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/php/tamis/internal/budget"
 	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
 	"github.com/php/tamis/internal/repo"
 	"github.com/php/tamis/internal/report"
 	"github.com/php/tamis/internal/sandbox"
+	"github.com/php/tamis/internal/tools"
 	"github.com/php/tamis/internal/usage"
 	"github.com/php/tamis/skill"
 )
@@ -32,10 +35,12 @@ import (
 const ProfilePath = ".github/tamis.md"
 
 const (
-	maxTriagesPerRun      = 10
-	maxAdvisoryDuration   = 30 * time.Minute
-	maxComparatorRequests = 200
-	maxAttempts           = 3
+	maxTriagesPerRun        = 10
+	maxAdvisoryDuration     = 30 * time.Minute
+	maxComparatorRequests   = 200
+	maxAttempts             = 3
+	maxPrivateConfirmations = 10
+	parallelConfirmations   = 4
 )
 
 var (
@@ -145,7 +150,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		log.Info("triaging", "attempt", failures+1)
 		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
 
-		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, a, all, comments, login, revision, failures+1 >= maxAttempts, sourceDir, log); err != nil {
+		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, eng, a, all, comments, login, revision, failures+1 >= maxAttempts, sourceDir, log); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
 			if keepAgentError(cfg, a.GHSAID, revision, err) != nil {
@@ -330,41 +335,176 @@ func findDuplicates(ctx context.Context, repoPath string, reader Reader, r repor
 		Offline:  true,
 		Files:    files,
 		Validate: func(raw json.RawMessage) error {
-			if err := strictDecode[duplicateSearch](raw); err != nil {
-				return err
-			}
-			var found duplicateSearch
-			if err := json.Unmarshal(raw, &found); err != nil {
-				return err
-			}
-			for _, d := range found.Duplicates {
-				if files["advisories/"+d.GHSAID+".md"] == nil {
-					return fmt.Errorf("%q is not one of the advisories in /work/advisories", d.GHSAID)
-				}
-				if !slices.Contains([]string{"low", "medium", "high"}, d.Confidence) {
-					return errors.New("confidence must be low, medium or high")
-				}
-			}
-
-			return nil
+			_, err := decodeDuplicateSearch(raw, files)
+			return err
 		},
 	})
 	log.Info("duplicate search finished", "duration", time.Since(start).Round(time.Second), "usage", spent())
 	if err != nil {
 		return nil, err
 	}
-	var found duplicateSearch
-	if err := json.Unmarshal(raw, &found); err != nil {
-		return nil, errInvalidReport
+
+	return decodeDuplicateSearch(raw, files)
+}
+
+type exactConfirmation struct {
+	Exact *bool `json:"exact"`
+}
+
+var exactConfirmationProperties = map[string]any{
+	"exact": map[string]any{"type": "boolean", "description": "Whether both reports describe the same concrete vulnerability, corrected by the same fix"},
+}
+
+// confirmPrivateDuplicates separately checks the unpublished exact matches proposed by the global search.
+// Its output has no identifier; the host binds each result to the candidate it supplied.
+func confirmPrivateDuplicates(ctx context.Context, repoPath string, reader Reader, eng engine.Engine, r report.Report, a github.Advisory, duplicates []report.Duplicate, advisories map[string]github.Advisory, log *slog.Logger) (int, error) {
+	type candidate struct {
+		index    int
+		advisory github.Advisory
+	}
+	var candidates []candidate
+	for i, d := range duplicates {
+		advisory := advisories[d.GHSAID]
+		if advisory.State != "published" && d.Exact && d.Confidence == "high" {
+			candidates = append(candidates, candidate{i, advisory})
+		}
+	}
+	slices.SortFunc(candidates, func(a, b candidate) int { return strings.Compare(a.advisory.GHSAID, b.advisory.GHSAID) })
+	skipped := max(0, len(candidates)-maxPrivateConfirmations)
+	candidates = candidates[:min(len(candidates), maxPrivateConfirmations)]
+	if len(candidates) == 0 {
+		return skipped, nil
 	}
 
-	return found.Duplicates, nil
+	log.Info("confirming unpublished exact duplicates", "candidates", len(candidates))
+	start := time.Now()
+	ctx, spent := usage.Track(ctx)
+	clues := verifiedClues(repo.Repo{Dir: repoPath, Context: ctx}, r)
+	var g errgroup.Group
+	g.SetLimit(parallelConfirmations)
+	for _, candidate := range candidates {
+		g.Go(func() (err error) {
+			defer func() {
+				if recover() != nil {
+					err = errors.New("an exact confirmation panicked")
+				}
+			}()
+			exact, err := confirmPrivateDuplicate(ctx, repoPath, reader, eng, clues, reportText(a), candidate.advisory)
+			if err == nil && exact {
+				duplicates[candidate.index].Confirmed = true
+			}
+
+			return err
+		})
+	}
+
+	err := g.Wait()
+	confirmed := 0
+	for _, candidate := range candidates {
+		if duplicates[candidate.index].Confirmed {
+			confirmed++
+		}
+	}
+	log.Info("exact confirmations finished", "duration", time.Since(start).Round(time.Second), "candidates", len(candidates), "confirmed", confirmed, "complete", err == nil, "usage", spent())
+
+	return skipped, err
+}
+
+func confirmPrivateDuplicate(ctx context.Context, repoPath string, reader Reader, eng engine.Engine, clues report.Comparison, text string, candidate github.Advisory) (bool, error) {
+	required := []string{"exact"}
+	var raw json.RawMessage
+	var err error
+	if eng != nil {
+		prompt, _ := json.Marshal(map[string]any{"new_report": text, "candidate": advisoryDocument(candidate), "clues": clues})
+		raw, err = eng.Run(ctx, skill.Confirm, "Compare these two documents and submit the decision:\n\n"+string(prompt), append(tools.Code(repo.Repo{Dir: repoPath, Context: ctx}), tools.Tool{
+			Name: tools.Submit, Description: "Submit the exact duplicate decision.", Properties: exactConfirmationProperties, Required: required,
+			Run: func(_ context.Context, input json.RawMessage) (string, error) {
+				return "", validateExactConfirmation(input)
+			},
+		}))
+	} else {
+		schema, schemaErr := json.Marshal(map[string]any{"type": "object", "properties": exactConfirmationProperties, "required": required, "additionalProperties": false})
+		if schemaErr != nil {
+			return false, schemaErr
+		}
+		cluesJSON, _ := json.Marshal(clues)
+		raw, err = reader.Read(ctx, sandbox.Request{
+			RepoPath: repoPath,
+			System:   skill.Confirm,
+			Prompt:   "Read the new report in /work/report.md and the candidate in /work/candidate.md. The repository and its history are read-only in /work/src. The verified code clues are " + string(cluesJSON) + ". Compare their concrete findings using the duplicate confirmation method. Write only the decision to /work/report.json following /work/schema.json and stop.",
+			Report:   text,
+			Schema:   schema,
+			Offline:  true,
+			Files:    map[string][]byte{"candidate.md": []byte(advisoryDocument(candidate))},
+			Validate: validateExactConfirmation,
+		})
+	}
+	if err != nil {
+		return false, err
+	}
+	var confirmation exactConfirmation
+	if err := validateExactConfirmation(raw); err != nil {
+		return false, errInvalidReport
+	}
+	_ = json.Unmarshal(raw, &confirmation)
+
+	return *confirmation.Exact, nil
+}
+
+func validateExactConfirmation(raw json.RawMessage) error {
+	if err := strictDecode[exactConfirmation](raw); err != nil {
+		return err
+	}
+	var confirmation exactConfirmation
+	if err := json.Unmarshal(raw, &confirmation); err != nil {
+		return err
+	}
+	if confirmation.Exact == nil {
+		return errors.New("exact is required")
+	}
+
+	return nil
 }
 
 var ghsaID = regexp.MustCompile(`^GHSA-[0-9A-Za-z-]+$`)
 
 type duplicateSearch struct {
-	Duplicates []report.Duplicate `json:"duplicates"`
+	Duplicates []struct {
+		GHSAID     string `json:"ghsa_id"`
+		Confidence string `json:"confidence"`
+		Exact      *bool  `json:"exact"`
+	} `json:"duplicates"`
+}
+
+func decodeDuplicateSearch(raw json.RawMessage, files map[string][]byte) ([]report.Duplicate, error) {
+	if err := strictDecode[duplicateSearch](raw); err != nil {
+		return nil, err
+	}
+	var found duplicateSearch
+	_ = json.Unmarshal(raw, &found)
+	if found.Duplicates == nil {
+		return nil, errors.New("duplicates must be an array, empty when no matches were found")
+	}
+	duplicates := make([]report.Duplicate, 0, len(found.Duplicates))
+	seen := map[string]bool{}
+	for _, d := range found.Duplicates {
+		if files["advisories/"+d.GHSAID+".md"] == nil {
+			return nil, fmt.Errorf("%q is not one of the advisories in /work/advisories", d.GHSAID)
+		}
+		if seen[d.GHSAID] {
+			return nil, errors.New("each advisory must appear only once")
+		}
+		seen[d.GHSAID] = true
+		if !slices.Contains([]string{"low", "medium", "high"}, d.Confidence) {
+			return nil, errors.New("confidence must be low, medium or high")
+		}
+		if d.Exact == nil {
+			return nil, errors.New("each match requires an exact boolean")
+		}
+		duplicates = append(duplicates, report.Duplicate{GHSAID: d.GHSAID, Confidence: d.Confidence, Exact: *d.Exact})
+	}
+
+	return duplicates, nil
 }
 
 var duplicateSchema = map[string]any{
