@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,7 +53,7 @@ func checker(t *testing.T) Checker {
 		Repo:       "o/r",
 		Issues:     fakeIssues{12: {Number: 12, Title: "Harden len check", State: "open", HTMLURL: "https://github.com/o/r/pull/12", PullRequest: &struct{}{}}},
 		Code:       codeRepo(t),
-		Advisories: map[string]github.Advisory{"GHSA-real": {GHSAID: "GHSA-real", Summary: "Overflow in real_func", State: "published", HTMLURL: "https://github.com/o/r/security/advisories/GHSA-real"}},
+		Advisories: map[string]github.Advisory{"GHSA-real": {GHSAID: "GHSA-real", Summary: "Overflow in real_func", State: "published", HTMLURL: "https://github.com/o/r/security/advisories/GHSA-real", CreatedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)}},
 	}
 }
 
@@ -73,6 +74,7 @@ func TestVerifyKeepsWhatExists(t *testing.T) {
 	require.Len(t, r.CWE, 1, "nothing should be removed: %+v", r)
 	require.NotEmpty(t, r.CVSS.Vector, "nothing should be removed: %+v", r)
 	require.Equal(t, "https://github.com/o/r/security/advisories/GHSA-real", r.Duplicates[0].URL, "facts not filled: %+v", r)
+	require.Equal(t, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), r.Duplicates[0].CreatedAt, "facts not filled: %+v", r)
 	require.Equal(t, "Harden len check", r.Related[0].Title, "facts not filled: %+v", r)
 	require.True(t, r.Related[0].PullRequest, "facts not filled: %+v", r)
 	require.True(t, r.CodeReferences[0].Found, "references should be found: %+v", r.CodeReferences)
@@ -217,6 +219,24 @@ func TestRenderShowsOnlyExactUnpublishedMatches(t *testing.T) {
 	require.NotContains(t, body, "UNSURE-ID", "an unpublished match below high confidence reached the comment")
 	require.NotContains(t, body, "PARTIAL-ID", "a partial unpublished match reached the comment")
 	require.Contains(t, RenderPrivate(r), "PARTIAL-ID", "public rendering modified the private result")
+}
+
+func TestRenderMarksTheOldestReport(t *testing.T) {
+	day := func(d int) time.Time { return time.Date(2026, 1, d, 0, 0, 0, 0, time.UTC) }
+	duplicates := []Duplicate{
+		{GHSAID: "GHSA-new", URL: "u", Confidence: "high", Exact: true, Published: true, CreatedAt: day(7)},
+		{GHSAID: "GHSA-old", URL: "u", Confidence: "high", Exact: true, Published: true, CreatedAt: day(5)},
+		{GHSAID: "GHSA-partial", URL: "u", Confidence: "low", Published: true, CreatedAt: day(3)},
+		{GHSAID: "GHSA-undated", URL: "u", Confidence: "high", Exact: true, Published: true},
+	}
+
+	got := Render(Report{CreatedAt: day(10), Duplicates: duplicates})
+	assert.Contains(t, got, "| [GHSA-old](u) (oldest report) |")
+	assert.Equal(t, 1, strings.Count(got, "(oldest report)"), got)
+
+	for _, r := range []Report{{CreatedAt: day(1), Duplicates: duplicates}, {Duplicates: []Duplicate{{GHSAID: "GHSA-undated", Confidence: "high", Exact: true, Published: true}}}, {Duplicates: duplicates[2:3]}} {
+		assert.NotContains(t, Render(r), "(oldest report)", "%+v", r)
+	}
 }
 
 func TestRenderNeutralisesMarkup(t *testing.T) {

@@ -65,6 +65,8 @@ type Report struct {
 	Duplicates []Duplicate `json:"-"`
 	// Policies are the files the policy check read, empty when the repository has none.
 	Policies []string `json:"-"`
+	// CreatedAt is when the advisory was reported.
+	CreatedAt time.Time `json:"-"`
 	// ScannedAt, Repo, Commit and Branch say when and on what code the report was checked.
 	ScannedAt time.Time `json:"-"`
 	Repo      string    `json:"-"`
@@ -93,11 +95,12 @@ type Comparison struct {
 }
 
 type Duplicate struct {
-	GHSAID     string `json:"ghsa_id"`
-	Confidence string `json:"confidence"`
-	Exact      bool   `json:"exact"`
-	URL        string `json:"-"`
-	Published  bool   `json:"-"`
+	GHSAID     string    `json:"ghsa_id"`
+	Confidence string    `json:"confidence"`
+	Exact      bool      `json:"exact"`
+	URL        string    `json:"-"`
+	Published  bool      `json:"-"`
+	CreatedAt  time.Time `json:"-"`
 }
 
 // visible says whether the reporter may see d.
@@ -343,7 +346,7 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 			continue
 		}
 		seen[key] = true
-		d.URL, d.Published = a.HTMLURL, a.State == "published"
+		d.URL, d.Published, d.CreatedAt = a.HTMLURL, a.State == "published", a.CreatedAt
 		if !d.visible() {
 			continue
 		}
@@ -488,7 +491,18 @@ func RenderPrivate(r Report) string {
 	} else {
 		b.WriteString("| Advisory | Status | Confidence |\n|---|---|---|\n")
 	}
-	for _, d := range r.Duplicates {
+	// Starting from the report's own date leaves every duplicate unmarked when the report is the oldest.
+	oldest, since := -1, r.CreatedAt
+	for i, d := range r.Duplicates {
+		if d.Exact && !d.CreatedAt.IsZero() && (since.IsZero() || d.CreatedAt.Before(since)) {
+			oldest, since = i, d.CreatedAt
+		}
+	}
+	for i, d := range r.Duplicates {
+		advisory := fmt.Sprintf("[%s](%s)", d.GHSAID, d.URL)
+		if i == oldest {
+			advisory += " (oldest report)"
+		}
 		confidence := label(d.Confidence)
 		if d.Exact {
 			confidence += " • Exact duplicate"
@@ -498,7 +512,7 @@ func RenderPrivate(r Report) string {
 			status = "Published"
 		}
 		// No title: the reporter reads this comment, and other advisories may still be under embargo.
-		fmt.Fprintf(&b, "| [%s](%s) | %s | %s |\n", d.GHSAID, d.URL, status, confidence)
+		fmt.Fprintf(&b, "| %s | %s | %s |\n", advisory, status, confidence)
 	}
 	b.WriteString("\n_Unpublished advisories are only listed as exact duplicates, without their title._\n")
 

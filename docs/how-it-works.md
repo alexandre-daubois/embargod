@@ -53,7 +53,7 @@ Plausible signed `char` passed to `isxdigit()` in `php_url_decode_ex()`, the giv
 
 | Advisory | Status | Confidence |
 |---|---|---|
-| GHSA-xxxx-xxxx-xxxx | Published | High • Exact duplicate |
+| GHSA-xxxx-xxxx-xxxx (oldest report) | Published | High • Exact duplicate |
 
 #### Related issues and pull requests
 
