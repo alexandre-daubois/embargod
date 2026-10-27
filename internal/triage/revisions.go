@@ -102,7 +102,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		if r, err = triage(ctx, local, gh, reader, input, log); err != nil {
 			return false, err
 		}
-		r.Branch = reference
+		r.Branch, r.CreatedAt = reference, a.CreatedAt
 		if r.Incomplete != nil {
 			continue
 		}

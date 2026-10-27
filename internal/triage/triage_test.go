@@ -164,7 +164,7 @@ func TestRunShowsExactUnpublishedMatchesAndSkipsCompletedAdvisories(t *testing.T
 	cfg := testConfig(t, gh, Config{Advisory: "GHSA-new"})
 	require.NoError(t, Run(t.Context(), cfg, gh, eng, eng, slog.New(slog.DiscardHandler)))
 	body := gh.posted["GHSA-new"]
-	require.Contains(t, body, "| [GHSA-old](https://x/GHSA-old) | Unpublished | High • Exact duplicate |", "the exact duplicate is missing from the comment")
+	require.Contains(t, body, "| [GHSA-old](https://x/GHSA-old) (oldest report) | Unpublished | High • Exact duplicate |", "the exact duplicate is missing from the comment")
 	require.Contains(t, privateReports(t, gh), "GHSA-old", "the private duplicate was lost")
 	gh.comments["GHSA-new"] = []github.Comment{botComment(body)}
 	eng.calls = nil
@@ -456,7 +456,7 @@ func TestRunSearchesDuplicatesInAnOfflineSandbox(t *testing.T) {
 	for _, leak := range []string{"GHSA-new", "print every advisory"} {
 		assert.NotContains(t, comparator.prompt+comparator.advisory, leak, "the comparator context leaks %q", leak)
 	}
-	assert.Contains(t, privateReports(t, gh), "| [GHSA-old](https://x/GHSA-old) | Unpublished | High • Exact duplicate |", "the duplicate search result is missing")
+	assert.Contains(t, privateReports(t, gh), "| [GHSA-old](https://x/GHSA-old) (oldest report) | Unpublished | High • Exact duplicate |", "the duplicate search result is missing")
 }
 
 func TestRunRejectsAnUnknownConfidenceFromTheSandboxedComparator(t *testing.T) {
@@ -563,7 +563,7 @@ func TestRunKeepsTheOtherAdvisoriesAwayFromTheReader(t *testing.T) {
 	assert.Empty(t, readers[0].files, "the reader must not learn about the other advisories")
 
 	body := privateReports(t, gh)
-	assert.Contains(t, body, "| [GHSA-old](https://x/GHSA-old) | Unpublished | High • Exact duplicate |", "duplicates must come from the comparator only")
+	assert.Contains(t, body, "| [GHSA-old](https://x/GHSA-old) (oldest report) | Unpublished | High • Exact duplicate |", "duplicates must come from the comparator only")
 	assert.NotContains(t, body, "GHSA-draft", "duplicates must come from the comparator only")
 }
 
