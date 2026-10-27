@@ -128,9 +128,9 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 			r.Duplicates = matches.Duplicates
 		}
 	}
-	provenance := fmt.Sprintf("\nRepository: `%s`. Advisory: `%s`. Input revision: `%s`.\n%s", cfg.Repo, a.GHSAID, revision, sources)
-	body := provenance + report.Render(r)
-	private := provenance + privateNote + report.RenderPrivate(r)
+	r.Provenance = fmt.Sprintf("\nRepository: `%s`. Advisory: `%s`. Input revision: `%s`.\n%s", cfg.Repo, a.GHSAID, revision, sources)
+	body := report.Render(r)
+	private := privateNote + report.RenderPrivate(r)
 	current, err := gh.GetAdvisory(ctx, cfg.Repo, a.GHSAID)
 	if err != nil {
 		return false, err

@@ -151,6 +151,7 @@ func TestRenderFoldsTheAnalysisDetails(t *testing.T) {
 		Policies:       []string{"SECURITY.md"},
 		CWE:            []CWE{{ID: "CWE-787", Reason: "</details><img src=x>"}},
 		Removed:        1,
+		Provenance:     "\nRepository: `o/r`.\n",
 	})
 
 	order := []string{
@@ -159,6 +160,7 @@ func TestRenderFoldsTheAnalysisDetails(t *testing.T) {
 		"\n<details>\n<summary>Show more details from the analysis</summary>\n\n#### Code cited by the report",
 		"#### Security policy",
 		"#### Weakness and severity",
+		"Repository: `o/r`.",
 		"\n</details>\n",
 		"1 suggestion(s) removed",
 	}

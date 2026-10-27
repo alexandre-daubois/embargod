@@ -72,6 +72,8 @@ type Report struct {
 	Repo      string    `json:"-"`
 	Commit    string    `json:"-"`
 	Branch    string    `json:"-"`
+	// Provenance names the repository, advisory, input revision and source commits the report covers.
+	Provenance string `json:"-"`
 	// Removed counts the model claims dropped because they could not be verified.
 	Removed int `json:"-"`
 	// Incomplete holds why the agent stopped before finishing the report it wrote.
@@ -565,6 +567,7 @@ func RenderPrivate(r Report) string {
 	if r.CVSS.Vector != "" {
 		fmt.Fprintf(&b, "| CVSS 4.0 | [`%s`](https://www.first.org/cvss/calculator/4.0#%s) | %s |\n", strings.TrimPrefix(r.CVSS.Vector, "CVSS:4.0/"), r.CVSS.Vector, cell(r.CVSS.Reason))
 	}
+	b.WriteString(r.Provenance)
 	b.WriteString("\n</details>\n")
 
 	if r.Removed > 0 {

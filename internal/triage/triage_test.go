@@ -412,6 +412,9 @@ func TestRunLocatesTheCitedCodeOnEveryConfiguredBranch(t *testing.T) {
 	posted := gh.posted["GHSA-new"]
 	require.Contains(t, posted, "Source: `HEAD`", "a configured branch was omitted")
 	require.Contains(t, posted, "Source: `stable`", "a configured branch was omitted")
+	provenance := strings.Index(posted, "Repository: `o/r`")
+	require.Greater(t, provenance, strings.Index(posted, "<details>"), "the provenance is outside the details block")
+	require.Less(t, provenance, strings.Index(posted, "</details>"), "the provenance is outside the details block")
 	require.Equal(t, 1, strings.Count(posted, "#### Code cited by the report"), "the cited code was rendered once per branch")
 	require.Regexp(t, "\\| Cited \\| In the repository on `HEAD` at `[0-9a-f]{7}` \\| In the repository on `stable` at `[0-9a-f]{7}` \\|", posted)
 	row := strings.Index(posted, "| `head.c` | Found | Not found |")
