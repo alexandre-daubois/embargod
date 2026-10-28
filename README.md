@@ -2,24 +2,28 @@
 
 [![CI](https://github.com/php/tamis/actions/workflows/ci.yml/badge.svg)](https://github.com/php/tamis/actions/workflows/ci.yml)
 
-First-pass triage of private vulnerability reports on GitHub. When a new security advisory comes in, tamis has an LLM agent investigate it against the repository and posts its findings as a comment on the advisory.
+tamis does a first-pass triage of private vulnerability reports on GitHub. When a new security advisory arrives, an LLM agent investigates it against the repository and tamis posts the findings as a comment on the advisory.
 
 For each report, tamis:
 
-- lists public duplicates in the comment, and embargoed advisories only when they are exact duplicates, by identifier,
-- finds public issues and pull requests already fixing or hardening the same code,
+- lists public duplicates, and names an embargoed advisory only when it is an exact duplicate,
+- finds public issues and pull requests that already fix or harden the same code,
 - checks that the files and functions the report cites exist,
 - reads the security policy and flags what may exclude the report,
 - suggests a CWE and a CVSS 4.0 base vector.
 
-It informs the maintainers' decision and never makes it.
+The maintainers keep the decision. tamis only prepares it.
 
-The agent runs in an isolated container driven by [harness](https://github.com/alpha-omega-security/harness), the Alpha-Omega library behind [scrutineer](https://github.com/alpha-omega-security/scrutineer). [Security](docs/security.md) details what that sandbox allows.
+The agent runs in an isolated container driven by [harness](https://github.com/alpha-omega-security/harness), the Alpha-Omega library behind [scrutineer](https://github.com/alpha-omega-security/scrutineer). [Security](docs/security.md) describes what the sandbox allows.
+
+## Before installing
+
+GitHub cannot post confidential advisory comments yet, so the reporter reads the comment. tamis also sends the report to the model provider you choose. Check that your disclosure policy allows both.
 
 ## Quick start
 
-1. Create a GitHub App for your organisation with the "Repository security advisories" permission in read and write, and install it on the project repository only.
-2. In a private repository, store the App's client ID and private key, and an Anthropic or OpenAI API key, or a [Codex access token](docs/configuration.md#codex-access-token).
+1. Create a GitHub App for your organisation with the "Repository security advisories" permission in read and write. Install it on the project repository only.
+2. In a private repository, store the App's client ID and private key, and an Anthropic or OpenAI API key or a [Codex access token](docs/configuration.md#codex-access-token).
 3. Add this workflow to the private repository:
 
 ```yaml
@@ -57,7 +61,7 @@ jobs:
           repository: your-org/your-project
           fetch-depth: 0
           persist-credentials: false
-      # Replace this placeholder with the full SHA of a reviewed Tamis commit.
+      # Replace this placeholder with the full SHA of a reviewed tamis commit.
       - uses: php/tamis@REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA
         with:
           repository: your-org/your-project
@@ -67,23 +71,21 @@ jobs:
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           github-token: ${{ steps.app.outputs.token }}
           bot-login: your-app-slug[bot]
-          # List every branch your project supports; these refs must exist in the checkout.
+          # List every branch your project supports. Each ref must exist in the checkout.
           references: master origin/release-branch
 ```
 
-Set `since` to the installation date so existing advisories are left alone. Keep the workflow repository private: the action uploads reports there as artifacts, retained for seven days. The [setup guide](docs/setup.md) covers source branches and provider spending limits.
+Set `since` to the installation date so tamis leaves existing advisories alone. Keep the workflow repository private, since the action uploads the reports there as artifacts kept for seven days. The [setup guide](docs/setup.md) covers source branches and provider spending limits.
 
 ## Documentation
 
-- [Setup](docs/setup.md): GitHub App, private repository, secrets and first run.
-- [Configuration](docs/configuration.md): inputs, project guidance and engines.
-- [How it works](docs/how-it-works.md): the triage pipeline and the comment it posts.
-- [Security](docs/security.md): threat model, isolation and known limits.
-- [Development](docs/development.md): building, testing and running locally.
-
-## Before installing
-
-The reporter can read the comment, since the GitHub API cannot post confidential comments yet, and the report is sent to the model provider you choose. Make sure your disclosure policy allows both.
+| Page | Contents |
+|---|---|
+| [Setup](docs/setup.md) | GitHub App, private repository, secrets and first run |
+| [Configuration](docs/configuration.md) | Inputs, budgets, project guidance and engines |
+| [How it works](docs/how-it-works.md) | The triage pipeline and the comment it posts |
+| [Security](docs/security.md) | Threat model, isolation and known limits |
+| [Development](docs/development.md) | Building, testing and running locally |
 
 ## License
 
