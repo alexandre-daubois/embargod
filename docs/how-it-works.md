@@ -1,48 +1,68 @@
 # How it works
 
-Each run goes through four stages. Two models are involved, and no model ever sees both the report and the repository's other advisories.
+Each run goes through four stages. Two models take part, and no model sees both the report and the repository's other advisories.
 
 ## 1. Selection
 
-tamis lists the repository's advisories and keeps those in the `triage` state created after `since`, or only the one given in `advisory`. It skips an advisory when a comment from `bot-login` contains the Tamis marker. A marker posted by another account is ignored.
+tamis lists the repository's advisories and keeps those in the `triage` state created after `since`, or only the one given in `advisory`. It skips an advisory when a comment from `bot-login` holds the tamis marker, and ignores a marker posted by any other account.
 
-A failed triage posts a comment saying so, with its own marker, and is retried on the next runs. After three failures, the comment asks a maintainer to review the report and the advisory is left alone. An advisory is triaged once: editing the report afterwards does not start a new triage.
+A failed triage posts a comment that says so, with its own marker, and tamis retries it on the next runs. After three failures, the comment asks a maintainer to review the report and tamis stops retrying. tamis triages an advisory once, so an edit to the report afterwards starts no new triage.
 
-The log names the advisory being triaged and each step as it starts: copying the source, reading the report, comparing with other advisories, posting the comment. Each step and each triaged or failed advisory also logs its duration, the model requests and the input and output tokens it spent, with cached input tokens counted as input.
+The log names the advisory and each step as it starts: copying the source, reading the report, comparing with other advisories and posting the comment. Each step, and each triaged or failed advisory, also logs its duration, its model requests and its input and output tokens. Cached input tokens count as input.
 
 ## 2. Reading the report
 
 An agent, Claude Code or Codex, investigates the report in a throwaway container:
 
-- the report and its non-bot followup comments are in `/work/report.md`, and the selected source branch is mounted read-only in `/work/src` with its history,
-- it can search public issues and pull requests through the GitHub API,
+- `/work/report.md` holds the report and its non-bot followup comments,
+- `/work/src` holds the selected source branch, read-only and with its history,
+- the agent can search public issues and pull requests through the GitHub API,
 - it reads the security policy files when the repository has some,
-- it writes its findings to `/work/report.json`, following a JSON schema, as soon as it has a first answer and then as it learns more. When the run stops on its budget or an error, a valid report already written is kept in the private artifact and the advisory is retried, and the last attempt posts it with a note that it may be incomplete.
+- it writes its findings to `/work/report.json` against a JSON schema, first as soon as it has an answer, then as it learns more.
 
-The JSON is decoded strictly: an unknown or mistyped field sends the error back to the agent for one correction round. The agent reports the faulty statement (file, function, line), the public entry points it goes through, the code the report cites, related issues, policy exclusions, CWE and CVSS. The agent analyses the first configured source reference. The code the report cites is then located on each other reference, and the final report names every exact commit. A missing branch fails closed.
+The agent reports the faulty statement (file, function, line), the public entry points that reach it, the code the report cites, related issues, policy exclusions, the CWE and the CVSS.
+
+tamis rejects an unknown or mistyped field in the JSON and sends the error back to the agent for one correction round.
+
+When the run stops on its budget or on an error, tamis keeps a valid report already written in the private artifact and retries the advisory. The last attempt posts that report with a note that it may be incomplete.
+
+The agent analyses the first configured reference. tamis then locates the cited code on each other reference, and the final report names every exact commit. A missing branch fails the triage.
 
 ## 3. Duplicate search
 
-One offline agent then searches every other advisory of the repository for the same bug, whatever their state: published, in triage, draft or closed, since a closed duplicate tells the maintainers the issue was already handled. It gets the report, the clues whose location exists in the checkout, and one file per advisory, which it greps and reads the way a maintainer would, and the code read-only for the cases the texts leave open. The report, the clues and the advisories remain hostile data. It answers with the identifiers of the duplicates it found, each with a confidence and an exact flag, and an identifier outside the advisories it was given is refused.
+One offline agent searches every other advisory of the repository for the same bug, whatever its state: published, in triage, draft or closed. A closed duplicate tells the maintainers someone already handled the issue. The agent gets:
 
-The full search result is preserved in the private report. Each unpublished candidate called exact with high confidence is checked again in its own model context, which receives the report, that candidate without its identifier, the checked clues and the code. It returns one `exact` boolean. Only the host knows which candidate that answer belongs to and copies a confirmed identifier into the public comment. All models share the advisory and run budgets. The log records the confirmation duration, usage and number of confirmed candidates.
+- the report,
+- the clues whose location exists in the checkout,
+- one file per advisory, which it greps and reads the way a maintainer would,
+- the code, read-only, for the cases the texts leave open.
 
-Both stages compare concrete defects, including secondary findings in a report. A different PoC, version, configuration or severity estimate does not turn the same defective operation into a different bug. An exact match requires positive evidence of a shared defect; a similar symptom or a broad patch fixing several independent defects is insufficient. An exact match does not settle any additional findings in either report, which maintainers must still review before closing it.
+tamis treats the report, the clues and the advisories as hostile data. The agent answers with the identifiers of the duplicates it found, each with a confidence and an exact flag. tamis refuses an identifier outside the advisories it gave.
 
-Matching is separate from judging validity: an issue already fixed or rejected under the security policy can still be a duplicate. A finding explicitly split into a separate advisory, however, no longer belongs to the current report's scope.
+The private report keeps the full search result. tamis checks each unpublished candidate marked exact with high confidence again, in its own model context. That context receives the report, the candidate without its identifier, the checked clues and the code, and returns one `exact` boolean. Only the host knows which candidate the answer belongs to, and it copies a confirmed identifier into the public comment. All models share the advisory and run budgets. The log records the duration and usage of the confirmations and the number of confirmed candidates.
+
+Both stages compare concrete defects, secondary findings of a report included:
+
+- a different PoC, version, configuration or severity estimate leaves the same defective operation the same bug,
+- an exact match needs positive evidence of a shared defect, and a similar symptom or a broad patch fixing several independent defects does not qualify,
+- an exact match does not settle the other findings of either report, which maintainers still review before closing it.
+
+Matching stays separate from validity. An issue already fixed, or rejected under the security policy, can still be a duplicate. A finding the report explicitly removes, excludes or moves to another advisory no longer counts as one of its findings.
 
 ## 4. Verification and comment
 
-Before posting, tamis checks every claim against GitHub and the checkout:
+Before posting, tamis checks each claim against GitHub and the checkout:
 
 | Claim | Check |
 |---|---|
-| Duplicates | Must be one of the advisories the search was given. Its complete result is preserved privately. An unpublished advisory appears publicly, by identifier only, after its exact, high-confidence result passes a separate one-candidate confirmation. |
-| Issues and pull requests | Must exist. Titles and links come from GitHub, not from the model. |
-| Cited code | Only references named in the report are kept, each marked as found in the repository or not. A cited line and the code the report quotes there are kept only when the report contains them. The quote is looked up in the file at the scanned commit, nearest the cited line, and when it is gone, `git log -S` names the commit that last changed it, since reports often target another version. |
-| CWE and CVSS | Must be well-formed. CWE names come from the MITRE catalogue. |
+| Duplicates | Each one must belong to the advisories the search received. The private report keeps the complete result. An unpublished advisory appears in the comment, by identifier only, once its exact, high-confidence result passes the one-candidate confirmation. |
+| Issues and pull requests | Each one must exist. Titles and links come from GitHub, not from the model. |
+| Cited code | tamis keeps only references named in the report, each marked as found in the repository or not, and keeps a cited line and its quoted code only when the report contains them. It looks the quote up in the file at the scanned commit, nearest the cited line. When the quote is gone, `git log -S` names the commit that last changed it, since reports often target another version. |
+| CWE and CVSS | Each must be well-formed. CWE names come from the MITRE catalogue. |
 
-Claims that fail a check are dropped, and the comment counts them. Just before publication, the current report and non-bot comments are read again; if they changed, no result is posted. The public comment is saved before publication. A failed duplicate search leaves the duplicates out of the comment; a failed exact confirmation leaves that unpublished candidate out. Both are marked in the private report and do not invalidate the published triage. A failure before publication leaves the advisory retriable.
+tamis drops the claims that fail a check, and the comment counts them.
+
+Just before publication, tamis reads the report and its non-bot comments again and posts nothing if they changed. It saves the public comment before posting it. A failed duplicate search leaves the duplicates out of the comment, and a failed exact confirmation leaves that unpublished candidate out. The private report records both failures, and the triage still gets published. A failure before publication leaves the advisory retriable.
 
 ## The comment
 
@@ -81,6 +101,6 @@ Plausible signed `char` passed to `isxdigit()` in `php_url_decode_ex()`, the giv
 </details>
 ```
 
-The duplicates and related issues stay visible. The cited code, the security policy and the weakness estimate are folded so the comment scans quickly.
+The duplicates and related issues stay visible. The cited code, the security policy and the weakness estimate sit in a folded block so the comment reads fast.
 
-Every piece of model text is escaped, so the comment cannot contain links, images, HTML or mentions coming from the model. The links to cited lines are built from the repository name, the commit hash and the tracked path, and the quoted code itself is never shown.
+tamis escapes all model text, so the comment cannot carry links, images, HTML or mentions coming from the model. It builds the links to cited lines from the repository name, the commit hash and the tracked path, and never shows the quoted code.
