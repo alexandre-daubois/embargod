@@ -176,7 +176,7 @@ func TestRenderFoldsTheAnalysisDetails(t *testing.T) {
 func TestRender(t *testing.T) {
 	got := RenderPrivate(Report{
 		Summary:          "Heap overflow claimed,\ncc @someone",
-		Duplicates:       []Duplicate{{GHSAID: "GHSA-real", URL: "https://x/GHSA-real", Confidence: "high", Exact: true}, {GHSAID: "GHSA-near", URL: "https://x/GHSA-near", Confidence: "low", Published: true}},
+		Duplicates:       []Duplicate{{GHSAID: "GHSA-real", URL: "https://x/GHSA-real", Confidence: "high", Exact: true, State: "closed"}, {GHSAID: "GHSA-near", URL: "https://x/GHSA-near", Confidence: "low", Published: true, State: "published"}},
 		Related:          []Related{{Number: 12, Title: "Harden", URL: "https://x/12", PullRequest: true, Confidence: "medium"}, {Number: 13, Title: "Crash", URL: "https://x/13", Confidence: "low"}},
 		CodeReferences:   []CodeReference{{Path: "a.c", Symbol: "f", Found: true}, {Path: "b|c.c"}},
 		Policies:         []string{"SECURITY.md"},
@@ -191,7 +191,7 @@ func TestRender(t *testing.T) {
 		"> Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.",
 		"Heap overflow claimed, cc @\u200bsomeone\n",
 		"| Advisory | Status | Confidence |",
-		"| [GHSA-real](https://x/GHSA-real) | Unpublished | High • Proposed exact duplicate |",
+		"| [GHSA-real](https://x/GHSA-real) | Closed | High • Proposed exact duplicate |",
 		"| [GHSA-near](https://x/GHSA-near) | Published | Low |",
 		"_The reporter-visible comment only lists unpublished advisories after a separate exact-duplicate confirmation, without their title. A match covers the shared vulnerability; review any additional findings before closing the report._",
 		"| Issue or PR | Title | Confidence |",

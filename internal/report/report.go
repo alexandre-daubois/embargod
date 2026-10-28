@@ -104,6 +104,7 @@ type Duplicate struct {
 	Exact      bool      `json:"exact"`
 	URL        string    `json:"-"`
 	Published  bool      `json:"-"`
+	State      string    `json:"-"`
 	CreatedAt  time.Time `json:"-"`
 	// Confirmed records a separate, single-candidate check owned by the host.
 	Confirmed bool `json:"-"`
@@ -351,7 +352,7 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 			continue
 		}
 		seen[key] = true
-		d.URL, d.Published, d.CreatedAt = a.HTMLURL, a.State == "published", a.CreatedAt
+		d.URL, d.Published, d.State, d.CreatedAt = a.HTMLURL, a.State == "published", a.State, a.CreatedAt
 		dups = append(dups, d)
 	}
 	r.Duplicates = dups
@@ -514,12 +515,8 @@ func RenderPrivate(r Report) string {
 		} else if d.Exact {
 			confidence += " • Proposed exact duplicate"
 		}
-		status := "Unpublished"
-		if d.Published {
-			status = "Published"
-		}
 		// No title: the reporter reads this comment, and other advisories may still be under embargo.
-		fmt.Fprintf(&b, "| %s | %s | %s |\n", advisory, status, confidence)
+		fmt.Fprintf(&b, "| %s | %s | %s |\n", advisory, label(d.State), confidence)
 	}
 	b.WriteString("\n_The reporter-visible comment only lists unpublished advisories after a separate exact-duplicate confirmation, without their title. A match covers the shared vulnerability; review any additional findings before closing the report._\n")
 
