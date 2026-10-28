@@ -47,7 +47,6 @@ Each report names the source commit and the input revision it covers.
 | Advisory | 200 requests and 64 MiB, shared by its reader run and its comparisons, and a 30-minute deadline that also cancels host-side git commands |
 | Agent token | 150 requests, not counting the refused routes Codex calls on each run |
 | Request | 1 MiB of body. API responses ask for at most 16,000 output tokens, and the ChatGPT backend applies its own output limits. |
-| Exact confirmations | 10 unpublished candidates per advisory |
 | Reports | One per known reporter and per execution |
 
 tamis starts a report only while the execution still holds a whole advisory budget and thirty minutes of its time. Otherwise the report waits for the next execution. SDK retries are off, but tamis retries an agent run that fails without a valid report once, after a minute. When a budget runs out, the report stays retriable and tamis does not mark it complete.

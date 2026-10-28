@@ -117,11 +117,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 			if err := (report.Checker{Advisories: byID}).Verify(ctx, &matches); err != nil {
 				return false, err
 			}
-			skipped, err := confirmPrivateDuplicates(ctx, path, reader, eng, r, input, matches.Duplicates, byID, log)
-			if skipped > 0 {
-				privateNote += fmt.Sprintf("\n%d private exact candidate(s) were not confirmed.\n", skipped)
-			}
-			if err != nil {
+			if err := confirmPrivateDuplicates(ctx, path, reader, eng, r, input, matches.Duplicates, byID, log); err != nil {
 				comparisonErr = errors.Join(comparisonErr, err)
 				privateNote += "\nPrivate exact duplicate confirmation could not complete.\n"
 			}

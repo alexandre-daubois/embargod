@@ -37,11 +37,10 @@ const ProfilePath = ".github/tamis.md"
 var maxRunDuration = 3*time.Hour + 50*time.Minute
 
 const (
-	maxAdvisoryDuration     = 30 * time.Minute
-	maxComparatorRequests   = 200
-	maxAttempts             = 3
-	maxPrivateConfirmations = 10
-	parallelConfirmations   = 4
+	maxAdvisoryDuration   = 30 * time.Minute
+	maxComparatorRequests = 200
+	maxAttempts           = 3
+	parallelConfirmations = 4
 )
 
 var (
@@ -384,7 +383,7 @@ var exactConfirmationProperties = map[string]any{
 
 // confirmPrivateDuplicates separately checks the unpublished exact matches proposed by the global search.
 // Its output has no identifier; the host binds each result to the candidate it supplied.
-func confirmPrivateDuplicates(ctx context.Context, repoPath string, reader Reader, eng engine.Engine, r report.Report, a github.Advisory, duplicates []report.Duplicate, advisories map[string]github.Advisory, log *slog.Logger) (int, error) {
+func confirmPrivateDuplicates(ctx context.Context, repoPath string, reader Reader, eng engine.Engine, r report.Report, a github.Advisory, duplicates []report.Duplicate, advisories map[string]github.Advisory, log *slog.Logger) error {
 	type candidate struct {
 		index    int
 		advisory github.Advisory
@@ -396,11 +395,8 @@ func confirmPrivateDuplicates(ctx context.Context, repoPath string, reader Reade
 			candidates = append(candidates, candidate{i, advisory})
 		}
 	}
-	slices.SortFunc(candidates, func(a, b candidate) int { return strings.Compare(a.advisory.GHSAID, b.advisory.GHSAID) })
-	skipped := max(0, len(candidates)-maxPrivateConfirmations)
-	candidates = candidates[:min(len(candidates), maxPrivateConfirmations)]
 	if len(candidates) == 0 {
-		return skipped, nil
+		return nil
 	}
 
 	log.Info("confirming unpublished exact duplicates", "candidates", len(candidates))
@@ -434,7 +430,7 @@ func confirmPrivateDuplicates(ctx context.Context, repoPath string, reader Reade
 	}
 	log.Info("exact confirmations finished", "duration", time.Since(start).Round(time.Second), "candidates", len(candidates), "confirmed", confirmed, "complete", err == nil, "usage", spent())
 
-	return skipped, err
+	return err
 }
 
 func confirmPrivateDuplicate(ctx context.Context, repoPath string, reader Reader, eng engine.Engine, clues report.Comparison, text string, candidate github.Advisory) (bool, error) {

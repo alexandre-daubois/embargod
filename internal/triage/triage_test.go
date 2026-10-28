@@ -271,7 +271,7 @@ func TestDuplicateSearchRejectsIncompleteAndAmbiguousAnswers(t *testing.T) {
 func TestPrivateConfirmationsOnlySpendBudgetOnEligibleCandidates(t *testing.T) {
 	var duplicates []report.Duplicate
 	advisories := map[string]github.Advisory{}
-	for i := range maxPrivateConfirmations + 2 {
+	for i := range 12 {
 		id := fmt.Sprintf("GHSA-candidate-%02d", i)
 		advisories[id] = github.Advisory{GHSAID: id, State: "closed", Summary: id}
 		duplicates = append(duplicates, report.Duplicate{GHSAID: id, Confidence: "high", Exact: true})
@@ -289,12 +289,10 @@ func TestPrivateConfirmationsOnlySpendBudgetOnEligibleCandidates(t *testing.T) {
 		duplicates = append(duplicates, d)
 	}
 	eng := &fakeEngine{}
-	skipped, err := confirmPrivateDuplicates(t.Context(), gitRepo(t, nil), eng, eng, report.Report{}, github.Advisory{}, duplicates, advisories, slog.New(slog.DiscardHandler))
-	require.NoError(t, err)
-	require.Equal(t, 2, skipped)
-	require.Len(t, eng.confirmations(), maxPrivateConfirmations)
+	require.NoError(t, confirmPrivateDuplicates(t.Context(), gitRepo(t, nil), eng, eng, report.Report{}, github.Advisory{}, duplicates, advisories, slog.New(slog.DiscardHandler)))
+	require.Len(t, eng.confirmations(), 12, "every eligible candidate is confirmed")
 	for i, d := range duplicates {
-		require.Equal(t, i < maxPrivateConfirmations, d.Confirmed, "%s", d.GHSAID)
+		require.Equal(t, i < 12, d.Confirmed, "%s", d.GHSAID)
 	}
 	for _, call := range eng.confirmations() {
 		require.Equal(t, 1, strings.Count(call.prompt, "GHSA-candidate-"), "another candidate reached a confirmation context")
