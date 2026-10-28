@@ -323,6 +323,24 @@ func TestRenderPolicyWithoutExclusion(t *testing.T) {
 	assert.Contains(t, got, "Checked against `.github/SECURITY.md`, `AGENTS.md`.\n\nNothing in the policy seems to exclude this report.")
 }
 
+func TestRenderPolicyPointEndingWithAPeriod(t *testing.T) {
+	got := Render(Report{Policies: []string{"SECURITY.md"}, PolicyExclusions: []PolicyPoint{
+		{Point: "Malicious inputs are not security issues.", Reason: "The PoC feeds `unserialize()`."},
+		{Point: "Version 1.2 is unsupported", Reason: "It targets `1.2`."},
+	}})
+
+	assert.Contains(t, got, "- Malicious inputs are not security issues: The PoC feeds `unserialize()`.\n")
+	assert.Contains(t, got, "- Version 1.2 is unsupported: It targets `1.2`.\n")
+	assert.NotContains(t, got, ".:")
+}
+
+func TestRenderFailedDuplicateSearch(t *testing.T) {
+	got := Render(Report{Summary: "s", DuplicateSearchFailed: true})
+
+	assert.Contains(t, got, "#### Possible duplicates\n\nThe duplicate search could not complete.\n")
+	assert.NotContains(t, got, "None found among the repository advisories.")
+}
+
 func TestRenderEmpty(t *testing.T) {
 	got := Render(Report{Summary: "Nothing"})
 
