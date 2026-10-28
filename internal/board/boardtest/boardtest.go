@@ -36,9 +36,11 @@ func New() *Project {
 		{"Duplicate of", "text", nil},
 		{"Duplicates", "number", nil},
 		{"Reported", "date", nil},
-		{"Priority", "single_select", []string{"Look first", "Later", "Needs manual triage", "Duplicate"}},
+		{"Priority", "single_select", []string{"Look first", "Later", "Duplicate", "Analysis failed", "Analysis failed, retrying", "Analysis pending"}},
 		{"Severity", "single_select", []string{"Critical", "High", "Medium", "Low"}},
 		{"State", "single_select", []string{"triage", "draft", "published", "closed", "withdrawn"}},
+		{"Policy exclusion", "single_select", []string{"Yes", "No"}},
+		{"Located", "single_select", []string{"Yes", "No"}},
 	} {
 		field := github.ProjectField{ID: int64(100 + i), Name: f.name, DataType: f.dataType}
 		for _, o := range f.options {
@@ -121,6 +123,7 @@ func (p *Project) ListProjectItems(_ context.Context, _ string, _ int, fields []
 	var items []github.ProjectItem
 	for id, values := range p.Items {
 		item := github.ProjectItem{ID: id}
+		item.Content.NodeID = draft(id)
 		for _, f := range p.Fields {
 			v, ok := values[f.ID]
 			if !ok || !slices.Contains(fields, f.ID) {
@@ -146,14 +149,34 @@ func (p *Project) ListProjectItems(_ context.Context, _ string, _ int, fields []
 	return items, nil
 }
 
-func (p *Project) CreateDraft(_ context.Context, _ string, _ int, title, body string) (int64, error) {
+func (p *Project) CreateDraft(_ context.Context, _ string, _ int, title, body string) (github.ProjectItem, error) {
 	if p.Err != nil {
-		return 0, p.Err
+		return github.ProjectItem{}, p.Err
 	}
 	id := p.Add(nil)
 	p.Titles[id], p.Bodies[id] = title, body
+	item := github.ProjectItem{ID: id}
+	item.Content.NodeID = draft(id)
 
-	return id, nil
+	return item, nil
+}
+
+func (p *Project) UpdateDraft(_ context.Context, node, body string) error {
+	if p.Err != nil {
+		return p.Err
+	}
+	for id := range p.Items {
+		if draft(id) == node {
+			p.Bodies[id] = body
+			return nil
+		}
+	}
+
+	return fmt.Errorf("no draft %s", node)
+}
+
+func draft(id int64) string {
+	return fmt.Sprintf("DI_%d", id)
 }
 
 func (p *Project) UpdateProjectItem(_ context.Context, _ string, _ int, item int64, fields []github.FieldValue) error {

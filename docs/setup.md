@@ -65,9 +65,11 @@ tamis can keep a private organisation project in sync with the advisories, one d
 | `Duplicate of` | Text | |
 | `Duplicates` | Number | |
 | `Reported` | Date | |
-| `Priority` | Single select | `Look first`, `Later`, `Needs manual triage`, `Duplicate` |
+| `Priority` | Single select | `Look first`, `Later`, `Duplicate`, `Analysis failed`, `Analysis failed, retrying`, `Analysis pending` |
 | `Severity` | Single select | `Critical`, `High`, `Medium`, `Low` |
 | `State` | Single select | `triage`, `draft`, `published`, `closed`, `withdrawn` |
+| `Policy exclusion` | Single select | `Yes`, `No` |
+| `Located` | Single select | `Yes`, `No` |
 
 Then set `project` to `your-org/NUMBER`. When the project is public, or a field or an option is missing or renamed, tamis leaves the board out of the run, still triages and comments, and fails the run so the error shows.
 
@@ -76,10 +78,10 @@ The code sets `Priority`:
 - `Look first` for a critical or high severity, a faulty statement found in the repository and no policy exclusion,
 - `Later` otherwise,
 - `Duplicate` behind the oldest high-confidence exact duplicate the comment shows, which `Duplicate of` names,
-- `Needs manual triage` after the last failed attempt.
+- `Analysis pending` while tamis triages again an advisory it commented before the board, `Analysis failed, retrying` after a failed attempt with another to come, and `Analysis failed` once tamis gives up. The draft body then explains the status instead of holding the triage comment.
 
 The model estimates `Severity` from its CVSS vector and ignores the one the reporter claims. `Duplicates` counts the items that name the advisory in `Duplicate of`.
 
-At the end of each run, tamis copies the state of every advisory to `State` and recounts `Duplicates`, without calling the model. The REST API cannot archive items, so filter the views on `State` instead, for example a table on `State:triage,draft` sorted by `Priority` then `Reported`.
+At the end of each run, tamis copies the state of every advisory to `State`, recounts `Duplicates` and ranks every triage again from `Severity`, `Policy exclusion`, `Located` and `Duplicate of`, so a new priority rule reaches the board with a release. None of it calls the model. A `Priority` changed by hand comes back at the next run, while a change to one of those four fields lasts. The REST API cannot archive items, so filter the views on `State` instead, for example a table on `State:triage,draft` sorted by `Priority` then `Reported`.
 
-An advisory in the `triage` state that tamis commented but that has no item, for example one triaged before the board existed, is triaged again without a new comment. When that triage fails, the item gets `Needs manual triage` and the advisory is not retried. Deleting an item by hand triggers that triage again on the next run.
+An advisory in the `triage` state that tamis commented but that has no item, for example one triaged before the board existed, is triaged again without a new comment. When that triage fails, the item gets `Analysis failed` and the advisory is not retried. Deleting an item by hand triggers that triage again on the next run.

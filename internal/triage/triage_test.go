@@ -1232,6 +1232,7 @@ func TestRunPutsANewTriageOnTheBoard(t *testing.T) {
 	require.Equal(t, "GHSA-old", gh.Value(id, "Duplicate of"))
 	require.Equal(t, "triage", gh.Value(id, "State"))
 	require.Contains(t, gh.posted["GHSA-new"], report.Marker)
+	require.Equal(t, "\n\n"+gh.posted["GHSA-new"], gh.Bodies[id], "the draft body is not the link then the posted comment")
 }
 
 func TestRunPostsTheCommentWhenTheBoardFails(t *testing.T) {
@@ -1252,6 +1253,7 @@ func TestRunTriagesACommentedAdvisoryAgainForTheBoardWithoutANewComment(t *testi
 	require.NotEmpty(t, eng.role(""), "the advisory was not triaged again")
 	require.Empty(t, gh.posted, "the board triage posted a comment")
 	require.Equal(t, "Duplicate", gh.Value(gh.Find("GHSA-done"), "Priority"))
+	require.Contains(t, gh.Bodies[gh.Find("GHSA-done")], report.Marker, "the draft body misses the new triage")
 
 	eng.calls = nil
 	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
@@ -1276,14 +1278,48 @@ func TestRunDoesNotTriageAgainWithoutABoard(t *testing.T) {
 	require.Empty(t, eng.calls)
 }
 
-func TestRunMarksAFailedBoardTriageForManualReview(t *testing.T) {
+func TestRunMarksAFailedBoardTriageAsFailed(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{fail: "Leak in bar"}
 	gh.advisories[2].Summary = "Leak in bar"
 
 	require.Error(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
 
 	require.Empty(t, gh.posted, "a failed board triage posted a comment")
-	require.Equal(t, "Needs manual triage", gh.Value(gh.Find("GHSA-done"), "Priority"), "a failed board triage would be retried on every run")
+	id := gh.Find("GHSA-done")
+	require.Equal(t, "Analysis failed", gh.Value(id, "Priority"), "a failed board triage would be retried on every run")
+	require.Contains(t, gh.Bodies[id], "The automated analysis failed (unexpected error) and will not be retried.")
+}
+
+func TestRunShowsAPendingAnalysisWhileItRuns(t *testing.T) {
+	gh, eng, checked := newFixture(), &fakeEngine{}, false
+	eng.onCompare = func() {
+		checked = true
+		id := gh.Find("GHSA-done")
+		require.Equal(t, "Analysis pending", gh.Value(id, "Priority"))
+		require.Contains(t, gh.Bodies[id], "The automated analysis started on ")
+	}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+
+	require.True(t, checked, "the board was not checked during the analysis")
+	require.Equal(t, "Duplicate", gh.Value(gh.Find("GHSA-done"), "Priority"), "the pending status outlived the analysis")
+}
+
+func TestRunShowsAFailedAttemptThatWillBeRetried(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "Overflow in foo"}
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
+
+	require.Equal(t, report.Failed(true), gh.posted["GHSA-new"])
+	id := gh.Find("GHSA-new")
+	require.Equal(t, "Analysis failed, retrying", gh.Value(id, "Priority"))
+	require.Contains(t, gh.Bodies[id], "on attempt 1 of 3. The next run retries it.")
+
+	eng.fail = ""
+	gh.comments["GHSA-new"] = []github.Comment{botComment(report.Failed(true))}
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
+	require.Equal(t, "Duplicate", gh.Value(id, "Priority"), "a successful retry kept the failed status")
+	require.Contains(t, gh.Bodies[id], report.Marker)
 }
 
 func TestRunKeepsTheBoardTriageForTheNextRunWhenTheBoardFails(t *testing.T) {
@@ -1304,7 +1340,7 @@ func TestRunPutsTheLastFailedAttemptOnTheBoard(t *testing.T) {
 	require.Error(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
 
 	require.Equal(t, report.Failed(false), gh.posted["GHSA-new"])
-	require.Equal(t, "Needs manual triage", gh.Value(gh.Find("GHSA-new"), "Priority"))
+	require.Equal(t, "Analysis failed", gh.Value(gh.Find("GHSA-new"), "Priority"))
 }
 
 func TestRunSyncsTheBoardWithoutTriaging(t *testing.T) {
@@ -1338,11 +1374,10 @@ func TestRunDoesNotTriageAgainWithABoardInAnUnexpectedLayout(t *testing.T) {
 
 func TestRunLooksFirstAtASevereReportOnlyWhenItsFaultyStatementExists(t *testing.T) {
 	for name, tc := range map[string]struct {
-		location string
-		priority string
+		location, priority, located string
 	}{
-		"located":     {`"path":"ext/foo/foo.c","symbol":"php_foo","line":42`, "Look first"},
-		"not located": {`"path":"ext/foo/missing.c","symbol":"php_foo","line":42`, "Later"},
+		"located":     {`"path":"ext/foo/foo.c","symbol":"php_foo","line":42`, "Look first", "Yes"},
+		"not located": {`"path":"ext/foo/missing.c","symbol":"php_foo","line":42`, "Later", "No"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			gh := newFixture()
@@ -1350,7 +1385,10 @@ func TestRunLooksFirstAtASevereReportOnlyWhenItsFaultyStatementExists(t *testing
 
 			require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
 
-			require.Equal(t, tc.priority, gh.Value(gh.Find("GHSA-new"), "Priority"))
+			id := gh.Find("GHSA-new")
+			require.Equal(t, tc.priority, gh.Value(id, "Priority"))
+			require.Equal(t, tc.located, gh.Value(id, "Located"), "the board cannot rank this triage again")
+			require.Equal(t, "No", gh.Value(id, "Policy exclusion"))
 		})
 	}
 }

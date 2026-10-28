@@ -138,7 +138,11 @@ type ProjectField struct {
 // ProjectItem holds the values of the fields it was listed with. A text value is {"raw": ...}, a single select
 // value {"name": {"raw": ...}} and a number a bare number.
 type ProjectItem struct {
-	ID     int64 `json:"id"`
+	ID int64 `json:"id"`
+	// Content is the draft issue of the item, which only GraphQL can edit by its node ID.
+	Content struct {
+		NodeID string `json:"node_id"`
+	} `json:"content"`
 	Fields []struct {
 		ID    int64           `json:"id"`
 		Value json.RawMessage `json:"value"`
@@ -172,13 +176,28 @@ func (c *Client) ListProjectItems(ctx context.Context, org string, number int, f
 	return list[ProjectItem](ctx, c, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/items?%s", c.BaseURL, url.PathEscape(org), number, q.Encode()))
 }
 
-func (c *Client) CreateDraft(ctx context.Context, org string, number int, title, body string) (int64, error) {
-	var item struct {
-		ID int64 `json:"id"`
-	}
+func (c *Client) CreateDraft(ctx context.Context, org string, number int, title, body string) (ProjectItem, error) {
+	var item ProjectItem
 	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/drafts", c.BaseURL, url.PathEscape(org), number), map[string]string{"title": title, "body": body}, &item)
 
-	return item.ID, err
+	return item, err
+}
+
+// UpdateDraft replaces the body of a draft issue, which the REST API cannot edit.
+func (c *Client) UpdateDraft(ctx context.Context, draft, body string) error {
+	var out struct {
+		Errors []json.RawMessage `json:"errors"`
+	}
+	_, err := c.do(ctx, http.MethodPost, c.BaseURL+"/graphql", map[string]any{
+		"query":     "mutation($id: ID!, $body: String!) { updateProjectV2DraftIssue(input: {draftIssueId: $id, body: $body}) { clientMutationId } }",
+		"variables": map[string]string{"id": draft, "body": body},
+	}, &out)
+	// GraphQL reports its errors with a 200, and their messages may echo the body.
+	if err == nil && len(out.Errors) > 0 {
+		return errors.New("github: GraphQL request failed")
+	}
+
+	return err
 }
 
 func (c *Client) UpdateProjectItem(ctx context.Context, org string, number int, item int64, fields []FieldValue) error {

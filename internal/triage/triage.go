@@ -191,7 +191,8 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		// The item goes on the board first, so a board refusing writes costs no model run. A failed triage for the
 		// board is not retried, so a report that never completes costs one run only.
 		if backfill {
-			if err := b.Put(advisoryCtx, a, board.ManualTriage, "", ""); err != nil {
+			note := fmt.Sprintf("The automated analysis started on %s UTC and has not finished. If this stays after the next run, that run stopped during the analysis.", time.Now().UTC().Format("2006-01-02 at 15:04"))
+			if err := b.Put(advisoryCtx, a, board.AnalysisPending, nil, note); err != nil {
 				cancel()
 				log.Error("the project board could not be updated", "reason", describe(err))
 				failed++
@@ -208,12 +209,17 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 			if keepAgentError(cfg, a.GHSAID, revision, err) != nil {
 				log.Error("the agent error could not be kept in the private reports")
 			}
+			retry := failures+1 < maxAttempts && !backfill
 			if !published && !backfill {
-				_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed(failures+1 < maxAttempts))
-				if b != nil && failures+1 >= maxAttempts {
-					if err := b.Put(ctx, a, board.ManualTriage, "", ""); err != nil {
-						log.Error("the project board could not be updated", "reason", describe(err))
-					}
+				_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed(retry))
+			}
+			if b != nil && !published {
+				priority, note := board.AnalysisFailed, fmt.Sprintf("The automated analysis failed (%s) and will not be retried. A maintainer must triage this report.", describe(err))
+				if retry {
+					priority, note = board.AnalysisRetrying, fmt.Sprintf("The automated analysis failed (%s) on attempt %d of %d. The next run retries it.", describe(err), failures+1, maxAttempts)
+				}
+				if err := b.Put(ctx, a, priority, nil, note); err != nil {
+					log.Error("the project board could not be updated", "reason", describe(err))
 				}
 			}
 			failed++

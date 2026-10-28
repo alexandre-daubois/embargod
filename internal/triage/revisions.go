@@ -157,8 +157,8 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	}
 	// Without its item, the next run triages the advisory again for the board.
 	if b != nil {
-		priority, duplicateOf := board.Prioritize(r)
-		if err := b.Put(ctx, a, priority, r.Severity, duplicateOf); err != nil {
+		t := board.TriageOf(r)
+		if err := b.Put(ctx, a, t.Priority(), &t, body); err != nil {
 			if backfill {
 				return true, err
 			}

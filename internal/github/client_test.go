@@ -69,13 +69,13 @@ func TestProjectItems(t *testing.T) {
 			fmt.Fprint(w, `{"id":1,"number":16,"public":true}`)
 		case "GET /orgs/php/projectsV2/16/items":
 			assert.Equal(t, "1,2", r.URL.Query().Get("fields"))
-			fmt.Fprint(w, `[{"id":5,"fields":[{"id":1,"value":{"raw":"GHSA-1"}}]}]`)
+			fmt.Fprint(w, `[{"id":5,"content":{"node_id":"DI_5"},"fields":[{"id":1,"value":{"raw":"GHSA-1"}}]}]`)
 		case "POST /orgs/php/projectsV2/16/drafts":
 			var body map[string]string
 			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 			assert.Equal(t, map[string]string{"title": "t", "body": "b"}, body)
 			w.WriteHeader(http.StatusCreated)
-			fmt.Fprint(w, `{"id":6}`)
+			fmt.Fprint(w, `{"id":6,"content":{"node_id":"DI_6"}}`)
 		case "PATCH /orgs/php/projectsV2/16/items/6":
 			var body map[string][]map[string]any
 			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
@@ -93,10 +93,43 @@ func TestProjectItems(t *testing.T) {
 	require.Len(t, items, 1)
 	require.Equal(t, int64(5), items[0].ID)
 	require.JSONEq(t, `{"raw":"GHSA-1"}`, string(items[0].Fields[0].Value))
-	id, err := c.CreateDraft(context.Background(), "php", 16, "t", "b")
+	require.Equal(t, "DI_5", items[0].Content.NodeID)
+	draft, err := c.CreateDraft(context.Background(), "php", 16, "t", "b")
 	require.NoError(t, err)
-	require.Equal(t, int64(6), id)
+	require.Equal(t, int64(6), draft.ID)
+	require.Equal(t, "DI_6", draft.Content.NodeID)
 	require.NoError(t, c.UpdateProjectItem(context.Background(), "php", 16, 6, []FieldValue{{ID: 1, Value: "GHSA-1"}, {ID: 2}}))
+}
+
+func TestUpdateDraft(t *testing.T) {
+	for name, tc := range map[string]struct {
+		response string
+		err      bool
+	}{
+		"updated":        {`{"data":{"updateProjectV2DraftIssue":{"clientMutationId":null}}}`, false},
+		"graphql errors": {`{"errors":[{"message":"SECRET-PAYLOAD"}]}`, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "POST /graphql", r.Method+" "+r.URL.Path)
+				var body struct {
+					Query     string            `json:"query"`
+					Variables map[string]string `json:"variables"`
+				}
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				assert.Contains(t, body.Query, "updateProjectV2DraftIssue")
+				assert.Equal(t, map[string]string{"id": "DI_6", "body": "b"}, body.Variables)
+				fmt.Fprint(w, tc.response)
+			})
+
+			err := c.UpdateDraft(context.Background(), "DI_6", "b")
+
+			require.Equal(t, tc.err, err != nil, "%v", err)
+			if err != nil {
+				require.NotContains(t, err.Error(), "SECRET-PAYLOAD")
+			}
+		})
+	}
 }
 
 func TestProjectErrors(t *testing.T) {
@@ -105,6 +138,7 @@ func TestProjectErrors(t *testing.T) {
 	})
 
 	_, err := c.CreateDraft(context.Background(), "php", 16, "t", "b")
+	require.Error(t, c.UpdateDraft(context.Background(), "DI_6", "b"))
 	var httpErr *HTTPError
 	require.ErrorAs(t, err, &httpErr)
 	require.Equal(t, http.StatusForbidden, httpErr.Status)
