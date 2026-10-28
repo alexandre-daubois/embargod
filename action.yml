@@ -39,6 +39,9 @@ inputs:
   runner-image:
     description: Image the agent runs in, instead of the tamis agent image pinned by digest and checked against its build attestation. It needs the agent CLI, git, curl and harness-proxy, and is not checked.
     required: false
+  project:
+    description: Private organisation project kept in sync with the triaged advisories, as `org/number`. The token needs the organisation "Projects" permission in read and write.
+    required: false
   references:
     description: Whitespace-separated local git references, including each supported release branch. The first is analysed, the cited code is located on all of them. All must have been fetched.
     required: true
@@ -125,6 +128,7 @@ runs:
         DAYBREAK: ${{ inputs.daybreak }}
         OUTPUT_DIR: ${{ steps.reports.outputs.path }}
         REFERENCES: ${{ inputs.references }}
+        PROJECT: ${{ inputs.project }}
     - name: Store private reports
       if: always() && steps.triage.outcome != 'skipped' && steps.reports.outcome == 'success'
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

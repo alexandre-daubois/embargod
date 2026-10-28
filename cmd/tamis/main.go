@@ -49,6 +49,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Advisory: os.Getenv("ADVISORY"),
 		RepoPath: os.Getenv("REPO_PATH"),
 		BotLogin: os.Getenv("BOT_LOGIN"),
+		Project:  os.Getenv("PROJECT"),
 	}
 	if cfg.Repo == "" {
 		cfg.Repo = os.Getenv("GITHUB_REPOSITORY")

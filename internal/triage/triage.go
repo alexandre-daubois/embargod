@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/php/tamis/internal/board"
 	"github.com/php/tamis/internal/budget"
 	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
@@ -50,6 +51,7 @@ var (
 
 type GitHub interface {
 	report.IssueGetter
+	board.GitHub
 	ListAdvisories(ctx context.Context, repo, state string) ([]github.Advisory, error)
 	GetAdvisory(ctx context.Context, repo, ghsa string) (github.Advisory, error)
 	Login(ctx context.Context) (string, error)
@@ -69,6 +71,8 @@ type Config struct {
 	BotLogin   string
 	OutputDir  string
 	References []string
+	// Project is the private project board kept in sync with the advisories, as "org/number", none when empty.
+	Project string
 }
 
 // Reader runs the model that sees the untrusted report, sandbox.Reader in production.
@@ -120,6 +124,15 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	if err != nil {
 		return errors.New("listing advisories: " + describe(err))
 	}
+	// A board edited by hand into an unexpected layout only leaves the board out, the triage still runs.
+	var b *board.Board
+	var boardErr error
+	if cfg.Project != "" {
+		if b, err = board.Open(ctx, gh, cfg.Project); err != nil {
+			boardErr = fmt.Errorf("opening the project board: %w", err)
+			log.Error("the project board is left out of this run", "reason", boardErr.Error())
+		}
+	}
 	log.Info("advisories to check", "count", len(slices.DeleteFunc(slices.Clone(all), func(a github.Advisory) bool { return !selected(cfg, a) })))
 
 	// The first reference is copied once, then mounted read-only in every agent run of this execution. The
@@ -150,7 +163,10 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		}
 		revision := advisoryRevision(a, comments, login, cfg.References)
 		done, failures := attempts(comments, login)
-		if done || failures >= maxAttempts {
+		// An advisory triaged before the board existed is triaged again for it, without a new comment. GitHub
+		// refuses to edit an advisory comment, even its author's, so the item itself records that it was done.
+		backfill := done && b != nil && a.State == "triage" && !b.Has(a.GHSAID)
+		if done && !backfill || failures >= maxAttempts {
 			cancel()
 			log.Info("skipped, already triaged or out of attempts")
 			skipped++
@@ -172,18 +188,33 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 			log.Info("the run budget is spent, the remaining advisories wait for the next run")
 			break
 		}
+		// The item goes on the board first, so a board refusing writes costs no model run. A failed triage for the
+		// board is not retried, so a report that never completes costs one run only.
+		if backfill {
+			if err := b.Put(advisoryCtx, a, board.ManualTriage, "", ""); err != nil {
+				cancel()
+				log.Error("the project board could not be updated", "reason", describe(err))
+				failed++
+				continue
+			}
+		}
 		reporters[strings.ToLower(a.Author.Login)] = true
 		log.Info("triaging", "attempt", failures+1)
 		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
 
-		if published, err := triageRevisions(advisoryCtx, cfg, gh, retrying{reader, log}, eng, a, all, comments, login, revision, failures+1 >= maxAttempts, sourceDir, log); err != nil {
+		if published, err := triageRevisions(advisoryCtx, cfg, gh, retrying{reader, log}, eng, b, a, all, comments, backfill, login, revision, failures+1 >= maxAttempts || backfill, sourceDir, log); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
 			if keepAgentError(cfg, a.GHSAID, revision, err) != nil {
 				log.Error("the agent error could not be kept in the private reports")
 			}
-			if !published {
+			if !published && !backfill {
 				_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed(failures+1 < maxAttempts))
+				if b != nil && failures+1 >= maxAttempts {
+					if err := b.Put(ctx, a, board.ManualTriage, "", ""); err != nil {
+						log.Error("the project board could not be updated", "reason", describe(err))
+					}
+				}
 			}
 			failed++
 			continue
@@ -193,12 +224,18 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		triaged++
 	}
 
+	if b != nil {
+		if err := b.Sync(ctx, all); err != nil {
+			log.Error("syncing the project board failed", "reason", describe(err))
+			boardErr = errors.New("syncing the project board: " + describe(err))
+		}
+	}
 	log.Info("done", "triaged", triaged, "already_triaged", skipped, "failed", failed)
 	if failed > 0 {
-		return fmt.Errorf("%d advisory(ies) failed", failed)
+		return errors.Join(fmt.Errorf("%d advisory(ies) failed", failed), boardErr)
 	}
 
-	return nil
+	return boardErr
 }
 
 // keepAgentError keeps the output of a failed agent run in the private reports, since it may quote the report.

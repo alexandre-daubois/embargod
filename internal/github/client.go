@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -114,6 +115,74 @@ func (c *Client) ListComments(ctx context.Context, repo, ghsa string) ([]Comment
 
 func (c *Client) PostComment(ctx context.Context, repo, ghsa, body string) error {
 	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/repos/%s/security-advisories/%s/comments", c.BaseURL, repo, url.PathEscape(ghsa)), map[string]string{"body": body}, nil)
+
+	return err
+}
+
+type Project struct {
+	Public bool `json:"public"`
+}
+
+type ProjectField struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	DataType string `json:"data_type"`
+	Options  []struct {
+		ID   string `json:"id"`
+		Name struct {
+			Raw string `json:"raw"`
+		} `json:"name"`
+	} `json:"options"`
+}
+
+// ProjectItem holds the values of the fields it was listed with. A text value is {"raw": ...}, a single select
+// value {"name": {"raw": ...}} and a number a bare number.
+type ProjectItem struct {
+	ID     int64 `json:"id"`
+	Fields []struct {
+		ID    int64           `json:"id"`
+		Value json.RawMessage `json:"value"`
+	} `json:"fields"`
+}
+
+// FieldValue sets a text, number or date field, or a single select field by its option ID.
+type FieldValue struct {
+	ID    int64 `json:"id"`
+	Value any   `json:"value"`
+}
+
+func (c *Client) GetProject(ctx context.Context, org string, number int) (Project, error) {
+	var p Project
+	_, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/orgs/%s/projectsV2/%d", c.BaseURL, url.PathEscape(org), number), nil, &p)
+
+	return p, err
+}
+
+func (c *Client) ListProjectFields(ctx context.Context, org string, number int) ([]ProjectField, error) {
+	return list[ProjectField](ctx, c, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/fields?per_page=100", c.BaseURL, url.PathEscape(org), number))
+}
+
+func (c *Client) ListProjectItems(ctx context.Context, org string, number int, fields []int64) ([]ProjectItem, error) {
+	ids := make([]string, len(fields))
+	for i, id := range fields {
+		ids[i] = strconv.FormatInt(id, 10)
+	}
+	q := url.Values{"per_page": {"100"}, "fields": {strings.Join(ids, ",")}}
+
+	return list[ProjectItem](ctx, c, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/items?%s", c.BaseURL, url.PathEscape(org), number, q.Encode()))
+}
+
+func (c *Client) CreateDraft(ctx context.Context, org string, number int, title, body string) (int64, error) {
+	var item struct {
+		ID int64 `json:"id"`
+	}
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/drafts", c.BaseURL, url.PathEscape(org), number), map[string]string{"title": title, "body": body}, &item)
+
+	return item.ID, err
+}
+
+func (c *Client) UpdateProjectItem(ctx context.Context, org string, number int, item int64, fields []FieldValue) error {
+	_, err := c.do(ctx, http.MethodPatch, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/items/%d", c.BaseURL, url.PathEscape(org), number, item), map[string]any{"fields": fields}, nil)
 
 	return err
 }

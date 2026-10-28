@@ -54,3 +54,32 @@ Trigger the workflow by hand with the `advisory` input set to a test GHSA. tamis
 Download the private `tamis-reports` artifact and check that the comment names embargoed advisories only as exact duplicates. Then let the schedule take over. Artifact access follows the permissions of the private repository, so grant it to the security team only.
 
 GitHub Actions has no trigger for security advisories, so the schedule polls every 15 minutes. A run with no new advisory neither starts the agent nor calls the model.
+
+## 5. Project board
+
+tamis can keep a private organisation project in sync with the advisories, one draft item each, so the security team sorts them by priority. Give the App the organisation "Projects" permission in read and write, create a private project and add these fields by hand:
+
+| Field | Type | Options, in this order |
+|---|---|---|
+| `GHSA` | Text | |
+| `Duplicate of` | Text | |
+| `Duplicates` | Number | |
+| `Reported` | Date | |
+| `Priority` | Single select | `Look first`, `Later`, `Needs manual triage`, `Duplicate` |
+| `Severity` | Single select | `Critical`, `High`, `Medium`, `Low` |
+| `State` | Single select | `triage`, `draft`, `published`, `closed`, `withdrawn` |
+
+Then set `project` to `your-org/NUMBER`. When the project is public, or a field or an option is missing or renamed, tamis leaves the board out of the run, still triages and comments, and fails the run so the error shows.
+
+The code sets `Priority`:
+
+- `Look first` for a critical or high severity, a faulty statement found in the repository and no policy exclusion,
+- `Later` otherwise,
+- `Duplicate` behind the oldest high-confidence exact duplicate the comment shows, which `Duplicate of` names,
+- `Needs manual triage` after the last failed attempt.
+
+The model estimates `Severity` from its CVSS vector and ignores the one the reporter claims. `Duplicates` counts the items that name the advisory in `Duplicate of`.
+
+At the end of each run, tamis copies the state of every advisory to `State` and recounts `Duplicates`, without calling the model. The REST API cannot archive items, so filter the views on `State` instead, for example a table on `State:triage,draft` sorted by `Priority` then `Reported`.
+
+An advisory in the `triage` state that tamis commented but that has no item, for example one triaged before the board existed, is triaged again without a new comment. When that triage fails, the item gets `Needs manual triage` and the advisory is not retried. Deleting an item by hand triggers that triage again on the next run.

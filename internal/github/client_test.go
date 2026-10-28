@@ -62,6 +62,59 @@ func TestPostComment(t *testing.T) {
 	require.NoError(t, c.PostComment(context.Background(), "o/r", "GHSA-1", "hello"))
 }
 
+func TestProjectItems(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /orgs/php/projectsV2/16":
+			fmt.Fprint(w, `{"id":1,"number":16,"public":true}`)
+		case "GET /orgs/php/projectsV2/16/items":
+			assert.Equal(t, "1,2", r.URL.Query().Get("fields"))
+			fmt.Fprint(w, `[{"id":5,"fields":[{"id":1,"value":{"raw":"GHSA-1"}}]}]`)
+		case "POST /orgs/php/projectsV2/16/drafts":
+			var body map[string]string
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, map[string]string{"title": "t", "body": "b"}, body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":6}`)
+		case "PATCH /orgs/php/projectsV2/16/items/6":
+			var body map[string][]map[string]any
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, []map[string]any{{"id": float64(1), "value": "GHSA-1"}, {"id": float64(2), "value": nil}}, body["fields"])
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	project, err := c.GetProject(context.Background(), "php", 16)
+	require.NoError(t, err)
+	require.True(t, project.Public)
+	items, err := c.ListProjectItems(context.Background(), "php", 16, []int64{1, 2})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, int64(5), items[0].ID)
+	require.JSONEq(t, `{"raw":"GHSA-1"}`, string(items[0].Fields[0].Value))
+	id, err := c.CreateDraft(context.Background(), "php", 16, "t", "b")
+	require.NoError(t, err)
+	require.Equal(t, int64(6), id)
+	require.NoError(t, c.UpdateProjectItem(context.Background(), "php", 16, 6, []FieldValue{{ID: 1, Value: "GHSA-1"}, {ID: 2}}))
+}
+
+func TestProjectErrors(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	})
+
+	_, err := c.CreateDraft(context.Background(), "php", 16, "t", "b")
+	var httpErr *HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, http.StatusForbidden, httpErr.Status)
+	require.Error(t, c.UpdateProjectItem(context.Background(), "php", 16, 6, nil))
+	_, err = c.ListProjectFields(context.Background(), "php", 16)
+	require.Error(t, err)
+	_, err = c.GetProject(context.Background(), "php", 16)
+	require.Error(t, err)
+}
+
 func TestErrors(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/repos/o/r/issues/404" {

@@ -64,10 +64,12 @@ func TestVerifyKeepsWhatExists(t *testing.T) {
 		CodeReferences: []CodeReference{{Path: "a.c", Symbol: "real_func"}, {Path: "a.c"}},
 		CWE:            []CWE{{ID: "CWE-787"}},
 		CVSS:           CVSS{Vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"},
+		Severity:       "critical",
 	}
 
 	require.NoError(t, checker(t).Verify(context.Background(), &r))
 
+	require.Equal(t, "critical", r.Severity, "nothing should be removed: %+v", r)
 	require.Zero(t, r.Removed, "nothing should be removed: %+v", r)
 	require.Len(t, r.Duplicates, 1, "nothing should be removed: %+v", r)
 	require.Len(t, r.Related, 1, "nothing should be removed: %+v", r)
@@ -88,6 +90,7 @@ func TestVerifyDropsWhatDoesNotExist(t *testing.T) {
 		CodeReferences: []CodeReference{{Path: "a.c", Symbol: "invented_func"}, {Path: "missing.c"}, {Path: "../etc/passwd"}},
 		CWE:            []CWE{{ID: "CWE-0"}, {ID: "buffer overflow"}},
 		CVSS:           CVSS{Vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+		Severity:       "Severe",
 	}
 
 	require.NoError(t, checker(t).Verify(context.Background(), &r))
@@ -96,8 +99,9 @@ func TestVerifyDropsWhatDoesNotExist(t *testing.T) {
 	require.Empty(t, r.Related, "invented claims should be removed: %+v", r)
 	require.Empty(t, r.CWE, "invented claims should be removed: %+v", r)
 	require.Empty(t, r.CVSS.Vector, "invented claims should be removed: %+v", r)
-	// Duplicates are dropped silently, so only related issues, CWEs and the vector count.
-	require.Equal(t, 5, r.Removed)
+	require.Empty(t, r.Severity, "invented claims should be removed: %+v", r)
+	// Duplicates are dropped silently, so only related issues, CWEs, the vector and the severity count.
+	require.Equal(t, 6, r.Removed)
 	require.Len(t, r.CodeReferences, 3, "code references are kept and flagged")
 	for _, ref := range r.CodeReferences {
 		assert.False(t, ref.Found, "%+v should not be found", ref)
@@ -431,6 +435,7 @@ func TestValidateReaderBoundsModelOutput(t *testing.T) {
 		"long entry point": {EntryPoints: []string{strings.Repeat("x", maxText+1)}},
 		"long exclusion":   {PolicyExclusions: []PolicyPoint{{Reason: strings.Repeat("x", maxText+1)}}},
 		"long CWE":         {CWE: []CWE{{Reason: strings.Repeat("x", maxText+1)}}},
+		"long severity":    {Severity: strings.Repeat("x", maxText+1)},
 		"too much entry point text": {EntryPoints: []string{
 			strings.Repeat("x", maxText), strings.Repeat("x", maxText), strings.Repeat("x", maxText),
 			strings.Repeat("x", maxText), strings.Repeat("x", maxText), strings.Repeat("x", maxText), "x",

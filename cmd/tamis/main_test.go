@@ -68,7 +68,7 @@ func TestRunValidatesConfiguration(t *testing.T) {
 		"references required":   {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "OUTPUT_DIR": t.TempDir()}, "REFERENCES must list"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			for _, k := range []string{"REPOSITORY", "GITHUB_REPOSITORY", "ADVISORY", "REPO_PATH", "BOT_LOGIN", "DAYBREAK", "SINCE", "GH_TOKEN", "ENGINE", "MODEL", "LLM_API_KEY", "OUTPUT_DIR", "REFERENCES"} {
+			for _, k := range []string{"REPOSITORY", "GITHUB_REPOSITORY", "ADVISORY", "REPO_PATH", "BOT_LOGIN", "DAYBREAK", "SINCE", "GH_TOKEN", "ENGINE", "MODEL", "LLM_API_KEY", "OUTPUT_DIR", "REFERENCES", "PROJECT"} {
 				t.Setenv(k, tc.env[k])
 			}
 
