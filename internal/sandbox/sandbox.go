@@ -197,6 +197,9 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		origin = "https://" + egress.HostGatewayAlias + ":" + r.modelPort
 		env = []string{"CODEX_CA_CERTIFICATE=" + container.StateMount + "/" + caFile, "CODEX_AUTHAPI_BASE_URL=" + origin + modelproxy.PathPrefix + "/auth"}
 	}
+	if err := r.writeConfig(state, origin); err != nil {
+		return nil, err
+	}
 	a := &agent{Harness: r.harness}
 	scope, err := r.runner(state, source, token, hosts, env).Open(ctx, a)
 	if err != nil {
@@ -212,9 +215,6 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		MaxTurns:     maxTurns,
 		OutputFile:   outputFile,
 		BaseURL:      origin + r.backend.basePath,
-	}
-	if err := r.writeConfig(state, origin); err != nil {
-		return nil, err
 	}
 
 	for attempt := 0; attempt < 2; attempt++ {

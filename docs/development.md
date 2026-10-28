@@ -9,7 +9,7 @@ go build ./cmd/tamis
 go test -race ./...
 ```
 
-Three fuzz targets cover the comment escaper, the duplicate-search clues and file reading. The provider protocol filter is fuzzed in harness, with its model proxy:
+Three fuzz targets cover the comment escaper, the duplicate-search clues and file reading:
 
 | Target | Package |
 |---|---|
@@ -20,6 +20,8 @@ Three fuzz targets cover the comment escaper, the duplicate-search clues and fil
 ```bash
 go test ./internal/report -run '^$' -fuzz '^FuzzText$' -fuzztime 60s
 ```
+
+The provider protocol filter is fuzzed in harness, with its model proxy.
 
 On each push, CI checks formatting and `go mod tidy`, then runs `go vet`, the tests, the three fuzz targets and the Docker isolation tests of both agent images. Make both isolation jobs required release checks.
 

@@ -248,6 +248,17 @@ func TestWriteConfig(t *testing.T) {
 	}
 }
 
+func TestCodexRunsWithTheChatGPTFeaturesOff(t *testing.T) {
+	h, err := harness.ByName("codex")
+	require.NoError(t, err)
+
+	args := strings.Join(h.Args(harness.Job{Workspace: container.WorkMount}), " ")
+
+	for _, want := range []string{"-c analytics.enabled=false", "-c features.apps=false", "-c features.plugins=false"} {
+		assert.Contains(t, args, want)
+	}
+}
+
 func TestImagesArePinnedByDigest(t *testing.T) {
 	pinned := regexp.MustCompile(`^ghcr\.io/php/tamis-agent@sha256:[0-9a-f]{64}$`)
 	agents := map[string]bool{}
