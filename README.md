@@ -14,6 +14,24 @@ For each report, tamis:
 
 The maintainers keep the decision. tamis only prepares it.
 
+A comment looks like this, with the cited code, the policy check and the severity folded in a details block. [How it works](docs/how-it-works.md#the-comment) shows the full layout.
+
+```markdown
+### Automated triage
+
+> Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.
+
+Scanned on 2026-10-24 at 14:32 UTC on `main` at `21a7561`.
+
+Plausible signed `char` passed to `isxdigit()` in `php_url_decode_ex()`, the given reproducer never reaches it.
+
+#### Possible duplicates
+
+| Advisory | Status | Confidence |
+|---|---|---|
+| GHSA-xxxx-xxxx-xxxx (oldest report) | Published | High • Exact duplicate |
+```
+
 The agent runs in an isolated container driven by [harness](https://github.com/alpha-omega-security/harness), the Alpha-Omega library behind [scrutineer](https://github.com/alpha-omega-security/scrutineer). [Security](docs/security.md) describes what the sandbox allows.
 
 ## Before installing
@@ -61,8 +79,8 @@ jobs:
           repository: your-org/your-project
           fetch-depth: 0
           persist-credentials: false
-      # Replace this placeholder with the full SHA of a reviewed tamis commit.
-      - uses: php/tamis@REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA
+      # Replace this placeholder with the full SHA of a reviewed tamis release, and its tag.
+      - uses: php/tamis@REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA # vYYYY.MM.DD.N
         with:
           repository: your-org/your-project
           # A date, or an RFC 3339 time with its offset: "2026-10-22T14:30:00+02:00"
@@ -75,7 +93,7 @@ jobs:
           references: master origin/release-branch
 ```
 
-Set `since` to the installation date so tamis leaves existing advisories alone. Keep the workflow repository private, since the action uploads the reports there as artifacts kept for seven days. The [setup guide](docs/setup.md) covers source branches and provider spending limits.
+Pin the commit of a [release](https://github.com/php/tamis/releases) tag, since the action then runs the attested binary of that release instead of building tamis from source. Set `since` to the installation date so tamis leaves existing advisories alone. Keep the workflow repository private, since the action uploads the reports there as artifacts kept for seven days. The [setup guide](docs/setup.md) covers source branches and provider spending limits.
 
 ## Documentation
 

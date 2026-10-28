@@ -1,0 +1,4 @@
+contact_links:
+  - name: Vulnerability in tamis
+    url: https://github.com/php/tamis/security/advisories/new
+    about: Report it privately, never in a public issue.

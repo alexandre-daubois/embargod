@@ -1,0 +1,27 @@
+name: Wrong triage
+description: A duplicate, a cited code check or a severity tamis got wrong.
+body:
+  - type: markdown
+    attributes:
+      value: This issue is public. Never paste an embargoed advisory, its identifier or the comment tamis posted on it.
+  - type: input
+    id: version
+    attributes:
+      label: tamis release
+      placeholder: v2026.10.28.3
+    validations:
+      required: true
+  - type: input
+    id: engine
+    attributes:
+      label: Engine and model
+      placeholder: claude, claude-opus-5-5
+    validations:
+      required: true
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What tamis got wrong
+      description: The section of the comment, what it said and what was right, without the report text.
+    validations:
+      required: true
