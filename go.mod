@@ -3,7 +3,7 @@ module github.com/php/tamis
 go 1.27.3
 
 require (
-	github.com/alpha-omega-security/harness v0.1.16
+	github.com/alpha-omega-security/harness v0.1.18
 	github.com/anthropics/anthropic-sdk-go v1.84.0
 	github.com/git-pkgs/cwe v0.1.1
 	github.com/openai/openai-go/v3 v3.85.1
@@ -20,6 +20,7 @@ require (
 	github.com/dnephin/pflag v1.0.7 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
+	github.com/git-pkgs/skills v0.2.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect

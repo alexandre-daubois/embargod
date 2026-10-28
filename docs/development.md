@@ -9,20 +9,19 @@ go build ./cmd/tamis
 go test -race ./...
 ```
 
-Four fuzz targets cover the comment escaper, the duplicate-search clues, file reading and the provider protocol filter:
+Three fuzz targets cover the comment escaper, the duplicate-search clues and file reading. The provider protocol filter is fuzzed in harness, with its model proxy:
 
 | Target | Package |
 |---|---|
 | `FuzzText` | `./internal/report` |
 | `FuzzClues` | `./internal/report` |
 | `FuzzReadFileStaysInTrackedFiles` | `./internal/repo` |
-| `FuzzProviderRequest` | `./internal/modelproxy` |
 
 ```bash
 go test ./internal/report -run '^$' -fuzz '^FuzzText$' -fuzztime 60s
 ```
 
-On each push, CI checks formatting and `go mod tidy`, then runs `go vet`, the tests, the four fuzz targets and the Docker isolation tests of both agent images. Make both isolation jobs required release checks.
+On each push, CI checks formatting and `go mod tidy`, then runs `go vet`, the tests, the three fuzz targets and the Docker isolation tests of both agent images. Make both isolation jobs required release checks.
 
 ## Isolation tests
 
@@ -79,8 +78,7 @@ tamis posts the comment for real. It skips an advisory that already has a comple
 |---|---|
 | `cmd/tamis` | Configuration and entry point |
 | `internal/triage` | Advisory selection and the triage pipeline |
-| `internal/sandbox` | The agent container, through harness |
-| `internal/modelproxy` | The proxy that keeps the model key on the host |
+| `internal/sandbox` | The agent container and the model proxy that keeps the key on the host, through harness |
 | `internal/budget` | Request and byte budgets shared by every agent and comparator of a run |
 | `internal/usage` | Requests and tokens spent per advisory, for the log |
 | `internal/engine` | The in-process model loop of the exact duplicate confirmation |

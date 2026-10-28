@@ -116,34 +116,63 @@ func TestBoundedWriterDiscardsOutputPastTheLimit(t *testing.T) {
 	require.Len(t, w.String(), maxAgentOutput)
 }
 
-func TestAgentContainerUsesOnlyThePrivateProxyAndLimitsResources(t *testing.T) {
+func TestAgentRunsIsolatedWithLimitedResources(t *testing.T) {
 	h, err := harness.ByName("claude")
 	require.NoError(t, err)
-	run := &isolatedRun{runtime: container.Runtime{Bin: "docker"}, image: "agent", network: "private", proxyIP: "172.20.0.2", agent: "work"}
-	args := run.agentArgs(h, harness.Job{Workspace: container.WorkMount}, "/host/work", "/host/snapshot", "/host/state", "/host/work/report.json", "ANTHROPIC_API_KEY")
-	joined := strings.Join(args, " ")
-	for _, want := range []string{"host.docker.internal:172.20.0.2", "--network private", "--pids-limit 256", "--memory 2g", "--cpus 2", "src=/host/work,dst=/work,readonly", "src=/host/snapshot,dst=/work/src,readonly", "--name work", "--log-driver none"} {
-		assert.Contains(t, joined, want)
-	}
-	require.NotContains(t, joined, "host.docker.internal:host-gateway", "the hostile container can reach the host gateway")
+	reader := &Reader{backend: backends["claude"], harness: h, image: "agent", modelPort: "1234"}
+
+	runner := reader.runner("/host/state", "/host/snapshot", "proxy-token", allow, nil)
+
+	assert.True(t, runner.Hardened, "the agent shares a network with other containers")
+	assert.True(t, runner.IsolateHost, "the agent can reach host services")
+	assert.True(t, runner.ReadOnlyWorkspace, "the agent can change its own instructions")
+	assert.Equal(t, container.SidecarConfig{Allow: allow, APIPort: "1234"}, runner.Sidecar)
+	assert.Equal(t, []container.Mount{{Host: "/host/snapshot", Container: "/work/src", ReadOnly: true}}, runner.Mounts)
+	assert.Equal(t, []any{"2g", "2", 256, int64(64 << 20)}, []any{runner.Memory, runner.CPUs, runner.PIDsLimit, runner.FileSizeLimit})
+}
+
+func TestOfflineAgentReachesOnlyTheModelProxy(t *testing.T) {
+	h, err := harness.ByName("claude")
+	require.NoError(t, err)
+	reader := &Reader{backend: backends["claude"], harness: h, modelPort: "1234"}
+
+	runner := reader.runner("/host/state", "/host/snapshot", "proxy-token", nil, nil)
+
+	assert.Empty(t, runner.Sidecar.Allow)
+	assert.Empty(t, (&agent{Harness: h}).EgressHosts(), "the agent can reach the provider around the model proxy")
 }
 
 func TestAccessTokenContainerGetsNoAmbientAPIKey(t *testing.T) {
-	t.Setenv("CODEX_API_KEY", "ambient-secret")
 	h, err := harness.ByName("codex")
 	require.NoError(t, err)
-	run := &isolatedRun{image: "agent", network: "private", proxyIP: "172.20.0.2", agent: "work"}
-	args := run.agentArgs(h, harness.Job{Workspace: container.WorkMount}, "/host/work", "/host/snapshot", "/host/state", "/host/work/report.json", "CODEX_ACCESS_TOKEN")
-	for i, arg := range args {
-		require.NotEqual(t, "CODEX_API_KEY", arg, "ambient API key reached argument %d", i)
-		require.False(t, strings.HasPrefix(arg, "CODEX_API_KEY="), "ambient API key reached argument %d: %s", i, arg)
-	}
-	require.Contains(t, args, "CODEX_ACCESS_TOKEN", "access token key was not injected")
+	reader := &Reader{backend: backends["codex-token"], harness: h, modelPort: "1234"}
+
+	runner := reader.runner("/host/state", "/host/snapshot", "proxy-token", allow, nil)
+
+	assert.Contains(t, runner.OmitEnv, "CODEX_API_KEY", "the ambient API key reaches the container")
+	assert.Contains(t, runner.Env, "CODEX_ACCESS_TOKEN", "the access token key is not injected")
+	assert.Equal(t, []string{"CODEX_ACCESS_TOKEN=proxy-token"}, runner.ProcessEnv)
+	assert.Equal(t, container.SidecarConfig{Allow: allow, HostPorts: []string{"1234"}}, runner.Sidecar)
 }
 
-func TestOnlyDockerCanStartAnIsolatedRun(t *testing.T) {
-	_, err := startIsolatedRun(t.Context(), container.Runtime{Bin: "podman"}, "agent", "1234", false, allow)
+func TestOnlyDockerCanRunTheAgent(t *testing.T) {
+	h, err := harness.ByName("claude")
+	require.NoError(t, err)
+	reader := &Reader{backend: backends["claude"], harness: h, runtime: container.Runtime{Bin: "podman"}, image: "agent", modelPort: "1234"}
+
+	_, err = reader.runner(t.TempDir(), t.TempDir(), "proxy-token", allow, nil).Open(t.Context(), &agent{Harness: h})
+
 	require.Error(t, err, "an unsupported runtime must fail closed")
+}
+
+func TestAgentKeepsOnlyTheFailuresOfItsOutput(t *testing.T) {
+	h, err := harness.ByName("codex")
+	require.NoError(t, err)
+	a := &agent{Harness: h}
+
+	a.ParseStream(strings.NewReader(`{"type":"item.completed","item":{"type":"agent_message","text":"report content"}}`+"\n"+`{"type":"turn.failed","error":{"message":"usage limit"}}`), nil)
+
+	require.Equal(t, `{"type":"turn.failed","error":{"message":"usage limit"}}`, a.failures.String())
 }
 
 func TestReadOutputIsBounded(t *testing.T) {
@@ -206,7 +235,7 @@ func TestWriteConfig(t *testing.T) {
 			} else {
 				require.Empty(t, got)
 			}
-			for _, want := range []string{"model_provider = \"tamis\"", "model_reasoning_effort = \"medium\"", "supports_websockets = false", "plugins = false", "[analytics]\nenabled = false", "chatgpt_base_url = \"https://proxy:1/model-proxy/backend-api\"", "base_url = \"https://proxy:1" + backends[tc.backend].basePath + "\""} {
+			for _, want := range []string{"model_provider = \"tamis\"", "model_reasoning_effort = \"medium\"", "supports_websockets = false", "chatgpt_base_url = \"https://proxy:1/model-proxy/backend-api\"", "base_url = \"https://proxy:1" + backends[tc.backend].basePath + "\""} {
 				if tc.wantConfig {
 					require.Contains(t, string(got), want)
 				}
