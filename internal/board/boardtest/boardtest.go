@@ -36,7 +36,7 @@ func New() *Project {
 		{"Duplicate of", "text", nil},
 		{"Duplicates", "number", nil},
 		{"Reported", "date", nil},
-		{"Priority", "single_select", []string{"Look first", "Later", "Duplicate", "Analysis failed", "Analysis failed, retrying", "Analysis pending"}},
+		{"Priority", "single_select", []string{"Look first", "When possible", "Duplicate", "Analysis failed", "Analysis failed, retrying", "Analysis pending"}},
 		{"Severity", "single_select", []string{"Critical", "High", "Medium", "Low"}},
 		{"State", "single_select", []string{"triage", "draft", "published", "closed", "withdrawn"}},
 		{"Policy exclusion", "single_select", []string{"Yes", "No"}},

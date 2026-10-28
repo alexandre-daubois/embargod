@@ -1345,7 +1345,7 @@ func TestRunPutsTheLastFailedAttemptOnTheBoard(t *testing.T) {
 
 func TestRunSyncsTheBoardWithoutTriaging(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
-	id := gh.Add(map[string]any{"GHSA": "GHSA-done", "State": "triage", "Priority": "Later"})
+	id := gh.Add(map[string]any{"GHSA": "GHSA-done", "State": "triage", "Priority": "When possible"})
 	gh.advisories[2].State = "closed"
 
 	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
@@ -1377,7 +1377,7 @@ func TestRunLooksFirstAtASevereReportOnlyWhenItsFaultyStatementExists(t *testing
 		location, priority, located string
 	}{
 		"located":     {`"path":"ext/foo/foo.c","symbol":"php_foo","line":42`, "Look first", "Yes"},
-		"not located": {`"path":"ext/foo/missing.c","symbol":"php_foo","line":42`, "Later", "No"},
+		"not located": {`"path":"ext/foo/missing.c","symbol":"php_foo","line":42`, "When possible", "No"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			gh := newFixture()

@@ -65,7 +65,7 @@ tamis can keep a private organisation project in sync with the advisories, one d
 | `Duplicate of` | Text | |
 | `Duplicates` | Number | |
 | `Reported` | Date | |
-| `Priority` | Single select | `Look first`, `Later`, `Duplicate`, `Analysis failed`, `Analysis failed, retrying`, `Analysis pending` |
+| `Priority` | Single select | `Look first`, `When possible`, `Duplicate`, `Analysis failed`, `Analysis failed, retrying`, `Analysis pending` |
 | `Severity` | Single select | `Critical`, `High`, `Medium`, `Low` |
 | `State` | Single select | `triage`, `draft`, `published`, `closed`, `withdrawn` |
 | `Policy exclusion` | Single select | `Yes`, `No` |
@@ -76,7 +76,7 @@ Then set `project` to `your-org/NUMBER`. When the project is public, or a field 
 The code sets `Priority`:
 
 - `Look first` for a critical or high severity, a faulty statement found in the repository and no policy exclusion,
-- `Later` otherwise,
+- `When possible` otherwise,
 - `Duplicate` behind the oldest high-confidence exact duplicate the comment shows, which `Duplicate of` names,
 - `Analysis pending` while tamis triages again an advisory it commented before the board, `Analysis failed, retrying` after a failed attempt with another to come, and `Analysis failed` once tamis gives up. The draft body then explains the status instead of holding the triage comment.
 

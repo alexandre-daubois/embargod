@@ -53,10 +53,10 @@ func TestTriageOf(t *testing.T) {
 		"severe":           {report.Report{Severity: "high", Located: true}, LookFirst, ""},
 		"critical":         {report.Report{Severity: "critical", Located: true}, LookFirst, ""},
 		"proof of concept": {report.Report{Severity: "high", Located: true, CodeReferences: []report.CodeReference{{Found: true}, {Path: "trigger.py"}}}, LookFirst, ""},
-		"medium":           {report.Report{Severity: "medium", Located: true}, Later, ""},
-		"no severity":      {report.Report{Located: true}, Later, ""},
-		"not located":      {report.Report{Severity: "high", CodeReferences: []report.CodeReference{{Found: true}}}, Later, ""},
-		"policy exclusion": {report.Report{Severity: "critical", Located: true, PolicyExclusions: []report.PolicyPoint{{Point: "p"}}}, Later, ""},
+		"medium":           {report.Report{Severity: "medium", Located: true}, WhenPossible, ""},
+		"no severity":      {report.Report{Located: true}, WhenPossible, ""},
+		"not located":      {report.Report{Severity: "high", CodeReferences: []report.CodeReference{{Found: true}}}, WhenPossible, ""},
+		"policy exclusion": {report.Report{Severity: "critical", Located: true, PolicyExclusions: []report.PolicyPoint{{Point: "p"}}}, WhenPossible, ""},
 		"open duplicate":   {report.Report{Severity: "critical", Duplicates: []report.Duplicate{older}}, Duplicate, "GHSA-old"},
 		"settled duplicate": {report.Report{Duplicates: []report.Duplicate{func() report.Duplicate {
 			d := older
@@ -104,8 +104,8 @@ func TestPutCreatesOneItemPerAdvisory(t *testing.T) {
 
 func TestPutFindsTheItemOfAPreviousRun(t *testing.T) {
 	p := boardtest.New()
-	id := p.Add(map[string]any{"GHSA": "GHSA-new", "Priority": Later})
-	p.Add(map[string]any{"Priority": Later})
+	id := p.Add(map[string]any{"GHSA": "GHSA-new", "Priority": WhenPossible})
+	p.Add(map[string]any{"Priority": WhenPossible})
 	b, err := Open(t.Context(), p, "php/16")
 	require.NoError(t, err)
 
@@ -132,8 +132,8 @@ func TestSyncMirrorsStatesAndDuplicates(t *testing.T) {
 	old := p.Add(map[string]any{"GHSA": "GHSA-old", "State": "triage", "Priority": LookFirst})
 	dup := p.Add(map[string]any{"GHSA": "GHSA-dup", "State": "triage", "Priority": Duplicate, "Duplicate of": "GHSA-old"})
 	other := p.Add(map[string]any{"GHSA": "GHSA-other", "State": "triage", "Priority": Duplicate, "Duplicate of": "GHSA-old"})
-	gone := p.Add(map[string]any{"GHSA": "GHSA-gone", "State": "triage", "Priority": Later})
-	manual := p.Add(map[string]any{"Priority": Later})
+	gone := p.Add(map[string]any{"GHSA": "GHSA-gone", "State": "triage", "Priority": WhenPossible})
+	manual := p.Add(map[string]any{"Priority": WhenPossible})
 	b, err := Open(t.Context(), p, "php/16")
 	require.NoError(t, err)
 
@@ -143,7 +143,7 @@ func TestSyncMirrorsStatesAndDuplicates(t *testing.T) {
 	require.Equal(t, Duplicate, p.Value(dup, "Priority"), "the duplicate of a settled report changed priority")
 	require.Equal(t, "closed", p.Value(other, "State"))
 	require.Equal(t, "triage", p.Value(gone, "State"), "an advisory missing from the list changed state")
-	require.Equal(t, Later, p.Value(manual, "Priority"), "an item added by hand was touched")
+	require.Equal(t, WhenPossible, p.Value(manual, "Priority"), "an item added by hand was touched")
 
 	writes := p.Writes
 	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-old", State: "published"}, {GHSAID: "GHSA-dup", State: "triage"}, {GHSAID: "GHSA-other", State: "closed"}}))
@@ -280,7 +280,7 @@ func TestPutClearsTheTriageOfAStatus(t *testing.T) {
 
 func TestSyncRanksEveryTriageAgain(t *testing.T) {
 	p := boardtest.New()
-	stale := p.Add(map[string]any{"GHSA": "GHSA-a", "State": "triage", "Priority": Later, "Severity": "Critical", "Policy exclusion": "No", "Located": "Yes"})
+	stale := p.Add(map[string]any{"GHSA": "GHSA-a", "State": "triage", "Priority": WhenPossible, "Severity": "Critical", "Policy exclusion": "No", "Located": "Yes"})
 	dup := p.Add(map[string]any{"GHSA": "GHSA-b", "State": "triage", "Priority": LookFirst, "Severity": "High", "Policy exclusion": "No", "Located": "Yes", "Duplicate of": "GHSA-a"})
 	excluded := p.Add(map[string]any{"GHSA": "GHSA-c", "State": "triage", "Priority": LookFirst, "Severity": "High", "Policy exclusion": "Yes", "Located": "Yes"})
 	status := p.Add(map[string]any{"GHSA": "GHSA-d", "State": "triage", "Priority": AnalysisFailed})
@@ -292,7 +292,7 @@ func TestSyncRanksEveryTriageAgain(t *testing.T) {
 
 	require.Equal(t, LookFirst, p.Value(stale, "Priority"), "a triage ranked by an older rule kept its priority")
 	require.Equal(t, Duplicate, p.Value(dup, "Priority"))
-	require.Equal(t, Later, p.Value(excluded, "Priority"))
+	require.Equal(t, WhenPossible, p.Value(excluded, "Priority"))
 	require.Equal(t, AnalysisFailed, p.Value(status, "Priority"), "a status was ranked as a triage")
 	require.Equal(t, LookFirst, p.Value(older, "Priority"), "an item without the ranking inputs was ranked")
 

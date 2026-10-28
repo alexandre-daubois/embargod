@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	LookFirst = "Look first"
-	Later     = "Later"
+	LookFirst    = "Look first"
+	WhenPossible = "When possible"
 	// AnalysisPending marks an advisory whose analysis started, AnalysisRetrying and AnalysisFailed one whose
 	// analysis failed, with and without another attempt to come. The draft body says more.
 	AnalysisPending  = "Analysis pending"
@@ -47,7 +47,7 @@ var layout = []struct {
 	{fieldDuplicateOf, "text", nil},
 	{fieldDuplicates, "number", nil},
 	{fieldReported, "date", nil},
-	{fieldPriority, "single_select", []string{LookFirst, Later, Duplicate, AnalysisFailed, AnalysisRetrying, AnalysisPending}},
+	{fieldPriority, "single_select", []string{LookFirst, WhenPossible, Duplicate, AnalysisFailed, AnalysisRetrying, AnalysisPending}},
 	{fieldSeverity, "single_select", []string{"Critical", "High", "Medium", "Low"}},
 	{fieldState, "single_select", []string{"triage", "draft", "published", "closed", "withdrawn"}},
 	{fieldExcluded, "single_select", []string{"Yes", "No"}},
@@ -212,7 +212,7 @@ func (t Triage) Priority() string {
 	case t.DuplicateOf != "":
 		return Duplicate
 	case t.Severity != "critical" && t.Severity != "high" || t.Excluded || !t.Located:
-		return Later
+		return WhenPossible
 	default:
 		return LookFirst
 	}
