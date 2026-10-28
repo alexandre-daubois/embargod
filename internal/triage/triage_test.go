@@ -727,18 +727,32 @@ func TestRunRejectsADuplicateOutsideTheAdvisories(t *testing.T) {
 	body := gh.posted["GHSA-new"]
 	require.Contains(t, body, report.Marker, "a failed duplicate search blocked the comment")
 	require.NotContains(t, body, "GHSA-invented")
+	require.Contains(t, body, "The duplicate search could not complete.")
+	require.NotContains(t, body, "None found among the repository advisories.")
 	require.Contains(t, privateReports(t, gh), "The duplicate search could not complete.")
 }
 
-func TestRunCapsNewAdvisoriesPerExecution(t *testing.T) {
+func TestRunTriagesEveryNewAdvisoryWithinItsTime(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{reader: `{"summary":"s"}`}
 	gh.advisories = nil
-	for i := 0; i < maxTriagesPerRun+1; i++ {
+	for i := range 11 {
 		gh.advisories = append(gh.advisories, github.Advisory{GHSAID: fmt.Sprintf("GHSA-%d", i), State: "triage", CreatedAt: since.Add(time.Hour)})
 	}
 	require.NoError(t, run(t, Config{Since: since}, gh, eng))
-	require.Len(t, gh.posted, maxTriagesPerRun)
-	require.Len(t, eng.role(""), maxTriagesPerRun)
+	require.Len(t, gh.posted, 11)
+	require.Len(t, eng.role(""), 11)
+}
+
+func TestRunLeavesTheAdvisoriesToTheNextRunOnceItsTimeIsSpent(t *testing.T) {
+	defer func(d time.Duration) { maxRunDuration = d }(maxRunDuration)
+	maxRunDuration = maxAdvisoryDuration
+	gh, eng := newFixture(), &fakeEngine{}
+	var logs strings.Builder
+
+	require.NoError(t, runLogged(t, Config{Since: since}, gh, eng, &logs))
+	require.Empty(t, gh.posted)
+	require.Empty(t, eng.role(""))
+	require.Contains(t, logs.String(), "the run time is spent, the remaining advisories wait for the next run")
 }
 
 func TestRunHidesPartialMatchesOnUnpublishedAdvisories(t *testing.T) {

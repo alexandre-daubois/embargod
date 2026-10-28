@@ -63,6 +63,8 @@ type Report struct {
 
 	// Duplicates come from the comparator, never from the reader.
 	Duplicates []Duplicate `json:"-"`
+	// DuplicateSearchFailed means Duplicates is empty because the comparator did not finish.
+	DuplicateSearchFailed bool `json:"-"`
 	// Policies are the files the policy check read, empty when the repository has none.
 	Policies []string `json:"-"`
 	// CreatedAt is when the advisory was reported.
@@ -486,9 +488,12 @@ func RenderPrivate(r Report) string {
 	b.WriteString(text(r.Summary) + "\n")
 
 	b.WriteString("\n#### Possible duplicates\n\n")
-	if len(r.Duplicates) == 0 {
+	switch {
+	case r.DuplicateSearchFailed:
+		b.WriteString("The duplicate search could not complete.\n")
+	case len(r.Duplicates) == 0:
 		b.WriteString("None found among the repository advisories.\n")
-	} else {
+	default:
 		b.WriteString("| Advisory | Status | Confidence |\n|---|---|---|\n")
 	}
 	// Starting from the report's own date leaves every duplicate unmarked when the report is the oldest.
@@ -546,7 +551,7 @@ func RenderPrivate(r Report) string {
 			b.WriteString("Nothing in the policy seems to exclude this report.\n")
 		}
 		for _, p := range r.PolicyExclusions {
-			fmt.Fprintf(&b, "- %s: %s\n", text(p.Point), text(p.Reason))
+			fmt.Fprintf(&b, "- %s: %s\n", strings.TrimSuffix(text(p.Point), "."), text(p.Reason))
 		}
 	}
 

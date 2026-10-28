@@ -111,7 +111,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		duplicates, err := findDuplicates(ctx, path, reader, r, input, others, log)
 		if err != nil {
 			comparisonErr = err
-			privateNote = "\nThe duplicate search could not complete.\n"
+			r.DuplicateSearchFailed = true
 		} else {
 			matches := report.Report{Duplicates: duplicates}
 			if err := (report.Checker{Advisories: byID}).Verify(ctx, &matches); err != nil {

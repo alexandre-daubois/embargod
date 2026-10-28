@@ -34,8 +34,10 @@ import (
 // ProfilePath holds project-specific guidance, relative to the repository root.
 const ProfilePath = ".github/tamis.md"
 
+// maxRunDuration leaves 10 minutes of a 4-hour job to its setup and to the upload of the private reports.
+var maxRunDuration = 3*time.Hour + 50*time.Minute
+
 const (
-	maxTriagesPerRun        = 10
 	maxAdvisoryDuration     = 30 * time.Minute
 	maxComparatorRequests   = 200
 	maxAttempts             = 3
@@ -106,7 +108,8 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	defer func() { _ = exec.Command("git", "-C", cfg.RepoPath, "worktree", "prune").Run() }()
 	defer os.RemoveAll(sourceDir)
 
-	var triaged, skipped, failed, attempted int
+	var triaged, skipped, failed int
+	deadline := time.Now().Add(maxRunDuration)
 	reporters := map[string]bool{}
 	for _, a := range all {
 		if !selected(cfg, a) {
@@ -130,8 +133,9 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 			skipped++
 			continue
 		}
-		if attempted == maxTriagesPerRun {
+		if time.Until(deadline) < maxAdvisoryDuration {
 			cancel()
+			log.Info("the run time is spent, the remaining advisories wait for the next run")
 			break
 		}
 		if a.Author.Login != "" && reporters[strings.ToLower(a.Author.Login)] {
@@ -146,7 +150,6 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 			break
 		}
 		reporters[strings.ToLower(a.Author.Login)] = true
-		attempted++
 		log.Info("triaging", "attempt", failures+1)
 		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
 
