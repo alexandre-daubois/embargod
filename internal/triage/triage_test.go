@@ -114,6 +114,8 @@ type fakeEngine struct {
 	fail  string
 	// crash makes fail look like an agent container exiting on an error.
 	crash bool
+	// failures is how many calls matching fail fail before the next ones succeed, all of them when zero.
+	failures, failed int
 	// incomplete makes the reader hand back its report with a failed agent run.
 	incomplete   bool
 	reader       string
@@ -146,7 +148,8 @@ func (e *fakeEngine) Read(ctx context.Context, req sandbox.Request) (json.RawMes
 		}
 	}
 	e.calls = append(e.calls, call)
-	if e.fail != "" && strings.Contains(call.prompt, e.fail) {
+	if e.fail != "" && strings.Contains(call.prompt, e.fail) && (e.failures == 0 || e.failed < e.failures) {
+		e.failed++
 		err := errors.New("model unavailable while reading SECRET-PAYLOAD from " + call.prompt)
 		if e.crash {
 			return nil, &sandbox.Error{Err: err}
@@ -807,7 +810,56 @@ func TestRunReportsFailuresAndContinues(t *testing.T) {
 	require.NotEmpty(t, gh.posted["GHSA-other"], "the other advisory should still be triaged")
 }
 
+func noRetryDelay(t *testing.T) {
+	t.Helper()
+	delay := retryDelay
+	retryDelay = 0
+	t.Cleanup(func() { retryDelay = delay })
+}
+
+func TestRunRetriesAFailedAgentRunOnce(t *testing.T) {
+	noRetryDelay(t)
+	gh, eng := newFixture(), &fakeEngine{fail: "GHSA-new", crash: true, failures: 1}
+	var logs bytes.Buffer
+
+	require.NoError(t, runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs))
+
+	require.Len(t, eng.role(""), 2)
+	require.Contains(t, gh.posted["GHSA-new"], report.Marker)
+	require.Contains(t, gh.posted["GHSA-new"], "Looks like a heap overflow.")
+	require.Contains(t, logs.String(), "the agent run failed, retrying it")
+}
+
+func TestRunFailsWhenTheRetriedAgentRunFailsAgain(t *testing.T) {
+	noRetryDelay(t)
+	gh, eng := newFixture(), &fakeEngine{fail: "GHSA-new", crash: true}
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-new"}, gh, eng))
+
+	require.Len(t, eng.role(""), 2, "a failed agent run is retried once only")
+	require.Contains(t, gh.posted["GHSA-new"], report.FailedMarker)
+}
+
+func TestRunDoesNotRetryAFailureOutsideTheAgentRun(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "GHSA-new"}
+	var logs bytes.Buffer
+
+	require.Error(t, runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs))
+
+	require.Len(t, eng.role(""), 1)
+	require.NotContains(t, logs.String(), "retrying")
+}
+
+func TestRunDoesNotRetryAnIncompleteAgentRun(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{incomplete: true}
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-new"}, gh, eng))
+
+	require.Len(t, eng.role(""), 1)
+}
+
 func TestRunKeepsTheAgentErrorInThePrivateReports(t *testing.T) {
+	noRetryDelay(t)
 	for name, crash := range map[string]bool{"agent crash": true, "other failure": false} {
 		t.Run(name, func(t *testing.T) {
 			gh, eng := newFixture(), &fakeEngine{fail: "GHSA-new", crash: crash}

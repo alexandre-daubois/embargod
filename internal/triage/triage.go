@@ -34,7 +34,6 @@ import (
 // ProfilePath holds project-specific guidance, relative to the repository root.
 const ProfilePath = ".github/tamis.md"
 
-// maxRunDuration leaves 10 minutes of a 4-hour job to its setup and to the upload of the private reports.
 var maxRunDuration = 3*time.Hour + 50*time.Minute
 
 const (
@@ -76,6 +75,31 @@ type Config struct {
 // Reader runs the model that sees the untrusted report, sandbox.Reader in production.
 type Reader interface {
 	Read(ctx context.Context, req sandbox.Request) (json.RawMessage, error)
+}
+
+var retryDelay = time.Minute
+
+// retrying runs a failed agent once more after retryDelay, so a model provider briefly overloaded or dropping
+// its stream does not cost a triage attempt.
+type retrying struct {
+	Reader
+	log *slog.Logger
+}
+
+func (r retrying) Read(ctx context.Context, req sandbox.Request) (json.RawMessage, error) {
+	raw, err := r.Reader.Read(ctx, req)
+	// An incomplete run already wrote a valid report, which the triage keeps.
+	if !errors.As(err, new(*sandbox.Error)) || errors.As(err, new(*sandbox.Incomplete)) {
+		return raw, err
+	}
+	r.log.Info("the agent run failed, retrying it", "delay", retryDelay)
+	select {
+	case <-ctx.Done():
+		return raw, err
+	case <-time.After(retryDelay):
+	}
+
+	return r.Reader.Read(ctx, req)
 }
 
 // Run logs which advisory it works on and its steps, never report content nor raw errors. The action only
@@ -153,7 +177,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		log.Info("triaging", "attempt", failures+1)
 		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
 
-		if published, err := triageRevisions(advisoryCtx, cfg, gh, reader, eng, a, all, comments, login, revision, failures+1 >= maxAttempts, sourceDir, log); err != nil {
+		if published, err := triageRevisions(advisoryCtx, cfg, gh, retrying{reader, log}, eng, a, all, comments, login, revision, failures+1 >= maxAttempts, sourceDir, log); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
 			if keepAgentError(cfg, a.GHSAID, revision, err) != nil {
