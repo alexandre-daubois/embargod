@@ -70,6 +70,8 @@ tamis can keep a private organisation project in sync with the advisories, one d
 | `State` | Single select | `triage`, `draft`, `published`, `closed`, `withdrawn` |
 | `Policy exclusion` | Single select | `Yes`, `No` |
 | `Located` | Single select | `Yes`, `No` |
+| `Component` | Text | |
+| `Duplicate group` | Text | |
 
 Then set `project` to `your-org/NUMBER`. When the project is public, or a field or an option is missing or renamed, tamis leaves the board out of the run, still triages and comments, and fails the run so the error shows.
 
@@ -80,7 +82,7 @@ The code sets `Priority`:
 - `Duplicate` behind the oldest high-confidence exact duplicate the comment shows, which `Duplicate of` names,
 - `Analysis pending` while tamis triages again an advisory it commented before the board, `Analysis failed, retrying` after a failed attempt with another to come, and `Analysis failed` once tamis gives up. The draft body then explains the status instead of holding the triage comment.
 
-The model estimates `Severity` from its CVSS vector and ignores the one the reporter claims. `Duplicates` counts the items that name the advisory in `Duplicate of`.
+The model estimates `Severity` from its CVSS vector and ignores the one the reporter claims. `Duplicates` counts the items that name the advisory in `Duplicate of`. `Component` is the directory of the faulty statement, two levels deep, such as `ext/pgsql`, and stays empty when the statement was not located. `Duplicate group` holds the oldest report of a group of duplicates, on that report and on each of its duplicates, so a view grouped by it shows each group together.
 
 At the end of each run, tamis copies the state of every advisory to `State`, recounts `Duplicates` and ranks every triage again from `Severity`, `Policy exclusion`, `Located` and `Duplicate of`, so a new priority rule reaches the board with a release. None of it calls the model. A `Priority` changed by hand comes back at the next run, while a change to one of those four fields lasts. The REST API cannot archive items, so filter the views on `State` instead, for example a table on `State:triage,draft` sorted by `Priority` then `Reported`.
 

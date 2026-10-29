@@ -93,13 +93,13 @@ func TestPutCreatesOneItemPerAdvisory(t *testing.T) {
 	a := github.Advisory{GHSAID: "GHSA-new", Summary: "Overflow in foo", HTMLURL: "https://x/GHSA-new", State: "triage", CreatedAt: reported}
 
 	require.NoError(t, b.Put(t.Context(), a, Duplicate, &Triage{Severity: "high", DuplicateOf: "GHSA-old", Excluded: true}, "first comment"))
-	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "critical", Located: true}, "second comment"))
+	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "critical", Located: true, Component: "ext/foo"}, "second comment"))
 
 	require.Len(t, p.Items, 1, "a second put created another item")
 	id := p.Find("GHSA-new")
 	require.Equal(t, "Overflow in foo", p.Titles[id])
 	require.Equal(t, "https://x/GHSA-new\n\nsecond comment", p.Bodies[id], "the draft body misses the latest comment")
-	require.Equal(t, map[string]string{"GHSA": "GHSA-new", "Reported": "2026-10-20", "State": "triage", "Priority": LookFirst, "Severity": "Critical", "Duplicate of": "", "Duplicates": "", "Policy exclusion": "No", "Located": "Yes"}, values(p, id))
+	require.Equal(t, map[string]string{"GHSA": "GHSA-new", "Reported": "2026-10-20", "State": "triage", "Priority": LookFirst, "Severity": "Critical", "Duplicate of": "", "Duplicates": "", "Policy exclusion": "No", "Located": "Yes", "Component": "ext/foo", "Duplicate group": ""}, values(p, id))
 }
 
 func TestPutFindsTheItemOfAPreviousRun(t *testing.T) {
@@ -139,7 +139,7 @@ func TestSyncMirrorsStatesAndDuplicates(t *testing.T) {
 
 	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-old", State: "published"}, {GHSAID: "GHSA-dup", State: "triage"}, {GHSAID: "GHSA-other", State: "closed"}}))
 
-	require.Equal(t, map[string]string{"GHSA": "GHSA-old", "State": "published", "Priority": LookFirst, "Duplicates": "2", "Reported": "", "Severity": "", "Duplicate of": "", "Policy exclusion": "", "Located": ""}, values(p, old))
+	require.Equal(t, map[string]string{"GHSA": "GHSA-old", "State": "published", "Priority": LookFirst, "Duplicates": "2", "Reported": "", "Severity": "", "Duplicate of": "", "Policy exclusion": "", "Located": "", "Component": "", "Duplicate group": "GHSA-old"}, values(p, old))
 	require.Equal(t, Duplicate, p.Value(dup, "Priority"), "the duplicate of a settled report changed priority")
 	require.Equal(t, "closed", p.Value(other, "State"))
 	require.Equal(t, "triage", p.Value(gone, "State"), "an advisory missing from the list changed state")
@@ -162,7 +162,7 @@ func TestSyncReportsFailedWrites(t *testing.T) {
 
 func values(p *boardtest.Project, id int64) map[string]string {
 	v := map[string]string{}
-	for _, f := range []string{"GHSA", "Reported", "State", "Priority", "Severity", "Duplicate of", "Duplicates", "Policy exclusion", "Located"} {
+	for _, f := range []string{"GHSA", "Reported", "State", "Priority", "Severity", "Duplicate of", "Duplicates", "Policy exclusion", "Located", "Component", "Duplicate group"} {
 		v[f] = p.Value(id, f)
 	}
 
@@ -204,9 +204,9 @@ func TestPutReusesTheDraftWhoseFieldsFailed(t *testing.T) {
 
 func TestSyncReadsBackTheCountsOfAPreviousRun(t *testing.T) {
 	p := boardtest.New()
-	p.Add(map[string]any{"GHSA": "GHSA-old", "State": "triage", "Duplicates": 2})
-	p.Add(map[string]any{"GHSA": "GHSA-a", "State": "triage", "Duplicate of": "GHSA-old"})
-	p.Add(map[string]any{"GHSA": "GHSA-b", "State": "triage", "Duplicate of": "ghsa-OLD"})
+	p.Add(map[string]any{"GHSA": "GHSA-old", "State": "triage", "Duplicates": 2, "Duplicate group": "GHSA-old"})
+	p.Add(map[string]any{"GHSA": "GHSA-a", "State": "triage", "Duplicate of": "GHSA-old", "Duplicate group": "GHSA-old"})
+	p.Add(map[string]any{"GHSA": "GHSA-b", "State": "triage", "Duplicate of": "ghsa-OLD", "Duplicate group": "ghsa-OLD"})
 	b, err := Open(t.Context(), p, "php/16")
 	require.NoError(t, err)
 
@@ -269,11 +269,11 @@ func TestPutClearsTheTriageOfAStatus(t *testing.T) {
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: "GHSA-new", State: "triage"}
 
-	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "high", DuplicateOf: "GHSA-old", Located: true}, ""))
+	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "high", DuplicateOf: "GHSA-old", Located: true, Component: "ext/foo"}, ""))
 	require.NoError(t, b.Put(t.Context(), a, AnalysisFailed, nil, "note"))
 
 	id := p.Find("GHSA-new")
-	for _, f := range []string{"Severity", "Duplicate of", "Policy exclusion", "Located"} {
+	for _, f := range []string{"Severity", "Duplicate of", "Policy exclusion", "Located", "Component"} {
 		require.Empty(t, p.Value(id, f), "%s outlived the triage", f)
 	}
 }
@@ -299,4 +299,39 @@ func TestSyncRanksEveryTriageAgain(t *testing.T) {
 	writes := p.Writes
 	require.NoError(t, b.Sync(t.Context(), nil))
 	require.Equal(t, writes, p.Writes, "a ranked board was written again")
+}
+
+func TestTriageOfNamesTheComponentOfTheFaultyStatement(t *testing.T) {
+	for file, want := range map[string]string{
+		"ext/pgsql/pgsql.c":       "ext/pgsql",
+		"sapi/fpm/fpm/fpm_main.c": "sapi/fpm",
+		"Zend/zend_execute.c":     "Zend",
+		"main/streams/streams.c":  "main/streams",
+		"main.c":                  "",
+	} {
+		require.Equal(t, want, TriageOf(report.Report{Location: report.Location{Path: file}, Located: true}).Component, file)
+	}
+	require.Empty(t, TriageOf(report.Report{Location: report.Location{Path: "ext/pgsql/pgsql.c"}}).Component, "an unlocated statement got a component")
+}
+
+func TestSyncGroupsEveryReportUnderItsOldest(t *testing.T) {
+	p := boardtest.New()
+	root := p.Add(map[string]any{"GHSA": "GHSA-root", "State": "triage"})
+	mid := p.Add(map[string]any{"GHSA": "GHSA-mid", "State": "triage", "Duplicate of": "GHSA-root"})
+	leaf := p.Add(map[string]any{"GHSA": "GHSA-leaf", "State": "triage", "Duplicate of": "GHSA-mid"})
+	orphan := p.Add(map[string]any{"GHSA": "GHSA-orphan", "State": "triage", "Duplicate of": "GHSA-gone"})
+	alone := p.Add(map[string]any{"GHSA": "GHSA-alone", "State": "triage", "Duplicate group": "GHSA-stale"})
+	loopA := p.Add(map[string]any{"GHSA": "GHSA-loop-a", "State": "triage", "Duplicate of": "GHSA-loop-b"})
+	p.Add(map[string]any{"GHSA": "GHSA-loop-b", "State": "triage", "Duplicate of": "GHSA-loop-a"})
+	b, err := Open(t.Context(), p, "php/16")
+	require.NoError(t, err)
+
+	require.NoError(t, b.Sync(t.Context(), nil))
+
+	require.Equal(t, "GHSA-root", p.Value(root, "Duplicate group"), "the oldest report is missing from its group")
+	require.Equal(t, "GHSA-root", p.Value(mid, "Duplicate group"))
+	require.Equal(t, "GHSA-root", p.Value(leaf, "Duplicate group"), "a chain of duplicates was split")
+	require.Equal(t, "GHSA-gone", p.Value(orphan, "Duplicate group"), "a report whose oldest has no item lost its group")
+	require.Empty(t, p.Value(alone, "Duplicate group"), "a report without duplicates kept a stale group")
+	require.NotEmpty(t, p.Value(loopA, "Duplicate group"), "a loop of duplicates did not end")
 }

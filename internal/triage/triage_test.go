@@ -1374,10 +1374,10 @@ func TestRunDoesNotTriageAgainWithABoardInAnUnexpectedLayout(t *testing.T) {
 
 func TestRunLooksFirstAtASevereReportOnlyWhenItsFaultyStatementExists(t *testing.T) {
 	for name, tc := range map[string]struct {
-		location, priority, located string
+		location, priority, located, component string
 	}{
-		"located":     {`"path":"ext/foo/foo.c","symbol":"php_foo","line":42`, "Look first", "Yes"},
-		"not located": {`"path":"ext/foo/missing.c","symbol":"php_foo","line":42`, "When possible", "No"},
+		"located":     {`"path":"ext/foo/foo.c","symbol":"php_foo","line":42`, "Look first", "Yes", "ext/foo"},
+		"not located": {`"path":"ext/foo/missing.c","symbol":"php_foo","line":42`, "When possible", "No", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			gh := newFixture()
@@ -1389,6 +1389,7 @@ func TestRunLooksFirstAtASevereReportOnlyWhenItsFaultyStatementExists(t *testing
 			require.Equal(t, tc.priority, gh.Value(id, "Priority"))
 			require.Equal(t, tc.located, gh.Value(id, "Located"), "the board cannot rank this triage again")
 			require.Equal(t, "No", gh.Value(id, "Policy exclusion"))
+			require.Equal(t, tc.component, gh.Value(id, "Component"))
 		})
 	}
 }

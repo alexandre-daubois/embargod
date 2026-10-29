@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,6 +37,8 @@ const (
 	fieldState       = "State"
 	fieldExcluded    = "Policy exclusion"
 	fieldLocated     = "Located"
+	fieldComponent   = "Component"
+	fieldGroup       = "Duplicate group"
 )
 
 // layout lists the fields the project must have, created by hand as docs/setup.md describes.
@@ -52,6 +55,8 @@ var layout = []struct {
 	{fieldState, "single_select", []string{"triage", "draft", "published", "closed", "withdrawn"}},
 	{fieldExcluded, "single_select", []string{"Yes", "No"}},
 	{fieldLocated, "single_select", []string{"Yes", "No"}},
+	{fieldComponent, "text", nil},
+	{fieldGroup, "text", nil},
 }
 
 type GitHub interface {
@@ -74,9 +79,10 @@ type Board struct {
 }
 
 type item struct {
-	id                                  int64
-	draft, duplicateOf, state, priority string
-	duplicates                          int
+	id                              int64
+	ghsa, draft, duplicateOf, state string
+	priority, group                 string
+	duplicates                      int
 	// triage is nil for an item without one, whose priority is a status Sync leaves alone.
 	triage *Triage
 }
@@ -85,6 +91,8 @@ type item struct {
 type Triage struct {
 	Severity, DuplicateOf string
 	Excluded, Located     bool
+	// Component is the directory of the faulty statement, two levels deep, empty when it was not located.
+	Component string
 }
 
 // Open loads the fields and items of project, given as "org/number".
@@ -127,7 +135,7 @@ func Open(ctx context.Context, gh GitHub, project string) (*Board, error) {
 		}
 	}
 
-	items, err := gh.ListProjectItems(ctx, org, number, []int64{b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldDuplicates], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldSeverity], b.ids[fieldExcluded], b.ids[fieldLocated]})
+	items, err := gh.ListProjectItems(ctx, org, number, []int64{b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldDuplicates], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldSeverity], b.ids[fieldExcluded], b.ids[fieldLocated], b.ids[fieldGroup]})
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +152,7 @@ func Open(ctx context.Context, gh GitHub, project string) (*Board, error) {
 			var count float64
 			var err error
 			switch f.ID {
-			case b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldSeverity], b.ids[fieldExcluded], b.ids[fieldLocated]:
+			case b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldSeverity], b.ids[fieldExcluded], b.ids[fieldLocated], b.ids[fieldGroup]:
 				err = json.Unmarshal(f.Value, &text)
 			case b.ids[fieldDuplicates]:
 				err = json.Unmarshal(f.Value, &count)
@@ -170,12 +178,15 @@ func Open(ctx context.Context, gh GitHub, project string) (*Board, error) {
 				excluded = text.Name.Raw
 			case b.ids[fieldLocated]:
 				located = text.Name.Raw
+			case b.ids[fieldGroup]:
+				entry.group = text.Raw
 			}
 		}
 		if excluded != "" && located != "" {
 			entry.triage = &Triage{Severity: severity, DuplicateOf: entry.duplicateOf, Excluded: excluded == "Yes", Located: located == "Yes"}
 		}
 		if ghsa != "" {
+			entry.ghsa = ghsa
 			b.items[strings.ToLower(ghsa)] = entry
 		}
 	}
@@ -191,6 +202,10 @@ func (b *Board) Has(ghsa string) bool {
 // TriageOf keeps what the board needs of r, with the oldest high-confidence exact duplicate the comment shows.
 func TriageOf(r report.Report) Triage {
 	t := Triage{Severity: r.Severity, Excluded: len(r.PolicyExclusions) > 0, Located: r.Located}
+	if dir := path.Dir(r.Location.Path); r.Located && dir != "." {
+		parts := strings.Split(dir, "/")
+		t.Component = strings.Join(parts[:min(len(parts), 2)], "/")
+	}
 	var oldest *report.Duplicate
 	for i, d := range r.Duplicates {
 		if d.Exact && d.Confidence == "high" && (d.Published || d.Confirmed) && d.CreatedAt.Before(r.CreatedAt) && (oldest == nil || d.CreatedAt.Before(oldest.CreatedAt)) {
@@ -234,7 +249,7 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 		if err != nil {
 			return err
 		}
-		it = &item{id: draft.ID, draft: draft.Content.NodeID}
+		it = &item{id: draft.ID, draft: draft.Content.NodeID, ghsa: a.GHSAID}
 		b.items[key] = it
 	case comment != "":
 		if err := b.gh.UpdateDraft(ctx, it.draft, body); err != nil {
@@ -254,10 +269,9 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 		{ID: b.ids[fieldDuplicateOf], Value: nil},
 		b.option(fieldExcluded, ""),
 		b.option(fieldLocated, ""),
+		{ID: b.ids[fieldComponent], Value: text(kept.Component)},
 	}
-	if kept.DuplicateOf != "" {
-		values[5].Value = kept.DuplicateOf
-	}
+	values[5].Value = text(kept.DuplicateOf)
 	if t != nil {
 		values[6], values[7] = b.option(fieldExcluded, yes(t.Excluded)), b.option(fieldLocated, yes(t.Located))
 	}
@@ -267,6 +281,15 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 	it.duplicateOf, it.state, it.priority, it.triage = kept.DuplicateOf, a.State, priority, t
 
 	return nil
+}
+
+// text sets a text field, or clears it when s is empty.
+func text(s string) any {
+	if s == "" {
+		return nil
+	}
+
+	return s
 }
 
 func yes(v bool) string {
@@ -285,6 +308,19 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// oldest follows the Duplicate of chain from ghsa, since the original of a report can itself name an older one.
+func (b *Board) oldest(ghsa string) string {
+	seen := map[string]bool{}
+	for {
+		it := b.items[strings.ToLower(ghsa)]
+		if it == nil || it.duplicateOf == "" || seen[strings.ToLower(ghsa)] {
+			return ghsa
+		}
+		seen[strings.ToLower(ghsa)] = true
+		ghsa = it.duplicateOf
+	}
+}
+
 // option sets a single select field, or clears it when the value has no option.
 func (b *Board) option(field, value string) github.FieldValue {
 	v := github.FieldValue{ID: b.ids[field]}
@@ -295,9 +331,9 @@ func (b *Board) option(field, value string) github.FieldValue {
 	return v
 }
 
-// Sync mirrors the state of every advisory on its item, counts the duplicates of each report and ranks every
-// triage again, so a new priority rule reaches the board without a model run. It only writes the items that
-// changed.
+// Sync mirrors the state of every advisory on its item, counts the duplicates of each report, gives every
+// report of a duplicate group the identifier of its oldest one and ranks every triage again, so a new priority
+// rule reaches the board without a model run. It only writes the items that changed.
 func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 	states := map[string]string{}
 	for _, a := range advisories {
@@ -324,6 +360,17 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 		if counts[ghsa] != it.duplicates {
 			it.duplicates = counts[ghsa]
 			values = append(values, github.FieldValue{ID: b.ids[fieldDuplicates], Value: it.duplicates})
+		}
+		group := ""
+		switch {
+		case it.duplicateOf != "":
+			group = b.oldest(it.duplicateOf)
+		case counts[ghsa] > 0:
+			group = it.ghsa
+		}
+		if group != it.group {
+			it.group = group
+			values = append(values, github.FieldValue{ID: b.ids[fieldGroup], Value: text(group)})
 		}
 		if len(values) == 0 {
 			continue
