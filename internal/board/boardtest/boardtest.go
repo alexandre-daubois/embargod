@@ -42,7 +42,7 @@ func New() *Project {
 		{"Policy exclusion", "single_select", []string{"Yes", "No"}},
 		{"Located", "single_select", []string{"Yes", "No"}},
 		{"Component", "text", nil},
-		{"Duplicate group", "text", nil},
+		{"Original report", "text", nil},
 	} {
 		field := github.ProjectField{ID: int64(100 + i), Name: f.name, DataType: f.dataType}
 		for _, o := range f.options {

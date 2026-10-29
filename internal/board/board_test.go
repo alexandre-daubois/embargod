@@ -99,7 +99,7 @@ func TestPutCreatesOneItemPerAdvisory(t *testing.T) {
 	id := p.Find("GHSA-new")
 	require.Equal(t, "Overflow in foo", p.Titles[id])
 	require.Equal(t, "https://x/GHSA-new\n\nsecond comment", p.Bodies[id], "the draft body misses the latest comment")
-	require.Equal(t, map[string]string{"GHSA": "GHSA-new", "Reported": "2026-10-20", "State": "triage", "Priority": LookFirst, "Severity": "Critical", "Duplicate of": "", "Duplicates": "", "Policy exclusion": "No", "Located": "Yes", "Component": "ext/foo", "Duplicate group": ""}, values(p, id))
+	require.Equal(t, map[string]string{"GHSA": "GHSA-new", "Reported": "2026-10-20", "State": "triage", "Priority": LookFirst, "Severity": "Critical", "Duplicate of": "", "Duplicates": "", "Policy exclusion": "No", "Located": "Yes", "Component": "ext/foo", "Original report": ""}, values(p, id))
 }
 
 func TestPutFindsTheItemOfAPreviousRun(t *testing.T) {
@@ -139,7 +139,7 @@ func TestSyncMirrorsStatesAndDuplicates(t *testing.T) {
 
 	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-old", State: "published"}, {GHSAID: "GHSA-dup", State: "triage"}, {GHSAID: "GHSA-other", State: "closed"}}))
 
-	require.Equal(t, map[string]string{"GHSA": "GHSA-old", "State": "published", "Priority": LookFirst, "Duplicates": "2", "Reported": "", "Severity": "", "Duplicate of": "", "Policy exclusion": "", "Located": "", "Component": "", "Duplicate group": "GHSA-old"}, values(p, old))
+	require.Equal(t, map[string]string{"GHSA": "GHSA-old", "State": "published", "Priority": LookFirst, "Duplicates": "2", "Reported": "", "Severity": "", "Duplicate of": "", "Policy exclusion": "", "Located": "", "Component": "", "Original report": "GHSA-old"}, values(p, old))
 	require.Equal(t, Duplicate, p.Value(dup, "Priority"), "the duplicate of a settled report changed priority")
 	require.Equal(t, "closed", p.Value(other, "State"))
 	require.Equal(t, "triage", p.Value(gone, "State"), "an advisory missing from the list changed state")
@@ -162,7 +162,7 @@ func TestSyncReportsFailedWrites(t *testing.T) {
 
 func values(p *boardtest.Project, id int64) map[string]string {
 	v := map[string]string{}
-	for _, f := range []string{"GHSA", "Reported", "State", "Priority", "Severity", "Duplicate of", "Duplicates", "Policy exclusion", "Located", "Component", "Duplicate group"} {
+	for _, f := range []string{"GHSA", "Reported", "State", "Priority", "Severity", "Duplicate of", "Duplicates", "Policy exclusion", "Located", "Component", "Original report"} {
 		v[f] = p.Value(id, f)
 	}
 
@@ -204,9 +204,9 @@ func TestPutReusesTheDraftWhoseFieldsFailed(t *testing.T) {
 
 func TestSyncReadsBackTheCountsOfAPreviousRun(t *testing.T) {
 	p := boardtest.New()
-	p.Add(map[string]any{"GHSA": "GHSA-old", "State": "triage", "Duplicates": 2, "Duplicate group": "GHSA-old"})
-	p.Add(map[string]any{"GHSA": "GHSA-a", "State": "triage", "Duplicate of": "GHSA-old", "Duplicate group": "GHSA-old"})
-	p.Add(map[string]any{"GHSA": "GHSA-b", "State": "triage", "Duplicate of": "ghsa-OLD", "Duplicate group": "ghsa-OLD"})
+	p.Add(map[string]any{"GHSA": "GHSA-old", "State": "triage", "Duplicates": 2, "Original report": "GHSA-old"})
+	p.Add(map[string]any{"GHSA": "GHSA-a", "State": "triage", "Duplicate of": "GHSA-old", "Original report": "GHSA-old"})
+	p.Add(map[string]any{"GHSA": "GHSA-b", "State": "triage", "Duplicate of": "ghsa-OLD", "Original report": "ghsa-OLD"})
 	b, err := Open(t.Context(), p, "php/16")
 	require.NoError(t, err)
 
@@ -320,7 +320,7 @@ func TestSyncGroupsEveryReportUnderItsOldest(t *testing.T) {
 	mid := p.Add(map[string]any{"GHSA": "GHSA-mid", "State": "triage", "Duplicate of": "GHSA-root"})
 	leaf := p.Add(map[string]any{"GHSA": "GHSA-leaf", "State": "triage", "Duplicate of": "GHSA-mid"})
 	orphan := p.Add(map[string]any{"GHSA": "GHSA-orphan", "State": "triage", "Duplicate of": "GHSA-gone"})
-	alone := p.Add(map[string]any{"GHSA": "GHSA-alone", "State": "triage", "Duplicate group": "GHSA-stale"})
+	alone := p.Add(map[string]any{"GHSA": "GHSA-alone", "State": "triage", "Original report": "GHSA-stale"})
 	loopA := p.Add(map[string]any{"GHSA": "GHSA-loop-a", "State": "triage", "Duplicate of": "GHSA-loop-b"})
 	p.Add(map[string]any{"GHSA": "GHSA-loop-b", "State": "triage", "Duplicate of": "GHSA-loop-a"})
 	b, err := Open(t.Context(), p, "php/16")
@@ -328,10 +328,10 @@ func TestSyncGroupsEveryReportUnderItsOldest(t *testing.T) {
 
 	require.NoError(t, b.Sync(t.Context(), nil))
 
-	require.Equal(t, "GHSA-root", p.Value(root, "Duplicate group"), "the oldest report is missing from its group")
-	require.Equal(t, "GHSA-root", p.Value(mid, "Duplicate group"))
-	require.Equal(t, "GHSA-root", p.Value(leaf, "Duplicate group"), "a chain of duplicates was split")
-	require.Equal(t, "GHSA-gone", p.Value(orphan, "Duplicate group"), "a report whose oldest has no item lost its group")
-	require.Empty(t, p.Value(alone, "Duplicate group"), "a report without duplicates kept a stale group")
-	require.NotEmpty(t, p.Value(loopA, "Duplicate group"), "a loop of duplicates did not end")
+	require.Equal(t, "GHSA-root", p.Value(root, "Original report"), "the oldest report is missing from its group")
+	require.Equal(t, "GHSA-root", p.Value(mid, "Original report"))
+	require.Equal(t, "GHSA-root", p.Value(leaf, "Original report"), "a chain of duplicates was split")
+	require.Equal(t, "GHSA-gone", p.Value(orphan, "Original report"), "a report whose oldest has no item lost its group")
+	require.Empty(t, p.Value(alone, "Original report"), "a report without duplicates kept a stale group")
+	require.NotEmpty(t, p.Value(loopA, "Original report"), "a loop of duplicates did not end")
 }

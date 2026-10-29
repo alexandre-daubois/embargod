@@ -38,7 +38,7 @@ const (
 	fieldExcluded    = "Policy exclusion"
 	fieldLocated     = "Located"
 	fieldComponent   = "Component"
-	fieldGroup       = "Duplicate group"
+	fieldGroup       = "Original report"
 )
 
 // layout lists the fields the project must have, created by hand as docs/setup.md describes.
