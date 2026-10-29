@@ -477,21 +477,7 @@ func (e *fakeEngine) Run(ctx context.Context, system, prompt string, ts []tools.
 	if e.fail != "" && strings.Contains(prompt, e.fail) {
 		return nil, errors.New("model unavailable while reading SECRET-PAYLOAD from " + prompt)
 	}
-	var raw json.RawMessage
-	if system == skill.Compare {
-		if e.onCompare != nil {
-			e.onCompare()
-		}
-		for _, tool := range ts {
-			if tool.Name == "get_advisory" {
-				call.advisory, _ = tools.Call(context.Background(), ts, tool.Name, nil)
-			}
-		}
-		e.calls[len(e.calls)-1] = call
-		raw = json.RawMessage(cmp.Or(e.comparator, `{"duplicates":[{"ghsa_id":"GHSA-old","confidence":"high","exact":true}]}`))
-	} else {
-		raw = json.RawMessage(cmp.Or(e.confirmation, `{"exact":true}`))
-	}
+	raw := json.RawMessage(cmp.Or(e.confirmation, `{"exact":true}`))
 	if err := tools.Validate(context.Background(), ts, raw); err != nil {
 		return nil, engine.ErrNoReport
 	}
