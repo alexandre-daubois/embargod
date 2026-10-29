@@ -67,7 +67,6 @@ type GitHub interface {
 	CreateDraft(ctx context.Context, org string, number int, title, body string) (github.ProjectItem, error)
 	UpdateDraft(ctx context.Context, draft, body string) error
 	UpdateProjectItem(ctx context.Context, org string, number int, item int64, fields []github.FieldValue) error
-	AddProjectIssue(ctx context.Context, org string, number int, issue int64) (github.ProjectItem, error)
 }
 
 // Issues writes the issues of the board with a token of its own, which only reaches the issues repository.
@@ -78,6 +77,8 @@ type Issues interface {
 	CreateIssue(ctx context.Context, repo, title, body string) (github.Issue, error)
 	UpdateIssue(ctx context.Context, repo string, number int, fields map[string]string) error
 	AddSubIssue(ctx context.Context, repo string, parent int, child int64) error
+	// AddProjectIssue needs a token that sees the issue, which the token of the advisories does not.
+	AddProjectIssue(ctx context.Context, org string, number int, issue int64) (github.ProjectItem, error)
 }
 
 type Board struct {
@@ -328,7 +329,7 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 			}
 			b.unlisted[key] = issue
 		}
-		added, err := b.gh.AddProjectIssue(ctx, b.org, b.number, issue.ID)
+		added, err := b.ig.AddProjectIssue(ctx, b.org, b.number, issue.ID)
 		if err != nil {
 			return err
 		}

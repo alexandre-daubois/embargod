@@ -90,7 +90,7 @@ An advisory in the `triage` state that tamis commented but that has no item, for
 
 With `issues-repository` set, for example to `your-org/your-project-security`, new items are issues of that repository instead of drafts, and each duplicate becomes a sub-issue of its `Original report`. tamis closes an issue when its advisory is published, closed or withdrawn. Everyone with access to that repository reads the reports, and each new issue notifies its watchers. tamis refuses a public repository and the repository of the advisories, and then leaves the board out of the run.
 
-tamis writes the issues with `issues-token`, a second installation token that reaches the issues repository only, and refuses it when it also reaches `repository`. Keep the "Issues" permission out of `github-token`, so neither token can open an issue on the project:
+tamis writes the issues and adds them to the project with `issues-token`, a second installation token that reaches the issues repository only, and refuses it when it also reaches `repository`. Keep the "Issues" permission out of `github-token`, so neither token can open an issue on the project:
 
 ```yaml
 - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -110,6 +110,7 @@ tamis writes the issues with `issues-token`, a second installation token that re
     owner: your-org
     repositories: your-project-security
     permission-issues: write
+    permission-organization-projects: write
 ```
 
 Then pass `issues-token: ${{ steps.issues.outputs.token }}`. The App needs the "Issues" permission in read and write and an installation on the issues repository.

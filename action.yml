@@ -46,7 +46,7 @@ inputs:
     description: Private repository the board items are created in as issues, so duplicates become sub-issues of their original report. Drafts when unset. tamis refuses a public repository and the repository of the advisories. The token needs the "Issues" permission in read and write on it.
     required: false
   issues-token:
-    description: GitHub App installation token for `issues-repository` only, with the "Issues" permission in read and write. tamis refuses it when it also reaches `repository`, so a bug cannot publish a report there.
+    description: GitHub App installation token for `issues-repository` only, with the "Issues" and organisation "Projects" permissions in read and write. tamis refuses it when it also reaches `repository`, so a bug cannot publish a report there.
     required: false
   references:
     description: Whitespace-separated local git references, including each supported release branch. The first is analysed, the cited code is located on all of them. All must have been fetched.
