@@ -397,8 +397,9 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 	}
 	r.CWE = cwes
 
+	// The severity rates the vector, so it goes with it.
 	if r.CVSS.Vector != "" && !cvss4.MatchString(r.CVSS.Vector) {
-		r.CVSS = CVSS{}
+		r.CVSS, r.Severity = CVSS{}, ""
 		r.Removed++
 	}
 	// The trailing slash only matches a directory, and cluePath keeps git pathspec magic out.

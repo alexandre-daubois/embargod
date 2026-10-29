@@ -102,8 +102,9 @@ func TestVerifyDropsWhatDoesNotExist(t *testing.T) {
 	require.Empty(t, r.CWE, "invented claims should be removed: %+v", r)
 	require.Empty(t, r.CVSS.Vector, "invented claims should be removed: %+v", r)
 	require.Empty(t, r.Severity, "invented claims should be removed: %+v", r)
-	// Duplicates are dropped silently, so only related issues, CWEs, the vector and the severity count.
-	require.Equal(t, 6, r.Removed)
+	// Duplicates are dropped silently, and the severity goes with its vector, so only related issues, CWEs and the
+	// vector count.
+	require.Equal(t, 5, r.Removed)
 	require.Len(t, r.CodeReferences, 3, "code references are kept and flagged")
 	for _, ref := range r.CodeReferences {
 		assert.False(t, ref.Found, "%+v should not be found", ref)
@@ -586,4 +587,23 @@ func TestVerifyKeepsOnlyAComponentDirectoryOfTheRepository(t *testing.T) {
 		require.Equal(t, kept, r.Component != "", "%q", component)
 		require.Zero(t, r.Removed, "a dropped component counted as a removed suggestion")
 	}
+}
+
+func TestVerifyDropsAnInvalidSeverityOfAValidVector(t *testing.T) {
+	r := Report{CVSS: CVSS{Vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"}, Severity: "Severe"}
+
+	require.NoError(t, checker(t).Verify(context.Background(), &r))
+
+	require.Empty(t, r.Severity)
+	require.NotEmpty(t, r.CVSS.Vector)
+	require.Equal(t, 1, r.Removed)
+}
+
+func TestVerifyDropsTheSeverityOfAnInvalidVector(t *testing.T) {
+	r := Report{CVSS: CVSS{Vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}, Severity: "critical"}
+
+	require.NoError(t, checker(t).Verify(context.Background(), &r))
+
+	require.Empty(t, r.Severity, "a severity outlived the vector it rates")
+	require.Equal(t, 1, r.Removed, "the dropped severity counted as a second removed suggestion")
 }
