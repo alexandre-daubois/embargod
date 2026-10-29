@@ -267,9 +267,12 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 	return b, nil
 }
 
-// Has says whether ghsa has an item.
+// Has says whether ghsa has an item with a priority. An item without one comes from a run that failed before
+// writing its fields, and its advisory still needs a triage for the board.
 func (b *Board) Has(ghsa string) bool {
-	return b.items[strings.ToLower(ghsa)] != nil
+	it := b.items[strings.ToLower(ghsa)]
+
+	return it != nil && it.priority != ""
 }
 
 // TriageOf keeps what the board needs of r, with the oldest high-confidence exact duplicate the comment shows.

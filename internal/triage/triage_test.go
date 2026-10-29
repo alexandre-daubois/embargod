@@ -1399,7 +1399,7 @@ func TestRunLooksFirstAtASevereReportOnlyWhenItsFaultyStatementExists(t *testing
 
 func TestRunFailsWhenTheBoardSyncFails(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
-	gh.Add(map[string]any{"GHSA": "GHSA-done", "State": "draft"})
+	gh.Add(map[string]any{"GHSA": "GHSA-done", "State": "draft", "Priority": "When possible"})
 	gh.UpdateErr = errors.New("HTTP 502")
 
 	err := run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng)

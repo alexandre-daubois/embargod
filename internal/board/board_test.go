@@ -171,12 +171,14 @@ func values(p *boardtest.Project, id int64) map[string]string {
 
 func TestHas(t *testing.T) {
 	p := boardtest.New()
-	p.Add(map[string]any{"GHSA": "GHSA-old"})
+	p.Add(map[string]any{"GHSA": "GHSA-old", "Priority": "Look first"})
+	p.Add(map[string]any{"GHSA": "GHSA-bare"})
 	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
 	require.True(t, b.Has("ghsa-OLD"))
 	require.False(t, b.Has("GHSA-new"))
+	require.False(t, b.Has("GHSA-bare"), "an item without priority looks triaged")
 }
 
 func TestOpenReportsAFailedRead(t *testing.T) {
@@ -543,7 +545,7 @@ func TestOpenFindsTheIssueOfARunWhoseFieldsFailed(t *testing.T) {
 
 	b, err = Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
 	require.NoError(t, err)
-	require.True(t, b.Has(ghsa), "the item of the issue looks added by hand")
+	require.False(t, b.Has(ghsa), "an item without fields looks triaged")
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
 
 	require.Len(t, p.Items, 1, "the issue was added to the project twice")
