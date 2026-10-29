@@ -142,7 +142,7 @@ func (p *Project) ListProjectItems(_ context.Context, _ string, _ int, fields []
 		item := github.ProjectItem{ID: id, ContentType: "DraftIssue"}
 		item.Content.NodeID = draft(id)
 		if n, ok := p.issueOf[id]; ok {
-			item.ContentType, item.Content.Number, item.Content.ID, item.Content.Body = "Issue", n, p.Issues[n].ID, p.Issues[n].Body
+			item.ContentType, item.Content.Number, item.Content.ID, item.Content.Body, item.Content.Repository = "Issue", n, p.Issues[n].ID, p.Issues[n].Body, p.Issues[n].Repo
 		}
 		for _, f := range p.Fields {
 			v, ok := values[f.ID]

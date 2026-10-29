@@ -43,7 +43,7 @@ inputs:
     description: Private organisation project kept in sync with the triaged advisories, as `org/number`. The token needs the organisation "Projects" permission in read and write.
     required: false
   issues-repository:
-    description: Private repository the board items are created in as issues, so duplicates become sub-issues of their original report. Drafts when unset. tamis refuses a public repository and the repository of the advisories. The token needs the "Issues" permission in read and write on it.
+    description: Private repository the board items are created in as issues, so duplicates become sub-issues of their original report. Drafts when unset. tamis refuses a public repository and the repository of the advisories. The token needs the "Issues" permission in read on it, `issues-token` writes the issues.
     required: false
   issues-token:
     description: GitHub App installation token for `issues-repository` only, with the "Issues" and organisation "Projects" permissions in read and write. tamis refuses it when it also reaches `repository`, so a bug cannot publish a report there.

@@ -159,8 +159,9 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	if b != nil {
 		t := board.TriageOf(r)
 		if err := b.Put(ctx, a, t.Priority(), &t, body); err != nil {
+			// The board is where a backfill publishes, so the item gets the failed status instead of staying pending.
 			if backfill {
-				return true, err
+				return false, err
 			}
 			log.Error("the project board could not be updated", "reason", describe(err))
 		}

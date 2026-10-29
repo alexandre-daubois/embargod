@@ -100,6 +100,17 @@ type Board struct {
 // found again instead of created twice, which would notify the watchers of the repository each time.
 var issueMarker = regexp.MustCompile(`<!-- tamis-issue (GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}) -->`)
 
+// markedAdvisory reads the last marker of an issue body, since the triage comment before it quotes model text
+// that can hold a marker of its own inside a code span.
+func markedAdvisory(body string) string {
+	m := issueMarker.FindAllStringSubmatch(body, -1)
+	if len(m) == 0 {
+		return ""
+	}
+
+	return m[len(m)-1][1]
+}
+
 type item struct {
 	id                              int64
 	ghsa, draft, duplicateOf, state string
@@ -116,7 +127,7 @@ type item struct {
 type Triage struct {
 	Severity, DuplicateOf string
 	Excluded, Located     bool
-	// Component is the directory of the faulty statement, two levels deep, empty when it was not located.
+	// Component is the directory the model named, else the one of the located faulty statement, two levels deep.
 	Component string
 }
 
@@ -196,7 +207,8 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 	for _, it := range items {
 		var ghsa, severity, excluded, located string
 		entry := &item{id: it.ID, draft: it.Content.NodeID}
-		if it.ContentType == "Issue" {
+		// The issue number only names an issue of the issues repository, the one ig writes.
+		if it.ContentType == "Issue" && issues != "" && strings.EqualFold(it.Content.Repository, issues) {
 			entry.issue, entry.issueID = it.Content.Number, it.Content.ID
 		}
 		for _, f := range it.Fields {
@@ -240,8 +252,8 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 			}
 		}
 		// An issue added by a run whose field update failed has no GHSA yet, its marker still names the advisory.
-		if m := issueMarker.FindStringSubmatch(it.Content.Body); ghsa == "" && entry.issue != 0 && m != nil {
-			ghsa = m[1]
+		if ghsa == "" && entry.issue != 0 {
+			ghsa = markedAdvisory(it.Content.Body)
 		}
 		if excluded != "" && located != "" {
 			entry.triage = &Triage{Severity: severity, DuplicateOf: entry.duplicateOf, Excluded: excluded == "Yes", Located: located == "Yes"}
@@ -258,8 +270,8 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 		}
 		b.unlisted = map[string]github.Issue{}
 		for _, i := range all {
-			if m := issueMarker.FindStringSubmatch(i.Body); m != nil && b.items[strings.ToLower(m[1])] == nil {
-				b.unlisted[strings.ToLower(m[1])] = i
+			if ghsa := strings.ToLower(markedAdvisory(i.Body)); ghsa != "" && b.items[ghsa] == nil {
+				b.unlisted[ghsa] = i
 			}
 		}
 	}
@@ -319,10 +331,11 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 	if comment != "" {
 		body += "\n\n" + comment
 	}
+	marker := fmt.Sprintf("\n\n<!-- tamis-issue %s -->", a.GHSAID)
 	it := b.items[key]
 	switch {
 	case it == nil && b.issues != "":
-		body += fmt.Sprintf("\n\n<!-- tamis-issue %s -->", a.GHSAID)
+		body += marker
 		issue, found := b.unlisted[key]
 		if found {
 			if err := b.ig.UpdateIssue(ctx, b.issues, issue.Number, map[string]string{"body": body}); err != nil {
@@ -356,7 +369,7 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 		it = &item{id: draft.ID, draft: draft.Content.NodeID, ghsa: a.GHSAID}
 		b.items[key] = it
 	case comment != "" && it.issue != 0:
-		if err := b.ig.UpdateIssue(ctx, b.issues, it.issue, map[string]string{"body": body + fmt.Sprintf("\n\n<!-- tamis-issue %s -->", a.GHSAID)}); err != nil {
+		if err := b.ig.UpdateIssue(ctx, b.issues, it.issue, map[string]string{"body": body + marker}); err != nil {
 			return err
 		}
 	case comment != "":
@@ -364,9 +377,16 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 			return err
 		}
 	}
+	// Sync compares the advisory with the state written below, so it would leave the issue as it is.
+	if it.issue != 0 && it.state != "" && it.state != a.State {
+		if err := b.ig.UpdateIssue(ctx, b.issues, it.issue, issueState(a.State)); err != nil {
+			return err
+		}
+	}
 	var kept Triage
+	var excluded, located string
 	if t != nil {
-		kept = *t
+		kept, excluded, located = *t, yes(t.Excluded), yes(t.Located)
 	}
 	values := []github.FieldValue{
 		{ID: b.ids[fieldGHSA], Value: a.GHSAID},
@@ -374,14 +394,10 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 		b.option(fieldState, a.State),
 		b.option(fieldPriority, priority),
 		b.option(fieldSeverity, capitalize(kept.Severity)),
-		{ID: b.ids[fieldDuplicateOf], Value: nil},
-		b.option(fieldExcluded, ""),
-		b.option(fieldLocated, ""),
+		{ID: b.ids[fieldDuplicateOf], Value: text(kept.DuplicateOf)},
+		b.option(fieldExcluded, excluded),
+		b.option(fieldLocated, located),
 		{ID: b.ids[fieldComponent], Value: text(kept.Component)},
-	}
-	values[5].Value = text(kept.DuplicateOf)
-	if t != nil {
-		values[6], values[7] = b.option(fieldExcluded, yes(t.Excluded)), b.option(fieldLocated, yes(t.Located))
 	}
 	if err := b.gh.UpdateProjectItem(ctx, b.org, b.number, it.id, values); err != nil {
 		return err
@@ -429,14 +445,19 @@ func issueState(advisory string) map[string]string {
 }
 
 // oldest follows the Duplicate of chain from ghsa, since the original of a report can itself name an older one.
+// It returns the identifier as the item of the original spells it, so a Duplicate of typed in another case
+// lands in the same group.
 func (b *Board) oldest(ghsa string) string {
-	seen := map[string]bool{}
+	seen := map[*item]bool{}
 	for {
 		it := b.items[strings.ToLower(ghsa)]
-		if it == nil || it.duplicateOf == "" || seen[strings.ToLower(ghsa)] {
+		if it == nil {
 			return ghsa
 		}
-		seen[strings.ToLower(ghsa)] = true
+		if it.duplicateOf == "" || seen[it] {
+			return it.ghsa
+		}
+		seen[it] = true
 		ghsa = it.duplicateOf
 	}
 }

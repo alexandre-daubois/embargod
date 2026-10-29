@@ -2,6 +2,7 @@ package board
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,7 +209,7 @@ func TestSyncReadsBackTheCountsOfAPreviousRun(t *testing.T) {
 	p := boardtest.New()
 	p.Add(map[string]any{"GHSA": "GHSA-old", "State": "triage", "Duplicates": 2, "Original report": "GHSA-old"})
 	p.Add(map[string]any{"GHSA": "GHSA-a", "State": "triage", "Duplicate of": "GHSA-old", "Original report": "GHSA-old"})
-	p.Add(map[string]any{"GHSA": "GHSA-b", "State": "triage", "Duplicate of": "ghsa-OLD", "Original report": "ghsa-OLD"})
+	p.Add(map[string]any{"GHSA": "GHSA-b", "State": "triage", "Duplicate of": "ghsa-OLD", "Original report": "GHSA-old"})
 	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
@@ -322,6 +323,7 @@ func TestSyncGroupsEveryReportUnderItsOldest(t *testing.T) {
 	root := p.Add(map[string]any{"GHSA": "GHSA-root", "State": "triage"})
 	mid := p.Add(map[string]any{"GHSA": "GHSA-mid", "State": "triage", "Duplicate of": "GHSA-root"})
 	leaf := p.Add(map[string]any{"GHSA": "GHSA-leaf", "State": "triage", "Duplicate of": "GHSA-mid"})
+	typed := p.Add(map[string]any{"GHSA": "GHSA-typed", "State": "triage", "Duplicate of": "ghsa-ROOT"})
 	orphan := p.Add(map[string]any{"GHSA": "GHSA-orphan", "State": "triage", "Duplicate of": "GHSA-gone"})
 	alone := p.Add(map[string]any{"GHSA": "GHSA-alone", "State": "triage", "Original report": "GHSA-stale"})
 	loopA := p.Add(map[string]any{"GHSA": "GHSA-loop-a", "State": "triage", "Duplicate of": "GHSA-loop-b"})
@@ -334,6 +336,7 @@ func TestSyncGroupsEveryReportUnderItsOldest(t *testing.T) {
 	require.Equal(t, "GHSA-root", p.Value(root, "Original report"), "the oldest report is missing from its group")
 	require.Equal(t, "GHSA-root", p.Value(mid, "Original report"))
 	require.Equal(t, "GHSA-root", p.Value(leaf, "Original report"), "a chain of duplicates was split")
+	require.Equal(t, "GHSA-root", p.Value(typed, "Original report"), "an original typed in another case split the group")
 	require.Equal(t, "GHSA-gone", p.Value(orphan, "Original report"), "a report whose oldest has no item lost its group")
 	require.Empty(t, p.Value(alone, "Original report"), "a report without duplicates kept a stale group")
 	require.NotEmpty(t, p.Value(loopA, "Original report"), "a loop of duplicates did not end")
@@ -551,4 +554,64 @@ func TestOpenFindsTheIssueOfARunWhoseFieldsFailed(t *testing.T) {
 	require.Len(t, p.Items, 1, "the issue was added to the project twice")
 	require.Len(t, p.Issues, 1)
 	require.Equal(t, ghsa, p.Value(p.Find(ghsa), "GHSA"))
+}
+
+func TestSyncLeavesTheIssuesOfAnotherRepositoryAlone(t *testing.T) {
+	p := boardtest.New()
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	require.NoError(t, err)
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-a", Summary: "a", State: "triage"}, LookFirst, &Triage{}, ""))
+	id := p.Find("GHSA-a")
+
+	b, err = Open(t.Context(), p, nil, "php/16", "", "php/php-src")
+	require.NoError(t, err)
+	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-a", State: "closed"}}), "a board without issues repository wrote an issue")
+	require.Equal(t, "closed", p.Value(id, "State"))
+
+	p.Repos["php/other-security"], p.Reached = true, []string{"php/other-security"}
+	b, err = Open(t.Context(), p, p, "php/16", "php/other-security", "php/php-src")
+	require.NoError(t, err)
+	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-a", State: "published"}}))
+
+	require.Equal(t, "open", p.IssueOf(id).State, "the issue of another repository was written")
+	require.Equal(t, "published", p.Value(id, "State"))
+}
+
+func TestPutIgnoresAMarkerQuotedByTheTriage(t *testing.T) {
+	p := boardtest.New()
+	const own, quoted = "GHSA-aaaa-aaaa-aaaa", "GHSA-bbbb-bbbb-bbbb"
+	body := "https://x/" + own + "\n\n`<!-- tamis-issue " + quoted + " -->`\n\n<!-- tamis-issue " + own + " -->"
+	p.Issues[1] = &boardtest.Issue{ID: 1001, Repo: "php/php-src-security", Title: own, Body: body, State: "open"}
+	_, err := p.AddProjectIssue(t.Context(), "php", 16, 1001)
+	require.NoError(t, err)
+
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	require.NoError(t, err)
+	require.NotNil(t, b.items[strings.ToLower(own)], "the issue lost its own advisory")
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: quoted, Summary: quoted, State: "triage"}, LookFirst, &Triage{}, "the comment"))
+
+	require.Len(t, p.Issues, 2, "the quoted advisory took over the issue of another")
+	require.Equal(t, body, p.Issues[1].Body)
+}
+
+func TestPutReopensTheIssueOfAnAdvisoryBackInTriage(t *testing.T) {
+	p := boardtest.New()
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	require.NoError(t, err)
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-a", Summary: "a", State: "triage"}, AnalysisRetrying, nil, "failed once"))
+	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-a", State: "closed"}}))
+	id := p.Find("GHSA-a")
+	b, err = Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	require.NoError(t, err)
+	reopened := github.Advisory{GHSAID: "GHSA-a", State: "triage"}
+
+	p.IssueErr = errors.New("HTTP 502")
+	require.Error(t, b.Put(t.Context(), reopened, LookFirst, &Triage{}, ""))
+	require.Equal(t, "closed", p.Value(id, "State"), "the field moved while its issue stayed closed")
+	p.IssueErr = nil
+	require.NoError(t, b.Put(t.Context(), reopened, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Sync(t.Context(), []github.Advisory{reopened}))
+
+	require.Equal(t, "open", p.IssueOf(id).State, "the issue stayed closed while its advisory is in triage")
+	require.Equal(t, "triage", p.Value(id, "State"))
 }

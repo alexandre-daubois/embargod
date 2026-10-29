@@ -1486,3 +1486,13 @@ func TestRunNeverCreatesAnIssueInAPublicRepository(t *testing.T) {
 		})
 	}
 }
+
+func TestRunMarksABoardTriageFailedWhenItMissesTheBoard(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	eng.onCompare = func() { gh.UpdateErr = errors.New("HTTP 502") }
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+
+	require.Empty(t, gh.posted, "a board triage posted a comment")
+	require.Contains(t, gh.Bodies[gh.Find("GHSA-done")], "will not be retried", "the item kept the pending status of an analysis that ended")
+}

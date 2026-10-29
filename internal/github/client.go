@@ -148,6 +148,8 @@ type ProjectItem struct {
 		ID     int64  `json:"id"`
 		Number int    `json:"number"`
 		Body   string `json:"body"`
+		// Repository is the "owner/name" of an issue, only listed by ListProjectItems.
+		Repository string `json:"-"`
 	} `json:"content"`
 	Fields []struct {
 		ID    int64           `json:"id"`
@@ -179,7 +181,7 @@ const itemsQuery = `query($org: String!, $number: Int!, $after: String) {
     pageInfo { hasNextPage endCursor }
     nodes {
       databaseId type
-      content { ... on DraftIssue { id } ... on Issue { databaseId number body } }
+      content { ... on DraftIssue { id } ... on Issue { databaseId number body repository { nameWithOwner } } }
       fieldValues(first: 50) { nodes {
         ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { databaseId } } }
         ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { databaseId } } }
@@ -223,6 +225,9 @@ func (c *Client) ListProjectItems(ctx context.Context, org string, number int, f
 									DatabaseID int64  `json:"databaseId"`
 									Number     int    `json:"number"`
 									Body       string `json:"body"`
+									Repository struct {
+										NameWithOwner string `json:"nameWithOwner"`
+									} `json:"repository"`
 								} `json:"content"`
 								FieldValues struct {
 									Nodes []value `json:"nodes"`
@@ -245,7 +250,7 @@ func (c *Client) ListProjectItems(ctx context.Context, org string, number int, f
 			item := ProjectItem{ID: n.DatabaseID, ContentType: "DraftIssue"}
 			item.Content.NodeID = n.Content.ID
 			if n.Type == "ISSUE" {
-				item.ContentType, item.Content.ID, item.Content.Number, item.Content.Body = "Issue", n.Content.DatabaseID, n.Content.Number, n.Content.Body
+				item.ContentType, item.Content.ID, item.Content.Number, item.Content.Body, item.Content.Repository = "Issue", n.Content.DatabaseID, n.Content.Number, n.Content.Body, n.Content.Repository.NameWithOwner
 			}
 			for _, v := range n.FieldValues.Nodes {
 				if !slices.Contains(fields, v.Field.DatabaseID) {
@@ -317,12 +322,17 @@ type Repository struct {
 // error.
 func (c *Client) InstallationRepositories(ctx context.Context) ([]string, error) {
 	var out struct {
+		TotalCount   int `json:"total_count"`
 		Repositories []struct {
 			FullName string `json:"full_name"`
 		} `json:"repositories"`
 	}
 	if _, err := c.do(ctx, http.MethodGet, c.BaseURL+"/installation/repositories?per_page=100", nil, &out); err != nil {
 		return nil, err
+	}
+	// A repository left on a later page would escape the checks of the caller.
+	if out.TotalCount > len(out.Repositories) {
+		return nil, errors.New("github: the installation reaches more repositories than one page lists")
 	}
 	names := make([]string, len(out.Repositories))
 	for i, r := range out.Repositories {

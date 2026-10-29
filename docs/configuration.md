@@ -17,7 +17,7 @@
 | `daybreak` | `false` | Turns on OpenAI's Daybreak cyber access program in Codex. Needs `engine: openai` and an API key whose organisation OpenAI approved for it. |
 | `project` | | Private organisation project kept in sync with the advisories, as `org/number`. See [the project board](setup.md#5-project-board). |
 | `issues-repository` | | Private repository the board items are created in as issues, so duplicates become sub-issues of their original report. Drafts when unset. See [the project board](setup.md#5-project-board). |
-| `issues-token` | | Installation token for `issues-repository` only, with the "Issues" permission. Required with `issues-repository`. |
+| `issues-token` | | Installation token for `issues-repository` only, with the "Issues" and organisation "Projects" permissions in read and write. Required with `issues-repository`. |
 | `runner-image` | tamis agent image, pinned by digest | Image the agent runs in. It must contain the agent CLI, git, curl and `harness-proxy`. The action skips the attestation check for a custom image. |
 
 The action refuses to run from a public workflow repository or from a `uses:` that is not a full commit SHA. Update that SHA through a reviewed pull request.

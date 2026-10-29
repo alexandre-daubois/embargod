@@ -101,7 +101,7 @@ func TestListProjectItemsReadsEveryPageThroughGraphQL(t *testing.T) {
 				{"name":"Look first","optionId":"opt","field":{"databaseId":2}},
 				{}]}}]}}}}}`,
 		"c1": `{"data":{"organization":{"projectV2":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":"c2"},"nodes":[
-			{"databaseId":6,"type":"ISSUE","content":{"databaseId":42,"number":7,"body":"b"},"fieldValues":{"nodes":[
+			{"databaseId":6,"type":"ISSUE","content":{"databaseId":42,"number":7,"body":"b","repository":{"nameWithOwner":"php/php-src-security"}},"fieldValues":{"nodes":[
 				{"number":3,"field":{"databaseId":3}},
 				{"date":"2026-10-20","field":{"databaseId":4}}]}}]}}}}}`,
 	}
@@ -138,6 +138,8 @@ func TestListProjectItemsReadsEveryPageThroughGraphQL(t *testing.T) {
 	require.Equal(t, int64(42), items[1].Content.ID)
 	require.Equal(t, 7, items[1].Content.Number)
 	require.Equal(t, "b", items[1].Content.Body)
+	require.Equal(t, "php/php-src-security", items[1].Content.Repository)
+	require.Empty(t, items[0].Content.Repository)
 	require.JSONEq(t, `3`, string(items[1].Fields[0].Value))
 	require.JSONEq(t, `"2026-10-20"`, string(items[1].Fields[1].Value))
 }
@@ -234,6 +236,16 @@ func TestIssues(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(9), item.ID)
 	require.Equal(t, "Issue", item.ContentType)
+}
+
+func TestInstallationRepositoriesRefusesAPartialList(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"total_count":101,"repositories":[{"full_name":"php/php-src-security"}]}`)
+	})
+
+	_, err := c.InstallationRepositories(context.Background())
+
+	require.EqualError(t, err, "github: the installation reaches more repositories than one page lists")
 }
 
 func TestProjectErrors(t *testing.T) {
