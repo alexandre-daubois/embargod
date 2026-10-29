@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -67,6 +68,7 @@ type GitHub interface {
 	UpdateDraft(ctx context.Context, draft, body string) error
 	UpdateProjectItem(ctx context.Context, org string, number int, item int64, fields []github.FieldValue) error
 	GetRepository(ctx context.Context, repo string) (github.Repository, error)
+	ListIssues(ctx context.Context, repo string) ([]github.Issue, error)
 	CreateIssue(ctx context.Context, repo, title, body string) (github.Issue, error)
 	UpdateIssue(ctx context.Context, repo string, number int, fields map[string]string) error
 	AddProjectIssue(ctx context.Context, org string, number int, issue int64) (github.ProjectItem, error)
@@ -83,7 +85,13 @@ type Board struct {
 	items map[string]*item
 	// issues is the private repository new items are issues of, drafts when empty.
 	issues string
+	// unlisted holds the issues of a previous run that never reached the board, by lowercase GHSA identifier.
+	unlisted map[string]github.Issue
 }
+
+// issueMarker names the advisory of an issue, so an issue created by a run that failed to put it on the board is
+// found again instead of created twice, which would notify the watchers of the repository each time.
+var issueMarker = regexp.MustCompile(`<!-- tamis-issue (GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}) -->`)
 
 type item struct {
 	id                              int64
@@ -217,6 +225,18 @@ func Open(ctx context.Context, gh GitHub, project, issues, advisories string) (*
 			b.items[strings.ToLower(ghsa)] = entry
 		}
 	}
+	if issues != "" {
+		all, err := gh.ListIssues(ctx, issues)
+		if err != nil {
+			return nil, err
+		}
+		b.unlisted = map[string]github.Issue{}
+		for _, i := range all {
+			if m := issueMarker.FindStringSubmatch(i.Body); m != nil && b.items[strings.ToLower(m[1])] == nil {
+				b.unlisted[strings.ToLower(m[1])] = i
+			}
+		}
+	}
 
 	return b, nil
 }
@@ -273,10 +293,19 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 	it := b.items[key]
 	switch {
 	case it == nil && b.issues != "":
-		// The title is the reporter's summary, and a mention in it would notify whoever it names.
-		issue, err := b.gh.CreateIssue(ctx, b.issues, strings.ReplaceAll(a.Summary, "@", "@\u200b"), body)
-		if err != nil {
-			return err
+		body += fmt.Sprintf("\n\n<!-- tamis-issue %s -->", a.GHSAID)
+		issue, found := b.unlisted[key]
+		if found {
+			if err := b.gh.UpdateIssue(ctx, b.issues, issue.Number, map[string]string{"body": body}); err != nil {
+				return err
+			}
+		} else {
+			// The title is the reporter's summary, and a mention in it would notify whoever it names.
+			var err error
+			if issue, err = b.gh.CreateIssue(ctx, b.issues, strings.ReplaceAll(a.Summary, "@", "@\u200b"), body); err != nil {
+				return err
+			}
+			b.unlisted[key] = issue
 		}
 		added, err := b.gh.AddProjectIssue(ctx, b.org, b.number, issue.ID)
 		if err != nil {
@@ -289,6 +318,7 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 		}
 		it = &item{id: added.ID, ghsa: a.GHSAID, issue: issue.Number, issueID: issue.ID}
 		b.items[key] = it
+		delete(b.unlisted, key)
 	case it == nil:
 		draft, err := b.gh.CreateDraft(ctx, b.org, b.number, a.Summary, body)
 		if err != nil {
@@ -297,7 +327,7 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 		it = &item{id: draft.ID, draft: draft.Content.NodeID, ghsa: a.GHSAID}
 		b.items[key] = it
 	case comment != "" && it.issue != 0:
-		if err := b.gh.UpdateIssue(ctx, b.issues, it.issue, map[string]string{"body": body}); err != nil {
+		if err := b.gh.UpdateIssue(ctx, b.issues, it.issue, map[string]string{"body": body + fmt.Sprintf("\n\n<!-- tamis-issue %s -->", a.GHSAID)}); err != nil {
 			return err
 		}
 	case comment != "":

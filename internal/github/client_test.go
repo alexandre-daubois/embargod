@@ -141,6 +141,9 @@ func TestIssues(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /repos/php/php-src-security":
 			fmt.Fprint(w, `{"private":true}`)
+		case "GET /repos/php/php-src-security/issues":
+			assert.Equal(t, "all", r.URL.Query().Get("state"), "closed issues would be created again")
+			fmt.Fprint(w, `[{"id":42,"number":7,"body":"b"}]`)
 		case "POST /repos/php/php-src-security/issues":
 			assert.Equal(t, map[string]any{"title": "t", "body": "b"}, body)
 			w.WriteHeader(http.StatusCreated)
@@ -162,6 +165,9 @@ func TestIssues(t *testing.T) {
 	repo, err := c.GetRepository(context.Background(), "php/php-src-security")
 	require.NoError(t, err)
 	require.True(t, repo.Private)
+	issues, err := c.ListIssues(context.Background(), "php/php-src-security")
+	require.NoError(t, err)
+	require.Equal(t, []Issue{{ID: 42, Number: 7, Body: "b"}}, issues)
 	issue, err := c.CreateIssue(context.Background(), "php/php-src-security", "t", "b")
 	require.NoError(t, err)
 	require.Equal(t, int64(42), issue.ID)

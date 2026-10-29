@@ -60,6 +60,7 @@ type Issue struct {
 	ID          int64     `json:"id"`
 	Number      int       `json:"number"`
 	Title       string    `json:"title"`
+	Body        string    `json:"body"`
 	State       string    `json:"state"`
 	HTMLURL     string    `json:"html_url"`
 	PullRequest *struct{} `json:"pull_request"`
@@ -219,6 +220,11 @@ func (c *Client) GetRepository(ctx context.Context, repo string) (Repository, er
 	_, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/repos/%s", c.BaseURL, repo), nil, &r)
 
 	return r, err
+}
+
+// ListIssues returns every issue of repo, open or closed, and its pull requests.
+func (c *Client) ListIssues(ctx context.Context, repo string) ([]Issue, error) {
+	return list[Issue](ctx, c, fmt.Sprintf("%s/repos/%s/issues?state=all&per_page=100", c.BaseURL, repo))
 }
 
 func (c *Client) CreateIssue(ctx context.Context, repo, title, body string) (Issue, error) {

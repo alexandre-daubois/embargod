@@ -378,7 +378,7 @@ func TestPutCreatesAPrivateIssue(t *testing.T) {
 	require.Len(t, p.Issues, 1, "a second put created another issue")
 	require.Equal(t, "php/php-src-security", issue.Repo)
 	require.Equal(t, "Overflow found by @​someone", issue.Title, "a mention in the title would notify")
-	require.Equal(t, "https://x/GHSA-new\n\nthe comment", issue.Body)
+	require.Equal(t, "https://x/GHSA-new\n\nthe comment\n\n<!-- tamis-issue GHSA-new -->", issue.Body)
 	require.Equal(t, "open", issue.State)
 	require.Empty(t, p.Titles, "a draft was created next to the issue")
 	require.Equal(t, LookFirst, p.Value(id, "Priority"))
@@ -465,4 +465,35 @@ func TestSyncNestsEveryDuplicateUnderItsOriginal(t *testing.T) {
 	}
 	require.Zero(t, p.IssueOf(p.Find("GHSA-orphan")).Parent, "a report whose original has no issue got a parent")
 	require.Equal(t, "GHSA-gone", p.Value(p.Find("GHSA-orphan"), "Original report"))
+}
+
+func TestPutAttachesTheIssueOfARunThatFailedToAddIt(t *testing.T) {
+	p := boardtest.New()
+	const ghsa = "GHSA-aaaa-bbbb-cccc"
+	a := github.Advisory{GHSAID: ghsa, Summary: "s", HTMLURL: "https://x/" + ghsa, State: "triage"}
+	p.Issues[1] = &boardtest.Issue{ID: 1001, Repo: "php/php-src-security", Title: "s", Body: "https://x/" + ghsa + "\n\n<!-- tamis-issue " + ghsa + " -->", State: "open"}
+	p.Issues[2] = &boardtest.Issue{ID: 1002, Repo: "php/php-src-security", Title: "by hand", Body: "no marker", State: "open"}
+
+	b, err := Open(t.Context(), p, "php/16", "php/php-src-security", "php/php-src")
+	require.NoError(t, err)
+	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{}, "the comment"))
+
+	require.Len(t, p.Issues, 2, "a second issue was created for the same advisory")
+	issue := p.IssueOf(p.Find(ghsa))
+	require.Equal(t, int64(1001), issue.ID, "the issue of the previous run was not reused")
+	require.Contains(t, issue.Body, "the comment")
+	require.Contains(t, issue.Body, "<!-- tamis-issue "+ghsa+" -->", "the update dropped the marker")
+}
+
+func TestPutMarksEveryIssueWithItsAdvisory(t *testing.T) {
+	p := boardtest.New()
+	const ghsa = "GHSA-dddd-eeee-ffff"
+	b, err := Open(t.Context(), p, "php/16", "php/php-src-security", "php/php-src")
+	require.NoError(t, err)
+	a := github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}
+
+	require.NoError(t, b.Put(t.Context(), a, AnalysisPending, nil, "pending"))
+	require.Contains(t, p.IssueOf(p.Find(ghsa)).Body, "<!-- tamis-issue "+ghsa+" -->")
+	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{}, "the comment"))
+	require.Contains(t, p.IssueOf(p.Find(ghsa)).Body, "<!-- tamis-issue "+ghsa+" -->", "the update dropped the marker")
 }

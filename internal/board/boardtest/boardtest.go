@@ -197,6 +197,20 @@ func (p *Project) GetRepository(_ context.Context, repo string) (github.Reposito
 	return github.Repository{Private: private}, nil
 }
 
+func (p *Project) ListIssues(_ context.Context, repo string) ([]github.Issue, error) {
+	if p.ListErr != nil {
+		return nil, p.ListErr
+	}
+	var issues []github.Issue
+	for n, i := range p.Issues {
+		if i.Repo == repo {
+			issues = append(issues, github.Issue{ID: i.ID, Number: n, Title: i.Title, Body: i.Body})
+		}
+	}
+
+	return issues, nil
+}
+
 func (p *Project) CreateIssue(_ context.Context, repo, title, body string) (github.Issue, error) {
 	if p.Err != nil || p.IssueErr != nil {
 		return github.Issue{}, errors.Join(p.Err, p.IssueErr)
