@@ -657,3 +657,21 @@ func TestSyncNestsADuplicateUnderAnOriginalAddedLater(t *testing.T) {
 	p.IssueErr = errors.New("HTTP 502")
 	require.NoError(t, open().Sync(t.Context(), nil), "a linked sub-issue was linked again")
 }
+
+func TestPutReopensAClosedIssueItAttachesAgain(t *testing.T) {
+	for state, want := range map[string]string{"triage": "open", "published": "closed"} {
+		t.Run(state, func(t *testing.T) {
+			p := boardtest.New()
+			const ghsa = "GHSA-aaaa-bbbb-cccc"
+			p.Issues[1] = &boardtest.Issue{ID: 1001, Repo: "php/php-src-security", Title: "s", Body: "<!-- tamis-issue " + ghsa + " -->", State: "closed", StateReason: "not_planned"}
+			b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+			require.NoError(t, err)
+
+			require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: state}, LookFirst, &Triage{}, "the comment"))
+
+			require.Len(t, p.Issues, 1, "a second issue was created")
+			require.Equal(t, want, p.Issues[1].State)
+			require.Contains(t, p.Issues[1].Body, "the comment")
+		})
+	}
+}

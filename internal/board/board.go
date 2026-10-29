@@ -363,7 +363,10 @@ func (b *Board) put(ctx context.Context, a github.Advisory, priority string, t *
 		body += marker
 		issue, found := b.unlisted[key]
 		if found {
-			if err := b.ig.UpdateIssue(ctx, b.issues, issue.Number, map[string]string{"body": body}); err != nil {
+			// A maintainer may have closed the issue left by a failed run, it follows its advisory again.
+			fields := issueState(a.State)
+			fields["body"] = body
+			if err := b.ig.UpdateIssue(ctx, b.issues, issue.Number, fields); err != nil {
 				return err
 			}
 		} else {
@@ -378,7 +381,7 @@ func (b *Board) put(ctx context.Context, a github.Advisory, priority string, t *
 		if err != nil {
 			return err
 		}
-		if a.State != "triage" && a.State != "draft" {
+		if !found && a.State != "triage" && a.State != "draft" {
 			if err := b.ig.UpdateIssue(ctx, b.issues, issue.Number, issueState(a.State)); err != nil {
 				return err
 			}
