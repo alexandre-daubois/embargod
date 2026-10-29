@@ -40,6 +40,8 @@ func codeRepo(t *testing.T) repo.Repo {
 	t.Helper()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.c"), []byte("void real_func(void) {}\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sapi", "fpm"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sapi", "fpm", "fpm.c"), []byte("int fpm;\n"), 0o644))
 	for _, args := range [][]string{{"init", "-q"}, {"add", "."}} {
 		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
@@ -565,4 +567,23 @@ func TestRenderReferenceWithoutPath(t *testing.T) {
 
 	require.Contains(t, got, "| `urldecode` | Found |")
 	require.NotContains(t, got, "``")
+}
+
+func TestVerifyKeepsOnlyAComponentDirectoryOfTheRepository(t *testing.T) {
+	for component, kept := range map[string]bool{
+		"sapi/fpm":       true,
+		"sapi":           true,
+		"sapi/cgi":       false,
+		"sapi/fpm/fpm.c": false,
+		"../sapi/fpm":    false,
+		"/sapi/fpm":      false,
+		"sapi/./fpm":     false,
+		":(top)sapi":     false,
+		"*":              false,
+	} {
+		r := Report{Component: component}
+		require.NoError(t, checker(t).Verify(context.Background(), &r))
+		require.Equal(t, kept, r.Component != "", "%q", component)
+		require.Zero(t, r.Removed, "a dropped component counted as a removed suggestion")
+	}
 }

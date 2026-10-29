@@ -202,7 +202,8 @@ func (b *Board) Has(ghsa string) bool {
 // TriageOf keeps what the board needs of r, with the oldest high-confidence exact duplicate the comment shows.
 func TriageOf(r report.Report) Triage {
 	t := Triage{Severity: r.Severity, Excluded: len(r.PolicyExclusions) > 0, Located: r.Located}
-	if dir := path.Dir(r.Location.Path); r.Located && dir != "." {
+	t.Component = r.Component
+	if dir := path.Dir(r.Location.Path); t.Component == "" && r.Located && dir != "." {
 		parts := strings.Split(dir, "/")
 		t.Component = strings.Join(parts[:min(len(parts), 2)], "/")
 	}

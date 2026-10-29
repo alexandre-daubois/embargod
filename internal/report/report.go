@@ -62,6 +62,7 @@ type Report struct {
 	CWE              []CWE           `json:"cwe"`
 	CVSS             CVSS            `json:"cvss"`
 	Severity         string          `json:"severity"`
+	Component        string          `json:"component"`
 
 	// Duplicates come from the comparator, never from the reader.
 	Duplicates []Duplicate `json:"-"`
@@ -217,6 +218,7 @@ func ReaderProperties() (map[string]any, []string) {
 			"reason": str("The metrics that drive the score and why, 20 words at most, code identifiers in backticks"),
 		}},
 		"severity": map[string]any{"type": "string", "enum": severities, "description": "CVSS 4.0 qualitative rating of your vector"},
+		"component": str("Directory of the extension, SAPI or subsystem the bug belongs to, relative to the repository root, e.g. ext/pgsql or sapi/fpm. For code shared by several of them, the one the report targets. Empty when unknown"),
 	}
 	properties["entry_points"].(map[string]any)["maxItems"] = maxEntryPoints
 	properties["related"].(map[string]any)["maxItems"] = maxRelated
@@ -224,12 +226,12 @@ func ReaderProperties() (map[string]any, []string) {
 	properties["policy_exclusions"].(map[string]any)["maxItems"] = maxPolicy
 	properties["cwe"].(map[string]any)["maxItems"] = maxCWE
 
-	return properties, []string{"summary", "location", "entry_points", "related", "code_references", "policy_exclusions", "cwe", "cvss", "severity"}
+	return properties, []string{"summary", "location", "entry_points", "related", "code_references", "policy_exclusions", "cwe", "cvss", "severity", "component"}
 }
 
 // ValidateReader bounds every model-controlled collection and string before expensive verification.
 func ValidateReader(r Report) error {
-	if len(r.Summary) > maxText || len(r.Location.Path) > maxText || len(r.Location.Symbol) > maxText || len(r.EntryPoints) > maxEntryPoints || len(r.Related) > maxRelated || len(r.CodeReferences) > maxCodeRefs || len(r.PolicyExclusions) > maxPolicy || len(r.CWE) > maxCWE || len(r.CVSS.Vector) > maxText || len(r.CVSS.Reason) > maxText || len(r.Severity) > maxText {
+	if len(r.Summary) > maxText || len(r.Location.Path) > maxText || len(r.Location.Symbol) > maxText || len(r.EntryPoints) > maxEntryPoints || len(r.Related) > maxRelated || len(r.CodeReferences) > maxCodeRefs || len(r.PolicyExclusions) > maxPolicy || len(r.CWE) > maxCWE || len(r.CVSS.Vector) > maxText || len(r.CVSS.Reason) > maxText || len(r.Severity) > maxText || len(r.Component) > maxText {
 		return errors.New("the report exceeds its limits")
 	}
 	for _, text := range r.EntryPoints {
@@ -398,6 +400,10 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 	if r.CVSS.Vector != "" && !cvss4.MatchString(r.CVSS.Vector) {
 		r.CVSS = CVSS{}
 		r.Removed++
+	}
+	// The trailing slash only matches a directory, and cluePath keeps git pathspec magic out.
+	if dir := r.Component; dir != "" && (!cluePath.MatchString(dir) || path.Clean(dir) != dir || strings.HasPrefix(dir, "..") || !c.Code.Exists(dir+"/")) {
+		r.Component = ""
 	}
 	if r.Severity != "" && !slices.Contains(severities, r.Severity) {
 		r.Severity = ""

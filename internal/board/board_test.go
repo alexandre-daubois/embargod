@@ -312,6 +312,7 @@ func TestTriageOfNamesTheComponentOfTheFaultyStatement(t *testing.T) {
 		require.Equal(t, want, TriageOf(report.Report{Location: report.Location{Path: file}, Located: true}).Component, file)
 	}
 	require.Empty(t, TriageOf(report.Report{Location: report.Location{Path: "ext/pgsql/pgsql.c"}}).Component, "an unlocated statement got a component")
+	require.Equal(t, "sapi/fpm", TriageOf(report.Report{Component: "sapi/fpm", Location: report.Location{Path: "main/fastcgi.c"}, Located: true}).Component, "the component the model named lost to the path")
 }
 
 func TestSyncGroupsEveryReportUnderItsOldest(t *testing.T) {
