@@ -531,3 +531,22 @@ func TestOpenRefusesAnIssuesRepositoryWithoutItsToken(t *testing.T) {
 
 	require.EqualError(t, err, "the issues repository needs a token of its own")
 }
+
+func TestOpenFindsTheIssueOfARunWhoseFieldsFailed(t *testing.T) {
+	p := boardtest.New()
+	const ghsa = "GHSA-aaaa-bbbb-cccc"
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	require.NoError(t, err)
+	p.UpdateErr = errors.New("HTTP 404")
+	require.Error(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
+	p.UpdateErr = nil
+
+	b, err = Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	require.NoError(t, err)
+	require.True(t, b.Has(ghsa), "the item of the issue looks added by hand")
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
+
+	require.Len(t, p.Items, 1, "the issue was added to the project twice")
+	require.Len(t, p.Issues, 1)
+	require.Equal(t, ghsa, p.Value(p.Find(ghsa), "GHSA"))
+}

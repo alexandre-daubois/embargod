@@ -147,6 +147,7 @@ type ProjectItem struct {
 		NodeID string `json:"node_id"`
 		ID     int64  `json:"id"`
 		Number int    `json:"number"`
+		Body   string `json:"body"`
 	} `json:"content"`
 	Fields []struct {
 		ID    int64           `json:"id"`

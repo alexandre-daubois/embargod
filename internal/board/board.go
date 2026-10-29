@@ -239,6 +239,10 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 				entry.group = text.Raw
 			}
 		}
+		// An issue added by a run whose field update failed has no GHSA yet, its marker still names the advisory.
+		if m := issueMarker.FindStringSubmatch(it.Content.Body); ghsa == "" && entry.issue != 0 && m != nil {
+			ghsa = m[1]
+		}
 		if excluded != "" && located != "" {
 			entry.triage = &Triage{Severity: severity, DuplicateOf: entry.duplicateOf, Excluded: excluded == "Yes", Located: located == "Yes"}
 		}
