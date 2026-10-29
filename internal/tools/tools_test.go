@@ -10,20 +10,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/php/tamis/internal/github"
 	"github.com/php/tamis/internal/repo"
 )
 
-func build() []Tool {
-	return append(Code(repo.Repo{Dir: "."}), Advisory(github.Advisory{GHSAID: "GHSA-1", Description: "details"}))
-}
-
 func TestCall(t *testing.T) {
-	ts := build()
+	ts := Code(repo.Repo{Dir: "."})
 	for _, tc := range []struct {
 		name, input, want string
 	}{
-		{"get_advisory", `{}`, `"description":"details"`},
 		{"read_file", `{"path":"tools.go","start":1,"end":1}`, "1\t// Package tools"},
 	} {
 		out, isError := Call(context.Background(), ts, tc.name, json.RawMessage(tc.input))
@@ -33,7 +27,7 @@ func TestCall(t *testing.T) {
 }
 
 func TestCallErrors(t *testing.T) {
-	ts := build()
+	ts := Code(repo.Repo{Dir: "."})
 	for _, tc := range []struct{ name, input string }{
 		{"unknown", `{}`},
 		{"read_file", `{"path":"../../go.mod"}`},
@@ -56,7 +50,6 @@ func TestToolSets(t *testing.T) {
 	}
 
 	assert.Equal(t, []string{"grep_code", "read_file", "git_log"}, names(Code(repo.Repo{})), "code tools")
-	assert.Equal(t, []string{"get_advisory"}, names([]Tool{Advisory(github.Advisory{})}), "advisory tools")
 }
 
 func TestCallSkipsToolsWithoutRun(t *testing.T) {

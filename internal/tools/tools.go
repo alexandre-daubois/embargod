@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/php/tamis/internal/github"
 	"github.com/php/tamis/internal/repo"
 )
 
@@ -87,17 +86,6 @@ func Code(r repo.Repo) []Tool {
 	}
 }
 
-// Advisory returns one candidate without exposing another report in the same model context.
-func Advisory(a github.Advisory) Tool {
-	return Tool{
-		Name:        "get_advisory",
-		Description: "Get the full description of the one candidate advisory.",
-		Run: func(context.Context, json.RawMessage) (string, error) {
-			return marshal(a)
-		},
-	}
-}
-
 // Validate checks a submission with the Run of the submit tool, when it has one. The error is meant
 // for the model, so it can fix its answer.
 func Validate(ctx context.Context, ts []Tool, input json.RawMessage) error {
@@ -136,10 +124,4 @@ func decode[T any](input json.RawMessage) (T, error) {
 	}
 
 	return v, json.Unmarshal(input, &v)
-}
-
-func marshal(v any) (string, error) {
-	b, err := json.Marshal(v)
-
-	return string(b), err
 }
