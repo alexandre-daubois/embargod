@@ -4,6 +4,7 @@ package boardtest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -23,10 +24,22 @@ type Project struct {
 	Writes    int
 	Public    bool
 	next      int64
+	// Repos says which repositories exist and whether they are private. Issues holds their issues by number,
+	// and issueOf the issue of each item that is one.
+	Repos    map[string]bool
+	Issues   map[int]*Issue
+	IssueErr error
+	issueOf  map[int64]int
+}
+
+type Issue struct {
+	ID                                    int64
+	Repo, Title, Body, State, StateReason string
+	Parent                                int
 }
 
 func New() *Project {
-	p := &Project{Items: map[int64]map[int64]any{}, Titles: map[int64]string{}, Bodies: map[int64]string{}}
+	p := &Project{Items: map[int64]map[int64]any{}, Titles: map[int64]string{}, Bodies: map[int64]string{}, Repos: map[string]bool{"php/php-src-security": true, "php/php-src": false}, Issues: map[int]*Issue{}, issueOf: map[int64]int{}}
 	for i, f := range []struct {
 		name, dataType string
 		options        []string
@@ -124,8 +137,11 @@ func (p *Project) ListProjectItems(_ context.Context, _ string, _ int, fields []
 	}
 	var items []github.ProjectItem
 	for id, values := range p.Items {
-		item := github.ProjectItem{ID: id}
+		item := github.ProjectItem{ID: id, ContentType: "DraftIssue"}
 		item.Content.NodeID = draft(id)
+		if n, ok := p.issueOf[id]; ok {
+			item.ContentType, item.Content.Number, item.Content.ID = "Issue", n, p.Issues[n].ID
+		}
 		for _, f := range p.Fields {
 			v, ok := values[f.ID]
 			if !ok || !slices.Contains(fields, f.ID) {
@@ -161,6 +177,79 @@ func (p *Project) CreateDraft(_ context.Context, _ string, _ int, title, body st
 	item.Content.NodeID = draft(id)
 
 	return item, nil
+}
+
+// IssueOf returns the issue of an item, nil for a draft.
+func (p *Project) IssueOf(item int64) *Issue {
+	if n, ok := p.issueOf[item]; ok {
+		return p.Issues[n]
+	}
+
+	return nil
+}
+
+func (p *Project) GetRepository(_ context.Context, repo string) (github.Repository, error) {
+	private, ok := p.Repos[repo]
+	if !ok {
+		return github.Repository{}, &github.HTTPError{Status: 404}
+	}
+
+	return github.Repository{Private: private}, nil
+}
+
+func (p *Project) CreateIssue(_ context.Context, repo, title, body string) (github.Issue, error) {
+	if p.Err != nil || p.IssueErr != nil {
+		return github.Issue{}, errors.Join(p.Err, p.IssueErr)
+	}
+	n := len(p.Issues) + 1
+	p.Issues[n] = &Issue{ID: int64(1000 + n), Repo: repo, Title: title, Body: body, State: "open"}
+
+	return github.Issue{ID: int64(1000 + n), Number: n}, nil
+}
+
+func (p *Project) UpdateIssue(_ context.Context, repo string, number int, fields map[string]string) error {
+	if p.Err != nil || p.IssueErr != nil {
+		return errors.Join(p.Err, p.IssueErr)
+	}
+	i := p.Issues[number]
+	if i == nil || i.Repo != repo {
+		return &github.HTTPError{Status: 404}
+	}
+	for k, v := range fields {
+		switch k {
+		case "body":
+			i.Body = v
+		case "state":
+			i.State = v
+		case "state_reason":
+			i.StateReason = v
+		}
+	}
+
+	return nil
+}
+
+func (p *Project) AddProjectIssue(_ context.Context, _ string, _ int, issue int64) (github.ProjectItem, error) {
+	if p.Err != nil {
+		return github.ProjectItem{}, p.Err
+	}
+	id := p.Add(nil)
+	p.issueOf[id] = int(issue - 1000)
+
+	return github.ProjectItem{ID: id, ContentType: "Issue"}, nil
+}
+
+func (p *Project) AddSubIssue(_ context.Context, repo string, parent int, child int64) error {
+	if p.Err != nil || p.IssueErr != nil {
+		return errors.Join(p.Err, p.IssueErr)
+	}
+	sub := p.Issues[int(child-1000)]
+	if p.Issues[parent] == nil || sub == nil || sub.Repo != repo {
+		return &github.HTTPError{Status: 422}
+	}
+	sub.Parent = parent
+
+	return nil
 }
 
 func (p *Project) UpdateDraft(_ context.Context, node, body string) error {

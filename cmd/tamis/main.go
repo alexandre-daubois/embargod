@@ -45,11 +45,12 @@ func main() {
 
 func run(ctx context.Context, log *slog.Logger) error {
 	cfg := triage.Config{
-		Repo:     os.Getenv("REPOSITORY"),
-		Advisory: os.Getenv("ADVISORY"),
-		RepoPath: os.Getenv("REPO_PATH"),
-		BotLogin: os.Getenv("BOT_LOGIN"),
-		Project:  os.Getenv("PROJECT"),
+		Repo:             os.Getenv("REPOSITORY"),
+		Advisory:         os.Getenv("ADVISORY"),
+		RepoPath:         os.Getenv("REPO_PATH"),
+		BotLogin:         os.Getenv("BOT_LOGIN"),
+		Project:          os.Getenv("PROJECT"),
+		IssuesRepository: os.Getenv("ISSUES_REPOSITORY"),
 	}
 	if cfg.Repo == "" {
 		cfg.Repo = os.Getenv("GITHUB_REPOSITORY")

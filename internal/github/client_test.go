@@ -132,6 +132,48 @@ func TestUpdateDraft(t *testing.T) {
 	}
 }
 
+func TestIssues(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+		}
+		switch r.Method + " " + r.URL.Path {
+		case "GET /repos/php/php-src-security":
+			fmt.Fprint(w, `{"private":true}`)
+		case "POST /repos/php/php-src-security/issues":
+			assert.Equal(t, map[string]any{"title": "t", "body": "b"}, body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":42,"number":7}`)
+		case "PATCH /repos/php/php-src-security/issues/7":
+			assert.Equal(t, map[string]any{"state": "closed", "state_reason": "completed"}, body)
+		case "POST /repos/php/php-src-security/issues/3/sub_issues":
+			assert.Equal(t, map[string]any{"sub_issue_id": float64(42), "replace_parent": true}, body)
+			w.WriteHeader(http.StatusCreated)
+		case "POST /orgs/php/projectsV2/16/items":
+			assert.Equal(t, map[string]any{"type": "Issue", "id": float64(42)}, body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":9,"content_type":"Issue"}`)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	repo, err := c.GetRepository(context.Background(), "php/php-src-security")
+	require.NoError(t, err)
+	require.True(t, repo.Private)
+	issue, err := c.CreateIssue(context.Background(), "php/php-src-security", "t", "b")
+	require.NoError(t, err)
+	require.Equal(t, int64(42), issue.ID)
+	require.Equal(t, 7, issue.Number)
+	require.NoError(t, c.UpdateIssue(context.Background(), "php/php-src-security", 7, map[string]string{"state": "closed", "state_reason": "completed"}))
+	require.NoError(t, c.AddSubIssue(context.Background(), "php/php-src-security", 3, 42))
+	item, err := c.AddProjectIssue(context.Background(), "php", 16, 42)
+	require.NoError(t, err)
+	require.Equal(t, int64(9), item.ID)
+	require.Equal(t, "Issue", item.ContentType)
+}
+
 func TestProjectErrors(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -139,6 +181,11 @@ func TestProjectErrors(t *testing.T) {
 
 	_, err := c.CreateDraft(context.Background(), "php", 16, "t", "b")
 	require.Error(t, c.UpdateDraft(context.Background(), "DI_6", "b"))
+	_, err = c.GetRepository(context.Background(), "php/php-src-security")
+	require.Error(t, err)
+	_, err = c.CreateIssue(context.Background(), "php/php-src-security", "t", "b")
+	require.Error(t, err)
+	require.Error(t, c.AddSubIssue(context.Background(), "php/php-src-security", 3, 42))
 	var httpErr *HTTPError
 	require.ErrorAs(t, err, &httpErr)
 	require.Equal(t, http.StatusForbidden, httpErr.Status)

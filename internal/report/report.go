@@ -217,7 +217,7 @@ func ReaderProperties() (map[string]any, []string) {
 			"vector": str("CVSS 4.0 base vector, e.g. CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"),
 			"reason": str("The metrics that drive the score and why, 20 words at most, code identifiers in backticks"),
 		}},
-		"severity": map[string]any{"type": "string", "enum": severities, "description": "CVSS 4.0 qualitative rating of your vector"},
+		"severity":  map[string]any{"type": "string", "enum": severities, "description": "CVSS 4.0 qualitative rating of your vector"},
 		"component": str("Directory of the extension, SAPI or subsystem the bug belongs to, relative to the repository root, e.g. ext/pgsql or sapi/fpm. For code shared by several of them, the one the report targets. Empty when unknown"),
 	}
 	properties["entry_points"].(map[string]any)["maxItems"] = maxEntryPoints

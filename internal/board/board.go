@@ -66,6 +66,11 @@ type GitHub interface {
 	CreateDraft(ctx context.Context, org string, number int, title, body string) (github.ProjectItem, error)
 	UpdateDraft(ctx context.Context, draft, body string) error
 	UpdateProjectItem(ctx context.Context, org string, number int, item int64, fields []github.FieldValue) error
+	GetRepository(ctx context.Context, repo string) (github.Repository, error)
+	CreateIssue(ctx context.Context, repo, title, body string) (github.Issue, error)
+	UpdateIssue(ctx context.Context, repo string, number int, fields map[string]string) error
+	AddProjectIssue(ctx context.Context, org string, number int, issue int64) (github.ProjectItem, error)
+	AddSubIssue(ctx context.Context, repo string, parent int, child int64) error
 }
 
 type Board struct {
@@ -76,6 +81,8 @@ type Board struct {
 	options map[string]map[string]string
 	// items is keyed by lowercase GHSA identifier, items without one were added by hand and stay untouched.
 	items map[string]*item
+	// issues is the private repository new items are issues of, drafts when empty.
+	issues string
 }
 
 type item struct {
@@ -83,6 +90,9 @@ type item struct {
 	ghsa, draft, duplicateOf, state string
 	priority, group                 string
 	duplicates                      int
+	// issue and issueID name the issue of an item that is one, zero for a draft.
+	issue   int
+	issueID int64
 	// triage is nil for an item without one, whose priority is a status Sync leaves alone.
 	triage *Triage
 }
@@ -95,8 +105,9 @@ type Triage struct {
 	Component string
 }
 
-// Open loads the fields and items of project, given as "org/number".
-func Open(ctx context.Context, gh GitHub, project string) (*Board, error) {
+// Open loads the fields and items of project, given as "org/number". With issues set, new items are issues of
+// that repository, which must be private and must not be the repository of the advisories.
+func Open(ctx context.Context, gh GitHub, project, issues, advisories string) (*Board, error) {
 	org, n, _ := strings.Cut(project, "/")
 	number, err := strconv.Atoi(n)
 	if org == "" || err != nil {
@@ -110,7 +121,20 @@ func Open(ctx context.Context, gh GitHub, project string) (*Board, error) {
 	if p.Public {
 		return nil, errors.New("the project must be private")
 	}
-	b := &Board{gh: gh, org: org, number: number, ids: map[string]int64{}, options: map[string]map[string]string{}, items: map[string]*item{}}
+	// An issue carries the title and triage of a report under embargo, so a public repository would publish it.
+	if issues != "" {
+		if strings.EqualFold(issues, advisories) {
+			return nil, errors.New("the issues repository must not be the repository of the advisories")
+		}
+		r, err := gh.GetRepository(ctx, issues)
+		if err != nil {
+			return nil, err
+		}
+		if !r.Private {
+			return nil, errors.New("the issues repository must be private")
+		}
+	}
+	b := &Board{gh: gh, org: org, number: number, ids: map[string]int64{}, options: map[string]map[string]string{}, items: map[string]*item{}, issues: issues}
 	fields, err := gh.ListProjectFields(ctx, org, number)
 	if err != nil {
 		return nil, err
@@ -142,6 +166,9 @@ func Open(ctx context.Context, gh GitHub, project string) (*Board, error) {
 	for _, it := range items {
 		var ghsa, severity, excluded, located string
 		entry := &item{id: it.ID, draft: it.Content.NodeID}
+		if it.ContentType == "Issue" {
+			entry.issue, entry.issueID = it.Content.Number, it.Content.ID
+		}
 		for _, f := range it.Fields {
 			var text struct {
 				Raw  string `json:"raw"`
@@ -245,6 +272,23 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 	}
 	it := b.items[key]
 	switch {
+	case it == nil && b.issues != "":
+		// The title is the reporter's summary, and a mention in it would notify whoever it names.
+		issue, err := b.gh.CreateIssue(ctx, b.issues, strings.ReplaceAll(a.Summary, "@", "@\u200b"), body)
+		if err != nil {
+			return err
+		}
+		added, err := b.gh.AddProjectIssue(ctx, b.org, b.number, issue.ID)
+		if err != nil {
+			return err
+		}
+		if a.State != "triage" && a.State != "draft" {
+			if err := b.gh.UpdateIssue(ctx, b.issues, issue.Number, issueState(a.State)); err != nil {
+				return err
+			}
+		}
+		it = &item{id: added.ID, ghsa: a.GHSAID, issue: issue.Number, issueID: issue.ID}
+		b.items[key] = it
 	case it == nil:
 		draft, err := b.gh.CreateDraft(ctx, b.org, b.number, a.Summary, body)
 		if err != nil {
@@ -252,6 +296,10 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 		}
 		it = &item{id: draft.ID, draft: draft.Content.NodeID, ghsa: a.GHSAID}
 		b.items[key] = it
+	case comment != "" && it.issue != 0:
+		if err := b.gh.UpdateIssue(ctx, b.issues, it.issue, map[string]string{"body": body}); err != nil {
+			return err
+		}
 	case comment != "":
 		if err := b.gh.UpdateDraft(ctx, it.draft, body); err != nil {
 			return err
@@ -309,6 +357,18 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// issueState keeps an issue open while its advisory waits for a decision.
+func issueState(advisory string) map[string]string {
+	switch advisory {
+	case "triage", "draft":
+		return map[string]string{"state": "open"}
+	case "published":
+		return map[string]string{"state": "closed", "state_reason": "completed"}
+	default:
+		return map[string]string{"state": "closed", "state_reason": "not_planned"}
+	}
+}
+
 // oldest follows the Duplicate of chain from ghsa, since the original of a report can itself name an older one.
 func (b *Board) oldest(ghsa string) string {
 	seen := map[string]bool{}
@@ -351,6 +411,12 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 	for ghsa, it := range b.items {
 		var values []github.FieldValue
 		if state, ok := states[ghsa]; ok && state != it.state {
+			if it.issue != 0 {
+				if err := b.gh.UpdateIssue(ctx, b.issues, it.issue, issueState(state)); err != nil {
+					errs = append(errs, err)
+					continue
+				}
+			}
 			values = append(values, b.option(fieldState, state))
 			it.state = state
 		}
@@ -368,6 +434,13 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 			group = b.oldest(it.duplicateOf)
 		case counts[ghsa] > 0:
 			group = it.ghsa
+		}
+		// The group is only written once the sub-issue is linked, so a failed link is tried again next run.
+		if parent := b.items[strings.ToLower(group)]; group != it.group && it.issue != 0 && parent != nil && parent != it && parent.issue != 0 {
+			if err := b.gh.AddSubIssue(ctx, b.issues, parent.issue, it.issueID); err != nil {
+				errs = append(errs, err)
+				group = it.group
+			}
 		}
 		if group != it.group {
 			it.group = group

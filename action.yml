@@ -42,6 +42,9 @@ inputs:
   project:
     description: Private organisation project kept in sync with the triaged advisories, as `org/number`. The token needs the organisation "Projects" permission in read and write.
     required: false
+  issues-repository:
+    description: Private repository the board items are created in as issues, so duplicates become sub-issues of their original report. Drafts when unset. tamis refuses a public repository and the repository of the advisories. The token needs the "Issues" permission in read and write on it.
+    required: false
   references:
     description: Whitespace-separated local git references, including each supported release branch. The first is analysed, the cited code is located on all of them. All must have been fetched.
     required: true
@@ -129,6 +132,7 @@ runs:
         OUTPUT_DIR: ${{ steps.reports.outputs.path }}
         REFERENCES: ${{ inputs.references }}
         PROJECT: ${{ inputs.project }}
+        ISSUES_REPOSITORY: ${{ inputs.issues-repository }}
     - name: Store private reports
       if: always() && steps.triage.outcome != 'skipped' && steps.reports.outcome == 'success'
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

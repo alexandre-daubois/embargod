@@ -1454,3 +1454,30 @@ func TestRunNeverTriagesAgainWithoutAProject(t *testing.T) {
 	}
 	require.NotContains(t, gh.posted, "GHSA-done")
 }
+
+func TestRunPutsTheTriageInAPrivateIssue(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16", IssuesRepository: "php/php-src-security"}, gh, eng))
+
+	issue := gh.IssueOf(gh.Find("GHSA-done"))
+	require.NotNil(t, issue, "the board triage is not an issue")
+	require.Equal(t, "php/php-src-security", issue.Repo)
+	require.Contains(t, issue.Body, report.Marker, "the issue misses the triage")
+	require.Empty(t, gh.posted, "the board triage posted a comment")
+}
+
+func TestRunNeverCreatesAnIssueInAPublicRepository(t *testing.T) {
+	for name, repo := range map[string]string{"public": "php/php-src", "advisory repository": "o/r"} {
+		t.Run(name, func(t *testing.T) {
+			gh, eng := newFixture(), &fakeEngine{}
+			gh.Repos["o/r"] = true
+
+			require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16", IssuesRepository: repo}, gh, eng), "opening the project board: the issues repository must")
+
+			require.Empty(t, gh.Issues, "an issue was created in %s", repo)
+			require.Empty(t, gh.Items)
+			require.Contains(t, gh.posted["GHSA-new"], report.Marker, "the refused board blocked the triage")
+		})
+	}
+}

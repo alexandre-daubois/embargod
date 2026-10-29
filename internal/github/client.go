@@ -57,6 +57,7 @@ type Advisory struct {
 }
 
 type Issue struct {
+	ID          int64     `json:"id"`
 	Number      int       `json:"number"`
 	Title       string    `json:"title"`
 	State       string    `json:"state"`
@@ -139,9 +140,12 @@ type ProjectField struct {
 // value {"name": {"raw": ...}} and a number a bare number.
 type ProjectItem struct {
 	ID int64 `json:"id"`
-	// Content is the draft issue of the item, which only GraphQL can edit by its node ID.
-	Content struct {
+	// ContentType is "DraftIssue" or "Issue". Only GraphQL can edit a draft, by its node ID.
+	ContentType string `json:"content_type"`
+	Content     struct {
 		NodeID string `json:"node_id"`
+		ID     int64  `json:"id"`
+		Number int    `json:"number"`
 	} `json:"content"`
 	Fields []struct {
 		ID    int64           `json:"id"`
@@ -204,6 +208,45 @@ func (c *Client) UpdateProjectItem(ctx context.Context, org string, number int, 
 	_, err := c.do(ctx, http.MethodPatch, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/items/%d", c.BaseURL, url.PathEscape(org), number, item), map[string]any{"fields": fields}, nil)
 
 	return err
+}
+
+type Repository struct {
+	Private bool `json:"private"`
+}
+
+func (c *Client) GetRepository(ctx context.Context, repo string) (Repository, error) {
+	var r Repository
+	_, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/repos/%s", c.BaseURL, repo), nil, &r)
+
+	return r, err
+}
+
+func (c *Client) CreateIssue(ctx context.Context, repo, title, body string) (Issue, error) {
+	var i Issue
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/repos/%s/issues", c.BaseURL, repo), map[string]string{"title": title, "body": body}, &i)
+
+	return i, err
+}
+
+// UpdateIssue sets the given fields of an issue, such as "body", "state" or "state_reason".
+func (c *Client) UpdateIssue(ctx context.Context, repo string, number int, fields map[string]string) error {
+	_, err := c.do(ctx, http.MethodPatch, fmt.Sprintf("%s/repos/%s/issues/%d", c.BaseURL, repo, number), fields, nil)
+
+	return err
+}
+
+// AddSubIssue makes the issue child a sub-issue of parent, moving it from any other parent.
+func (c *Client) AddSubIssue(ctx context.Context, repo string, parent int, child int64) error {
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/repos/%s/issues/%d/sub_issues", c.BaseURL, repo, parent), map[string]any{"sub_issue_id": child, "replace_parent": true}, nil)
+
+	return err
+}
+
+func (c *Client) AddProjectIssue(ctx context.Context, org string, number int, issue int64) (ProjectItem, error) {
+	var item ProjectItem
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/items", c.BaseURL, url.PathEscape(org), number), map[string]any{"type": "Issue", "id": issue}, &item)
+
+	return item, err
 }
 
 func (c *Client) GetIssue(ctx context.Context, repo string, number int) (Issue, error) {
