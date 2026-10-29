@@ -67,9 +67,6 @@ func TestProjectItems(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /orgs/php/projectsV2/16":
 			fmt.Fprint(w, `{"id":1,"number":16,"public":true}`)
-		case "GET /orgs/php/projectsV2/16/items":
-			assert.Equal(t, "1,2", r.URL.Query().Get("fields"))
-			fmt.Fprint(w, `[{"id":5,"content":{"node_id":"DI_5"},"fields":[{"id":1,"value":{"raw":"GHSA-1"}}]}]`)
 		case "POST /orgs/php/projectsV2/16/drafts":
 			var body map[string]string
 			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
@@ -88,17 +85,71 @@ func TestProjectItems(t *testing.T) {
 	project, err := c.GetProject(context.Background(), "php", 16)
 	require.NoError(t, err)
 	require.True(t, project.Public)
-	items, err := c.ListProjectItems(context.Background(), "php", 16, []int64{1, 2})
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-	require.Equal(t, int64(5), items[0].ID)
-	require.JSONEq(t, `{"raw":"GHSA-1"}`, string(items[0].Fields[0].Value))
-	require.Equal(t, "DI_5", items[0].Content.NodeID)
 	draft, err := c.CreateDraft(context.Background(), "php", 16, "t", "b")
 	require.NoError(t, err)
 	require.Equal(t, int64(6), draft.ID)
 	require.Equal(t, "DI_6", draft.Content.NodeID)
 	require.NoError(t, c.UpdateProjectItem(context.Background(), "php", 16, 6, []FieldValue{{ID: 1, Value: "GHSA-1"}, {ID: 2}}))
+}
+
+func TestListProjectItemsReadsEveryPageThroughGraphQL(t *testing.T) {
+	pages := map[string]string{
+		"": `{"data":{"organization":{"projectV2":{"items":{"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"nodes":[
+			{"databaseId":5,"type":"DRAFT_ISSUE","content":{"id":"DI_5"},"fieldValues":{"nodes":[
+				{"text":"GHSA-1","field":{"databaseId":1}},
+				{"text":"left out","field":{"databaseId":9}},
+				{"name":"Look first","optionId":"opt","field":{"databaseId":2}},
+				{}]}}]}}}}}`,
+		"c1": `{"data":{"organization":{"projectV2":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":"c2"},"nodes":[
+			{"databaseId":6,"type":"ISSUE","content":{"databaseId":42,"number":7,"body":"b"},"fieldValues":{"nodes":[
+				{"number":3,"field":{"databaseId":3}},
+				{"date":"2026-10-20","field":{"databaseId":4}}]}}]}}}}}`,
+	}
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST /graphql", r.Method+" "+r.URL.Path)
+		var body struct {
+			Variables struct {
+				Org    string  `json:"org"`
+				Number int     `json:"number"`
+				After  *string `json:"after"`
+			} `json:"variables"`
+		}
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "php", body.Variables.Org)
+		assert.Equal(t, 16, body.Variables.Number)
+		after := ""
+		if body.Variables.After != nil {
+			after = *body.Variables.After
+		}
+		fmt.Fprint(w, pages[after])
+	})
+
+	items, err := c.ListProjectItems(context.Background(), "php", 16, []int64{1, 2, 3, 4})
+
+	require.NoError(t, err)
+	require.Len(t, items, 2, "a page was left out")
+	require.Equal(t, int64(5), items[0].ID)
+	require.Equal(t, "DraftIssue", items[0].ContentType)
+	require.Equal(t, "DI_5", items[0].Content.NodeID)
+	require.Len(t, items[0].Fields, 2, "a field outside the list was kept")
+	require.JSONEq(t, `{"raw":"GHSA-1"}`, string(items[0].Fields[0].Value))
+	require.JSONEq(t, `{"id":"opt","name":{"raw":"Look first"}}`, string(items[0].Fields[1].Value))
+	require.Equal(t, "Issue", items[1].ContentType)
+	require.Equal(t, int64(42), items[1].Content.ID)
+	require.Equal(t, 7, items[1].Content.Number)
+	require.Equal(t, "b", items[1].Content.Body)
+	require.JSONEq(t, `3`, string(items[1].Fields[0].Value))
+	require.JSONEq(t, `"2026-10-20"`, string(items[1].Fields[1].Value))
+}
+
+func TestListProjectItemsReportsGraphQLErrors(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"errors":[{"message":"SECRET-PAYLOAD"}]}`)
+	})
+
+	_, err := c.ListProjectItems(context.Background(), "php", 16, nil)
+
+	require.EqualError(t, err, "github: GraphQL request failed")
 }
 
 func TestUpdateDraft(t *testing.T) {

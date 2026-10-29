@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strconv"
+	"slices"
 	"strings"
 	"time"
 )
@@ -172,14 +172,111 @@ func (c *Client) ListProjectFields(ctx context.Context, org string, number int) 
 	return list[ProjectField](ctx, c, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/fields?per_page=100", c.BaseURL, url.PathEscape(org), number))
 }
 
-func (c *Client) ListProjectItems(ctx context.Context, org string, number int, fields []int64) ([]ProjectItem, error) {
-	ids := make([]string, len(fields))
-	for i, id := range fields {
-		ids[i] = strconv.FormatInt(id, 10)
-	}
-	q := url.Values{"per_page": {"100"}, "fields": {strings.Join(ids, ",")}}
+// itemsQuery lists the items of a project. The REST listing leaves out, for an App token, the items that are
+// issues of a private repository.
+const itemsQuery = `query($org: String!, $number: Int!, $after: String) {
+  organization(login: $org) { projectV2(number: $number) { items(first: 100, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      databaseId type
+      content { ... on DraftIssue { id } ... on Issue { databaseId number body } }
+      fieldValues(first: 50) { nodes {
+        ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { databaseId } } }
+        ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { databaseId } } }
+        ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { databaseId } } }
+        ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { databaseId } } }
+      } }
+    }
+  } } }
+}`
 
-	return list[ProjectItem](ctx, c, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/items?%s", c.BaseURL, url.PathEscape(org), number, q.Encode()))
+// ListProjectItems returns the items of a project with the values of the given fields, in the shape of the REST
+// API: {"raw": ...} for a text, {"id": ..., "name": {"raw": ...}} for a single select, the bare value otherwise.
+func (c *Client) ListProjectItems(ctx context.Context, org string, number int, fields []int64) ([]ProjectItem, error) {
+	type value struct {
+		Text     *string  `json:"text"`
+		Number   *float64 `json:"number"`
+		Date     *string  `json:"date"`
+		Name     *string  `json:"name"`
+		OptionID string   `json:"optionId"`
+		Field    struct {
+			DatabaseID int64 `json:"databaseId"`
+		} `json:"field"`
+	}
+	var items []ProjectItem
+	var after *string
+	for {
+		var out struct {
+			Data struct {
+				Organization struct {
+					ProjectV2 struct {
+						Items struct {
+							PageInfo struct {
+								HasNextPage bool   `json:"hasNextPage"`
+								EndCursor   string `json:"endCursor"`
+							} `json:"pageInfo"`
+							Nodes []struct {
+								DatabaseID int64  `json:"databaseId"`
+								Type       string `json:"type"`
+								Content    struct {
+									ID         string `json:"id"`
+									DatabaseID int64  `json:"databaseId"`
+									Number     int    `json:"number"`
+									Body       string `json:"body"`
+								} `json:"content"`
+								FieldValues struct {
+									Nodes []value `json:"nodes"`
+								} `json:"fieldValues"`
+							} `json:"nodes"`
+						} `json:"items"`
+					} `json:"projectV2"`
+				} `json:"organization"`
+			} `json:"data"`
+			Errors []json.RawMessage `json:"errors"`
+		}
+		if _, err := c.do(ctx, http.MethodPost, c.BaseURL+"/graphql", map[string]any{"query": itemsQuery, "variables": map[string]any{"org": org, "number": number, "after": after}}, &out); err != nil {
+			return nil, err
+		}
+		if len(out.Errors) > 0 {
+			return nil, errors.New("github: GraphQL request failed")
+		}
+		page := out.Data.Organization.ProjectV2.Items
+		for _, n := range page.Nodes {
+			item := ProjectItem{ID: n.DatabaseID, ContentType: "DraftIssue"}
+			item.Content.NodeID = n.Content.ID
+			if n.Type == "ISSUE" {
+				item.ContentType, item.Content.ID, item.Content.Number, item.Content.Body = "Issue", n.Content.DatabaseID, n.Content.Number, n.Content.Body
+			}
+			for _, v := range n.FieldValues.Nodes {
+				if !slices.Contains(fields, v.Field.DatabaseID) {
+					continue
+				}
+				var raw any
+				switch {
+				case v.Text != nil:
+					raw = map[string]string{"raw": *v.Text}
+				case v.Name != nil:
+					raw = map[string]any{"id": v.OptionID, "name": map[string]string{"raw": *v.Name}}
+				case v.Number != nil:
+					raw = *v.Number
+				case v.Date != nil:
+					raw = *v.Date
+				default:
+					continue
+				}
+				b, _ := json.Marshal(raw)
+				item.Fields = append(item.Fields, struct {
+					ID    int64           `json:"id"`
+					Value json.RawMessage `json:"value"`
+				}{v.Field.DatabaseID, b})
+			}
+			items = append(items, item)
+		}
+		if !page.PageInfo.HasNextPage {
+			return items, nil
+		}
+		after = &page.PageInfo.EndCursor
+	}
 }
 
 func (c *Client) CreateDraft(ctx context.Context, org string, number int, title, body string) (ProjectItem, error) {
