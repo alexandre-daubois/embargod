@@ -8,8 +8,8 @@ github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.2 h1:utpeoEeZjd+A8J41zvoLsOOr
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.2/go.mod h1:iptorS+VYKFL2N6PnebpS91dubG35eAOEERnT4PJbQU=
 github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 h1:fhqpLE3UEXi9lPaBRpQ6XuRW0nU7hgg4zlmZZa+a9q4=
 github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0/go.mod h1:7dCRMLwisfRH3dBupKeNCioWYUZ4SS09Z14H+7i8ZoY=
-github.com/alpha-omega-security/harness v0.1.16 h1:FxYZO4aBRUOJT4tBBDeflbTUB3atu5ucmniy+c2R9t4=
-github.com/alpha-omega-security/harness v0.1.16/go.mod h1:wpUi6g2ebGi0OMSHaDTGhj/zMV1Lse1P8GrAp4J3LMI=
+github.com/alpha-omega-security/harness v0.1.18 h1:99coqkQjuQ13jAX0ivZo7mu5xQyJW6n/QWj19USGMCI=
+github.com/alpha-omega-security/harness v0.1.18/go.mod h1:4JI0CxVRwiWQ9zAtSTnM5p8l0A79bwREtps9BA9oLXY=
 github.com/anthropics/anthropic-sdk-go v1.84.0 h1:mnAhggc5H5A98JYmhQELT+j4J89PYBFKnnSvUTNwNd8=
 github.com/anthropics/anthropic-sdk-go v1.84.0/go.mod h1:GThfYqPJoaQ/6pmibCI98Cr4y5su2FXMUHn3NrSSnIc=
 github.com/aws/aws-sdk-go-v2 v1.47.1 h1:uOIZnp4PK3ZhKI0dNrJrhTEsLxbpXHTAJlwoS1pvAtw=
@@ -64,6 +64,8 @@ github.com/fsnotify/fsnotify v1.10.1 h1:b0/UzAf9yR5rhf3RPm9gf3ehBPpf0oZKIjtpKrx5
 github.com/fsnotify/fsnotify v1.10.1/go.mod h1:TLheqan6HD6GBK6PrDWyDPBaEV8LspOxvPSjC+bVfgo=
 github.com/git-pkgs/cwe v0.1.1 h1:FTdif2t/pQCd8IFxJUt3fy4khoQ93djiw2sukqE8KiQ=
 github.com/git-pkgs/cwe v0.1.1/go.mod h1:6yUxEoA+3rI4W3ftqb7PZP1Z7zZFmV4/wfr7P46HtHU=
+github.com/git-pkgs/skills v0.2.0 h1:WcYbOukbrQLhjrg0qocknf16MrLVF5bKdwOeNHF6we0=
+github.com/git-pkgs/skills v0.2.0/go.mod h1:fnhLBuE0+QEhLh6bb3x2IDljwu5lhJlrU+FE2LfHAk4=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
 github.com/go-logr/logr v1.4.4 h1:tG4xh9yMsRCAiodLVTxyrkzSZ9+o0L1Kg/+cPVcbP/8=
 github.com/go-logr/logr v1.4.4/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=

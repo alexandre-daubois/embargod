@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -22,8 +23,9 @@ import (
 	"github.com/alpha-omega-security/harness"
 	"github.com/alpha-omega-security/harness/container"
 	"github.com/alpha-omega-security/harness/egress"
+	"github.com/alpha-omega-security/harness/modelproxy"
 
-	"github.com/php/tamis/internal/modelproxy"
+	"github.com/php/tamis/internal/budget"
 	"github.com/php/tamis/internal/usage"
 )
 
@@ -119,7 +121,7 @@ func New(name, model, apiKey, image string) (*Reader, error) {
 		image = Images[b.harness]
 	}
 
-	models, err := modelproxy.New(b.provider, apiKey, model)
+	models, err := modelproxy.New(b.provider, apiKey, model, modelproxy.Options{Charge: budget.Take, Log: slog.Default()})
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +133,7 @@ func New(name, model, apiKey, image string) (*Reader, error) {
 	var ca []byte
 	if b.accessToken {
 		var cert tls.Certificate
-		if ca, cert, err = newCertificate(egress.HostGatewayAlias); err != nil {
+		if ca, cert, err = modelproxy.NewCertificate(egress.HostGatewayAlias); err != nil {
 			ln.Close()
 			return nil, err
 		}
@@ -181,21 +183,29 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 	}
 
 	token, revoke := r.models.Issue(ctx)
-	defer func() { usage.Add(ctx, revoke()) }()
+	defer func() {
+		spent := revoke()
+		usage.Add(ctx, usage.Usage{Requests: int64(spent.Requests), InputTokens: int64(spent.InputTokens), OutputTokens: int64(spent.OutputTokens)})
+	}()
 	hosts := allow
 	if req.Offline {
 		hosts = nil
 	}
-	run, err := startIsolatedRun(ctx, r.runtime, r.image, r.modelPort, r.backend.accessToken, hosts)
+	origin := "http://" + egress.HostGatewayAlias + ":" + r.modelPort
+	var env []string
+	if r.backend.accessToken {
+		origin = "https://" + egress.HostGatewayAlias + ":" + r.modelPort
+		env = []string{"CODEX_CA_CERTIFICATE=" + container.StateMount + "/" + caFile, "CODEX_AUTHAPI_BASE_URL=" + origin + modelproxy.PathPrefix + "/auth"}
+	}
+	if err := r.writeConfig(state, origin); err != nil {
+		return nil, err
+	}
+	a := &agent{Harness: r.harness}
+	scope, err := r.runner(state, source, token, hosts, env).Open(ctx, a)
 	if err != nil {
 		return nil, err
 	}
-	defer run.Close()
-	origin := "http://" + egress.HostGatewayAlias + ":" + r.modelPort
-	if r.backend.accessToken {
-		origin = "https://" + egress.HostGatewayAlias + ":" + r.modelPort
-		run.env = []string{"CODEX_CA_CERTIFICATE=" + container.StateMount + "/" + caFile, "CODEX_AUTHAPI_BASE_URL=" + origin + modelproxy.PathPrefix + "/auth"}
-	}
+	defer scope.Close(nil)
 	job := harness.Job{
 		Workspace:    workspace,
 		SrcDir:       srcDir,
@@ -206,14 +216,14 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		OutputFile:   outputFile,
 		BaseURL:      origin + r.backend.basePath,
 	}
-	if err := r.writeConfig(state, origin); err != nil {
-		return nil, err
-	}
 
 	for attempt := 0; attempt < 2; attempt++ {
-		// Agent output is discarded: it holds the report and the agent's reasoning about it.
-		err := run.Run(ctx, r.harness, job, workspace, source, state, r.backend.keyEnv, token)
+		a.failures = boundedWriter{}
+		err := scope.Run(ctx, job, nil)
 		if err != nil {
+			if failures := strings.TrimSpace(a.failures.String()); failures != "" {
+				err = fmt.Errorf("%w: %s", err, failures)
+			}
 			return salvage(filepath.Join(workspace, outputFile), req.Validate, err)
 		}
 
@@ -289,7 +299,7 @@ func (r *Reader) writeConfig(state, origin string) error {
 		}
 	}
 	// The ChatGPT features are off: they would call routes the model proxy refuses.
-	config := fmt.Sprintf("model_provider = \"tamis\"\nmodel_reasoning_effort = \"medium\"\ndaybreak = %t\nweb_search = \"disabled\"\nchatgpt_base_url = %q\n\n[analytics]\nenabled = false\n\n[features]\napps = false\nplugins = false\nremote_plugin = false\nplugin_sharing = false\ngoals = false\nimage_generation = false\nskill_mcp_dependency_install = false\n\n[model_providers.tamis]\nname = \"Tamis\"\nbase_url = %q\n%s\nwire_api = \"responses\"\nsupports_websockets = false\nsupports_standalone_web_search = false\nrequest_max_retries = 0\nstream_max_retries = 0\n", r.Daybreak, origin+modelproxy.PathPrefix+"/backend-api", origin+r.backend.basePath, auth)
+	config := fmt.Sprintf("model_provider = \"tamis\"\nmodel_reasoning_effort = \"medium\"\ndaybreak = %t\nweb_search = \"disabled\"\nchatgpt_base_url = %q\n\n[features]\nremote_plugin = false\nplugin_sharing = false\ngoals = false\nimage_generation = false\nskill_mcp_dependency_install = false\n\n[model_providers.tamis]\nname = \"Tamis\"\nbase_url = %q\n%s\nwire_api = \"responses\"\nsupports_websockets = false\nsupports_standalone_web_search = false\nrequest_max_retries = 0\nstream_max_retries = 0\n", r.Daybreak, origin+modelproxy.PathPrefix+"/backend-api", origin+r.backend.basePath, auth)
 	return os.WriteFile(filepath.Join(state, "config.toml"), []byte(config), 0o600)
 }
 

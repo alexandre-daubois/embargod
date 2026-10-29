@@ -14,19 +14,22 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alpha-omega-security/harness"
 	"github.com/alpha-omega-security/harness/container"
 	"github.com/alpha-omega-security/harness/egress"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIsolatedNetworkReachesTheModelButNotOtherHostServices(t *testing.T) {
-	require.NotEmpty(t, os.Getenv("TAMIS_TEST_IMAGE"), "TAMIS_TEST_IMAGE is required")
+	image := os.Getenv("TAMIS_TEST_IMAGE")
+	require.NotEmpty(t, image, "TAMIS_TEST_IMAGE is required")
 	runtime, ok := container.DetectRuntime("")
 	require.True(t, ok, "Docker is unavailable")
 	model, modelPort := testServer(t, "model")
@@ -34,22 +37,28 @@ func TestIsolatedNetworkReachesTheModelButNotOtherHostServices(t *testing.T) {
 	t.Cleanup(func() { _ = model.Close() })
 	t.Cleanup(func() { _ = secret.Close() })
 
-	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	run, err := startIsolatedRun(ctx, runtime, os.Getenv("TAMIS_TEST_IMAGE"), modelPort, false, allow)
+	hostIP := container.ResolveHostGatewayIPv4(ctx, runtime, image, "")
+	require.NotEmpty(t, hostIP, "resolving the real host gateway")
+	h, err := harness.ByName("claude")
 	require.NoError(t, err)
-	t.Cleanup(run.Close)
-	out, err := exec.CommandContext(ctx, runtime.Bin, "exec", "--", run.proxy, "getent", "hosts", egress.HostGatewayAlias).Output()
-	require.NoError(t, err, "resolving the real host gateway")
-	require.NotEmpty(t, strings.Fields(string(out)), "resolving the real host gateway")
-	hostIP := strings.Fields(string(out))[0]
-	out, err = exec.CommandContext(ctx, runtime.Bin, "network", "inspect", "--format", `{{.Internal}} {{.EnableIPv6}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv6"}}`, "--", run.network).Output()
+	reader := &Reader{backend: backends["claude"], harness: h, runtime: runtime, image: image, modelPort: modelPort}
+	env := []string{"MODEL_URL=http://" + egress.HostGatewayAlias + ":" + modelPort, "SECRET_URL=http://" + net.JoinHostPort(hostIP, secretPort), "PROXIED_SECRET_URL=http://" + egress.HostGatewayAlias + ":" + secretPort}
+	scope, err := reader.runner(t.TempDir(), t.TempDir(), "proxy-token", allow, env).Open(ctx, &agent{Harness: h})
+	require.NoError(t, err)
+	t.Cleanup(func() { scope.Close(nil) })
+
+	out, err := exec.CommandContext(ctx, runtime.Bin, "network", "ls", "--filter", "name=harness-hardened-"+strconv.Itoa(os.Getpid())+"-", "--format", "{{.Name}}").Output()
+	require.NoError(t, err)
+	networks := strings.Fields(string(out))
+	require.Len(t, networks, 1)
+	out, err = exec.CommandContext(ctx, runtime.Bin, "network", "inspect", "--format", `{{.Internal}} {{.EnableIPv6}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv6"}}`, "--", networks[0]).Output()
 	require.NoError(t, err)
 	require.Equal(t, "true false isolated isolated", strings.TrimSpace(string(out)))
-	proxyURL := egress.EndpointURL(run.token, net.JoinHostPort(run.proxyIP, proxyPort))
-	cmd := exec.CommandContext(ctx, runtime.Bin, "run", "--rm", "--network", run.network, "--add-host", egress.HostGatewayAlias+":"+run.proxyIP, "-e", "http_proxy", "-e", "NO_PROXY", "-e", "MODEL_URL", "-e", "SECRET_URL", "-e", "PROXIED_SECRET_URL", "--", os.Getenv("TAMIS_TEST_IMAGE"), "sh", "-c", `test "$(curl -fsS --connect-timeout 5 "$MODEL_URL")" = model && ! curl -fsS --noproxy '*' --connect-timeout 2 "$SECRET_URL" && ! curl -fsS --connect-timeout 2 "$PROXIED_SECRET_URL" && ! curl -fsS --noproxy '*' --connect-timeout 2 'https://1.1.1.1' && ! curl -gfsS --noproxy '*' --connect-timeout 2 'https://[2606:4700:4700::1111]' && ! getent hosts example.com`)
-	cmd.Env = append(os.Environ(), "http_proxy="+proxyURL, "NO_PROXY=", "MODEL_URL=http://"+egress.HostGatewayAlias+":"+modelPort, "SECRET_URL=http://"+net.JoinHostPort(hostIP, secretPort), "PROXIED_SECRET_URL=http://"+egress.HostGatewayAlias+":"+secretPort)
-	out, err = cmd.CombinedOutput()
+	workspace := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(workspace, srcDir), 0o700))
+	out, err = scope.RunCommand(ctx, harness.Job{Workspace: workspace, OutputFile: outputFile}, container.Command{Args: []string{"sh", "-c", `export http_proxy="$HTTP_PROXY" && test "$(curl -fsS --connect-timeout 5 "$MODEL_URL")" = model && ! curl -fsS --noproxy '*' --connect-timeout 2 "$SECRET_URL" && ! curl -fsS --connect-timeout 2 "$PROXIED_SECRET_URL" && ! curl -fsS --noproxy '*' --connect-timeout 2 'https://1.1.1.1' && ! curl -gfsS --noproxy '*' --connect-timeout 2 'https://[2606:4700:4700::1111]' && ! getent hosts example.com`}})
 	require.NoError(t, err, "isolation probe: %s", strings.TrimSpace(string(out)))
 }
 

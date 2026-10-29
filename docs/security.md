@@ -37,7 +37,7 @@ The agent runs through [harness](https://github.com/alpha-omega-security/harness
 - a throwaway container per advisory, with a read-only root filesystem, all capabilities dropped and no new privileges,
 - one single-branch clone of the analysed branch per execution, mounted read-only into each agent run, with no untracked files and an empty `.git/config`, while only tamis reads the other branches, checked out as worktrees,
 - an internal bridge network with both gateway modes set to `isolated` and IPv6 disabled, whose only peer is an authenticated egress proxy that allows the model proxy and `api.github.com`,
-- a read-only workspace except for `report.json`, with memory, CPU, process, file-size, output-capture and Docker log limits,
+- a read-only workspace except for `report.json`, with memory, CPU, process and file-size limits,
 - an image with only the agent CLI, git, curl, ripgrep and `harness-proxy`, each download checked against a pinned checksum,
 - that image pinned by digest in each release, and checked by the action against its build attestation before use, like the tamis binary of a release.
 
@@ -68,6 +68,7 @@ tamis turns off the Codex ChatGPT features that call other routes: plugins, apps
 - Request and byte limits bound one run, not the cost of an endless series of runs. Enforce a provider spending ceiling and a workflow timeout as the [setup guide](setup.md#2-create-a-private-repository) describes.
 - tamis sends the report to the model provider. Check its data retention terms against your disclosure policy.
 - An internal network without a host gateway needs Docker Engine 28 or newer.
+- The agent CLI state is a writable host directory, removed after each advisory. A run can rewrite its own configuration for the correction round and fill the runner disk, though not leave the network or the model proxy.
 - The advisory comments API is in public preview and may change.
 
 CI builds both agent images and runs the Docker isolation tests on `ubuntu-latest`. They test the model path, direct and proxied host access, DNS, and IPv4 and IPv6 egress, without real provider credentials. Treat both `isolation` jobs as required checks before releasing or updating the deployment SHA.
