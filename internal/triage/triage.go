@@ -73,6 +73,9 @@ type Config struct {
 	References []string
 	// Project is the private project board kept in sync with the advisories, as "org/number", none when empty.
 	Project string
+	// NoComment leaves the advisories without comment and puts every triage on the board only, which then records
+	// what is done and the failed attempts.
+	NoComment bool
 	// IssuesRepository makes the new board items issues of that private repository, drafts when empty. Issues
 	// writes them with a token that only reaches that repository.
 	IssuesRepository string
@@ -114,6 +117,9 @@ func (r retrying) Read(ctx context.Context, req sandbox.Request) (json.RawMessag
 func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, log *slog.Logger) error {
 	if cfg.OutputDir == "" || len(cfg.References) == 0 {
 		return errors.New("a private output directory and source references are required")
+	}
+	if cfg.NoComment && cfg.Project == "" {
+		return errors.New("a run without comments needs a project board to record its triages")
 	}
 	ctx = budget.WithLimit(ctx, 800, 256<<20)
 	login := cfg.BotLogin
@@ -170,6 +176,17 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		// An advisory triaged before the board existed is triaged again for it, without a new comment. GitHub
 		// refuses to edit an advisory comment, even its author's, so the item itself records that it was done.
 		backfill := done && b != nil && a.State == "triage" && !b.Has(a.GHSAID)
+		if cfg.NoComment {
+			if b == nil {
+				cancel()
+				log.Info("skipped, the board this run records its triages on is left out")
+				skipped++
+				continue
+			}
+			priority, n := b.Status(a.GHSAID)
+			done, failures = priority != "" && priority != board.AnalysisRetrying, n
+			backfill = !done
+		}
 		if done && !backfill || failures >= maxAttempts {
 			cancel()
 			log.Info("skipped, already triaged or out of attempts")
@@ -196,7 +213,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		// board is not retried, so a report that never completes costs one run only.
 		if backfill {
 			note := fmt.Sprintf("The automated analysis started on %s UTC and has not finished. If this stays after the next run, that run stopped during the analysis.", time.Now().UTC().Format("2006-01-02 at 15:04"))
-			if err := b.Put(advisoryCtx, a, board.AnalysisPending, nil, note); err != nil {
+			if err := b.PutStatus(advisoryCtx, a, board.AnalysisPending, note, failures); err != nil {
 				cancel()
 				log.Error("the project board could not be updated", "reason", describe(err))
 				failed++
@@ -207,13 +224,14 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		log.Info("triaging", "attempt", failures+1)
 		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
 
-		if published, err := triageRevisions(advisoryCtx, cfg, gh, retrying{reader, log}, eng, b, a, all, comments, backfill, login, revision, failures+1 >= maxAttempts || backfill, sourceDir, log); err != nil {
+		if published, err := triageRevisions(advisoryCtx, cfg, gh, retrying{reader, log}, eng, b, a, all, comments, backfill, login, revision, failures+1 >= maxAttempts || backfill && !cfg.NoComment, sourceDir, log); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
 			if keepAgentError(cfg, a.GHSAID, revision, err) != nil {
 				log.Error("the agent error could not be kept in the private reports")
 			}
-			retry := failures+1 < maxAttempts && !backfill
+			// A run without comments retries from the board, a backfill next to a comment gets one attempt.
+			retry := failures+1 < maxAttempts && (!backfill || cfg.NoComment)
 			if !published && !backfill {
 				_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed(retry))
 			}
@@ -222,7 +240,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 				if retry {
 					priority, note = board.AnalysisRetrying, fmt.Sprintf("The automated analysis failed (%s) on attempt %d of %d. The next run retries it.", describe(err), failures+1, maxAttempts)
 				}
-				if err := b.Put(ctx, a, priority, nil, note); err != nil {
+				if err := b.PutStatus(ctx, a, priority, note, failures+1); err != nil {
 					log.Error("the project board could not be updated", "reason", describe(err))
 				}
 			}

@@ -15,6 +15,7 @@
 | `engine` | `claude` | `claude` for Claude Code and the Anthropic API, `openai` for Codex and the OpenAI API. |
 | `model` | `claude-opus-5-5` or `gpt-5.5` | Model of the reader, the duplicate search and the exact confirmation. `gpt-6.1-sol` with a Codex access token. |
 | `daybreak` | `false` | Turns on OpenAI's Daybreak cyber access program in Codex. Needs `engine: openai` and an API key whose organisation OpenAI approved for it. |
+| `comment` | `false` | Post the triage as a comment on the advisory. Off, every triage only reaches `project`, which must then be set, and the board records the failed attempts in `Attempts`. |
 | `project` | | Private organisation project kept in sync with the advisories, as `org/number`. See [the project board](setup.md#5-project-board). |
 | `issues-repository` | | Private repository the board items are created in as issues, so duplicates become sub-issues of their original report. Drafts when unset. See [the project board](setup.md#5-project-board). |
 | `issues-token` | | Installation token for `issues-repository` only, with the "Issues" and organisation "Projects" permissions in read and write. Required with `issues-repository`. |
@@ -22,7 +23,7 @@
 
 The action refuses to run from a public workflow repository or from a `uses:` that is not a full commit SHA. Update that SHA through a reviewed pull request.
 
-Outside GitHub Actions, tamis reads the same settings from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK`, `RUNNER_IMAGE`, `REFERENCES`, `PROJECT`, `ISSUES_REPOSITORY` and `ISSUES_TOKEN`. `OUTPUT_DIR` must name a private directory for the reports. The action creates it in the runner's temporary storage and uploads it to the workflow repository with a seven-day retention.
+Outside GitHub Actions, tamis reads the same settings from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK`, `RUNNER_IMAGE`, `REFERENCES`, `PROJECT`, `ISSUES_REPOSITORY`, `ISSUES_TOKEN` and `COMMENT`. `OUTPUT_DIR` must name a private directory for the reports. The action creates it in the runner's temporary storage and uploads it to the workflow repository with a seven-day retention.
 
 ## Source branches
 

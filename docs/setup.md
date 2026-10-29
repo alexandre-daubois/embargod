@@ -49,7 +49,7 @@ Keep `persist-credentials: false` on the checkout so no token lands in `.git/con
 
 ## 4. First run
 
-Trigger the workflow by hand with the `advisory` input set to a test GHSA. tamis triages that advisory whatever its state and date, and posts the comment on it.
+Trigger the workflow by hand with the `advisory` input set to a test GHSA. tamis triages that advisory whatever its state and date, and puts it on the board, or posts the comment on it with `comment: true`.
 
 Download the private `tamis-reports` artifact and check that the comment names embargoed advisories only as exact duplicates. Then let the schedule take over. Artifact access follows the permissions of the private repository, so grant it to the security team only.
 
@@ -72,6 +72,7 @@ tamis can keep a private organisation project in sync with the advisories, one d
 | `Located` | Single select | `Yes`, `No` |
 | `Component` | Text | |
 | `Original report` | Text | |
+| `Attempts` | Number | |
 
 Then set `project` to `your-org/NUMBER`. When the project is public, or a field or an option is missing or renamed, tamis leaves the board out of the run, still triages and comments, and fails the run so the error shows.
 
@@ -115,3 +116,5 @@ tamis writes the issues and adds them to the project with `issues-token`, a seco
 ```
 
 Then pass `issues-token: ${{ steps.issues.outputs.token }}`. The App needs the "Issues" permission in read and write and an installation on the issues repository.
+
+With `comment` left at `false`, tamis posts nothing on the advisories. The item of an advisory says it was triaged, `Attempts` counts its failed attempts in place of the failure comments, and deleting an item triages its advisory again on the next run.

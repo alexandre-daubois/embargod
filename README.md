@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/php/tamis/actions/workflows/ci.yml/badge.svg)](https://github.com/php/tamis/actions/workflows/ci.yml)
 
-tamis does a first-pass triage of private vulnerability reports on GitHub. When a new security advisory arrives, an LLM agent investigates it against the repository and tamis posts the findings as a comment on the advisory.
+tamis does a first-pass triage of private vulnerability reports on GitHub. When a new security advisory arrives, an LLM agent investigates it against the repository and tamis puts the findings on a private project board, or posts them as a comment on the advisory with `comment: true`.
 
 For each report, tamis:
 
@@ -36,7 +36,7 @@ The agent runs in an isolated container driven by [harness](https://github.com/a
 
 ## Before installing
 
-GitHub cannot post confidential advisory comments yet, so the reporter reads the comment. tamis also sends the report to the model provider you choose. Check that your disclosure policy allows both.
+GitHub cannot post confidential advisory comments yet, so with `comment: true` the reporter reads the comment. tamis also sends the report to the model provider you choose. Check that your disclosure policy allows both.
 
 ## Quick start
 
@@ -91,6 +91,8 @@ jobs:
           bot-login: your-app-slug[bot]
           # List every branch your project supports. Each ref must exist in the checkout.
           references: master origin/release-branch
+          # Without a project board, post the triage on the advisory instead.
+          comment: true
 ```
 
 Pin the commit of a [release](https://github.com/php/tamis/releases) tag, since the action then runs the attested binary of that release instead of building tamis from source. Set `since` to the installation date so tamis leaves existing advisories alone. Keep the workflow repository private, since the action uploads the reports there as artifacts kept for seven days. The [setup guide](docs/setup.md) covers source branches and provider spending limits.

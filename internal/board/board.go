@@ -40,6 +40,7 @@ const (
 	fieldLocated     = "Located"
 	fieldComponent   = "Component"
 	fieldGroup       = "Original report"
+	fieldAttempts    = "Attempts"
 )
 
 // layout lists the fields the project must have, created by hand as docs/setup.md describes.
@@ -58,6 +59,7 @@ var layout = []struct {
 	{fieldLocated, "single_select", []string{"Yes", "No"}},
 	{fieldComponent, "text", nil},
 	{fieldGroup, "text", nil},
+	{fieldAttempts, "number", nil},
 }
 
 type GitHub interface {
@@ -115,7 +117,7 @@ type item struct {
 	id                              int64
 	ghsa, draft, duplicateOf, state string
 	priority, group                 string
-	duplicates                      int
+	duplicates, attempts            int
 	// issue and issueID name the issue of an item that is one, zero for a draft.
 	issue   int
 	issueID int64
@@ -200,7 +202,7 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 		}
 	}
 
-	items, err := gh.ListProjectItems(ctx, org, number, []int64{b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldDuplicates], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldSeverity], b.ids[fieldExcluded], b.ids[fieldLocated], b.ids[fieldGroup]})
+	items, err := gh.ListProjectItems(ctx, org, number, []int64{b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldDuplicates], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldSeverity], b.ids[fieldExcluded], b.ids[fieldLocated], b.ids[fieldGroup], b.ids[fieldAttempts]})
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +225,7 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 			switch f.ID {
 			case b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldSeverity], b.ids[fieldExcluded], b.ids[fieldLocated], b.ids[fieldGroup]:
 				err = json.Unmarshal(f.Value, &text)
-			case b.ids[fieldDuplicates]:
+			case b.ids[fieldDuplicates], b.ids[fieldAttempts]:
 				err = json.Unmarshal(f.Value, &count)
 			}
 			// An unread GHSA would make the item look added by hand, and its advisory triaged again on every run.
@@ -239,6 +241,8 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 				entry.state = text.Name.Raw
 			case b.ids[fieldDuplicates]:
 				entry.duplicates = int(count)
+			case b.ids[fieldAttempts]:
+				entry.attempts = int(count)
 			case b.ids[fieldPriority]:
 				entry.priority = text.Name.Raw
 			case b.ids[fieldSeverity]:
@@ -326,6 +330,25 @@ func (t Triage) Priority() string {
 // fields of a triage. The draft body holds the advisory link, then comment when there is one. The title is
 // only set on creation.
 func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *Triage, comment string) error {
+	return b.put(ctx, a, priority, t, comment, 0)
+}
+
+// PutStatus sets a status without a triage, with the failed attempts so far, which a run that posts no comment
+// cannot count from failure comments.
+func (b *Board) PutStatus(ctx context.Context, a github.Advisory, priority, note string, attempts int) error {
+	return b.put(ctx, a, priority, nil, note, attempts)
+}
+
+// Status returns the priority and failed attempts of the item of ghsa, empty and zero without one.
+func (b *Board) Status(ghsa string) (priority string, attempts int) {
+	if it := b.items[strings.ToLower(ghsa)]; it != nil {
+		return it.priority, it.attempts
+	}
+
+	return "", 0
+}
+
+func (b *Board) put(ctx context.Context, a github.Advisory, priority string, t *Triage, comment string, attempts int) error {
 	key := strings.ToLower(a.GHSAID)
 	body := a.HTMLURL
 	if comment != "" {
@@ -398,13 +421,23 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 		b.option(fieldExcluded, excluded),
 		b.option(fieldLocated, located),
 		{ID: b.ids[fieldComponent], Value: text(kept.Component)},
+		{ID: b.ids[fieldAttempts], Value: numberValue(attempts)},
 	}
 	if err := b.gh.UpdateProjectItem(ctx, b.org, b.number, it.id, values); err != nil {
 		return err
 	}
-	it.duplicateOf, it.state, it.priority, it.triage = kept.DuplicateOf, a.State, priority, t
+	it.duplicateOf, it.state, it.priority, it.triage, it.attempts = kept.DuplicateOf, a.State, priority, t, attempts
 
 	return nil
+}
+
+// numberValue sets a number field, or clears it when n is zero.
+func numberValue(n int) any {
+	if n == 0 {
+		return nil
+	}
+
+	return n
 }
 
 // text sets a text field, or clears it when s is empty.

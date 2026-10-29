@@ -58,6 +58,7 @@ func New() *Project {
 		{"Located", "single_select", []string{"Yes", "No"}},
 		{"Component", "text", nil},
 		{"Original report", "text", nil},
+		{"Attempts", "number", nil},
 	} {
 		field := github.ProjectField{ID: int64(100 + i), Name: f.name, DataType: f.dataType}
 		for _, o := range f.options {

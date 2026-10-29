@@ -1496,3 +1496,74 @@ func TestRunMarksABoardTriageFailedWhenItMissesTheBoard(t *testing.T) {
 	require.Empty(t, gh.posted, "a board triage posted a comment")
 	require.Contains(t, gh.Bodies[gh.Find("GHSA-done")], "will not be retried", "the item kept the pending status of an analysis that ended")
 }
+
+func TestRunWithoutCommentsPutsEveryTriageOnTheBoardOnly(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	cfg := Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}
+
+	require.NoError(t, run(t, cfg, gh, eng))
+
+	require.Empty(t, gh.posted, "a run without comments posted one")
+	id := gh.Find("GHSA-new")
+	require.Equal(t, "Duplicate", gh.Value(id, "Priority"))
+	require.Contains(t, gh.Bodies[id], report.Marker, "the board misses the triage")
+
+	eng.calls = nil
+	require.NoError(t, run(t, cfg, gh, eng))
+	require.Empty(t, eng.calls, "an advisory already on the board was triaged again")
+}
+
+func TestRunWithoutCommentsCountsTheFailedAttemptsOnTheBoard(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "Overflow in foo"}
+	cfg := Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		require.Error(t, run(t, cfg, gh, eng))
+		id := gh.Find("GHSA-new")
+		require.Equal(t, fmt.Sprint(attempt), gh.Value(id, "Attempts"))
+		want := "Analysis failed, retrying"
+		if attempt == 3 {
+			want = "Analysis failed"
+		}
+		require.Equal(t, want, gh.Value(id, "Priority"), "attempt %d", attempt)
+	}
+	require.Empty(t, gh.posted, "a failure was commented")
+
+	eng.calls = nil
+	require.NoError(t, run(t, cfg, gh, eng))
+	require.Empty(t, eng.calls, "an advisory out of attempts was triaged again")
+}
+
+func TestRunWithoutCommentsClearsTheAttemptsOfASuccessfulRetry(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "Overflow in foo"}
+	cfg := Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}
+	require.Error(t, run(t, cfg, gh, eng))
+
+	eng.fail = ""
+	require.NoError(t, run(t, cfg, gh, eng))
+
+	id := gh.Find("GHSA-new")
+	require.Equal(t, "Duplicate", gh.Value(id, "Priority"))
+	require.Empty(t, gh.Value(id, "Attempts"), "a triaged advisory kept its failed attempts")
+}
+
+func TestRunWithoutCommentsTriagesAnAdvisoryCommentedBefore(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16", NoComment: true}, gh, eng))
+
+	require.NotEmpty(t, eng.role(""))
+	require.Empty(t, gh.posted)
+	require.NotZero(t, gh.Find("GHSA-done"))
+}
+
+func TestRunWithoutCommentsNeedsItsBoard(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", NoComment: true}, gh, eng), "a run without comments needs a project board")
+
+	gh.Fields = gh.Fields[:2]
+	require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}, gh, eng), "opening the project board")
+	require.Empty(t, eng.calls, "a run without its board triaged an advisory nowhere to be recorded")
+	require.Empty(t, gh.posted)
+}
