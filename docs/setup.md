@@ -88,4 +88,28 @@ At the end of each run, tamis copies the state of every advisory to `State`, rec
 
 An advisory in the `triage` state that tamis commented but that has no item, for example one triaged before the board existed, is triaged again without a new comment. When that triage fails, the item gets `Analysis failed` and the advisory is not retried. Deleting an item by hand triggers that triage again on the next run.
 
-With `issues-repository` set, for example to `your-org/your-project-security`, new items are issues of that repository instead of drafts, and each duplicate becomes a sub-issue of its `Original report`. tamis closes an issue when its advisory is published, closed or withdrawn. Everyone with access to that repository reads the reports, and each new issue notifies its watchers. tamis refuses a public repository and the repository of the advisories, and then leaves the board out of the run. The App needs the "Issues" permission in read and write and an installation on that repository, and the workflow must list it in the `repositories` of `create-github-app-token`.
+With `issues-repository` set, for example to `your-org/your-project-security`, new items are issues of that repository instead of drafts, and each duplicate becomes a sub-issue of its `Original report`. tamis closes an issue when its advisory is published, closed or withdrawn. Everyone with access to that repository reads the reports, and each new issue notifies its watchers. tamis refuses a public repository and the repository of the advisories, and then leaves the board out of the run.
+
+tamis writes the issues with `issues-token`, a second installation token that reaches the issues repository only, and refuses it when it also reaches `repository`. Keep the "Issues" permission out of `github-token`, so neither token can open an issue on the project:
+
+```yaml
+- uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+  id: app
+  with:
+    client-id: ${{ vars.TAMIS_CLIENT_ID }}
+    private-key: ${{ secrets.TAMIS_PRIVATE_KEY }}
+    owner: your-org
+    repositories: your-project
+    permission-repository-advisories: write
+    permission-organization-projects: write
+- uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+  id: issues
+  with:
+    client-id: ${{ vars.TAMIS_CLIENT_ID }}
+    private-key: ${{ secrets.TAMIS_PRIVATE_KEY }}
+    owner: your-org
+    repositories: your-project-security
+    permission-issues: write
+```
+
+Then pass `issues-token: ${{ steps.issues.outputs.token }}`. The App needs the "Issues" permission in read and write and an installation on the issues repository.

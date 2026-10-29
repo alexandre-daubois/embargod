@@ -26,7 +26,9 @@ type Project struct {
 	next      int64
 	// Repos says which repositories exist and whether they are private. Issues holds their issues by number,
 	// and issueOf the issue of each item that is one.
-	Repos    map[string]bool
+	Repos map[string]bool
+	// Reached is what the issues token reaches.
+	Reached  []string
 	Issues   map[int]*Issue
 	IssueErr error
 	issueOf  map[int64]int
@@ -39,7 +41,7 @@ type Issue struct {
 }
 
 func New() *Project {
-	p := &Project{Items: map[int64]map[int64]any{}, Titles: map[int64]string{}, Bodies: map[int64]string{}, Repos: map[string]bool{"php/php-src-security": true, "php/php-src": false}, Issues: map[int]*Issue{}, issueOf: map[int64]int{}}
+	p := &Project{Items: map[int64]map[int64]any{}, Titles: map[int64]string{}, Bodies: map[int64]string{}, Repos: map[string]bool{"php/php-src-security": true, "php/php-src": false}, Issues: map[int]*Issue{}, issueOf: map[int64]int{}, Reached: []string{"php/php-src-security"}}
 	for i, f := range []struct {
 		name, dataType string
 		options        []string
@@ -186,6 +188,14 @@ func (p *Project) IssueOf(item int64) *Issue {
 	}
 
 	return nil
+}
+
+func (p *Project) InstallationRepositories(context.Context) ([]string, error) {
+	if p.Reached == nil {
+		return nil, &github.HTTPError{Status: 403}
+	}
+
+	return p.Reached, nil
 }
 
 func (p *Project) GetRepository(_ context.Context, repo string) (github.Repository, error) {

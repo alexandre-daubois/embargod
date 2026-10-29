@@ -33,7 +33,7 @@ func TestOpenRequiresTheDocumentedFields(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			p := boardtest.New()
 			tc.change(p)
-			_, err := Open(t.Context(), p, tc.project, "", "php/php-src")
+			_, err := Open(t.Context(), p, p, tc.project, "", "php/php-src")
 			if tc.err == "" {
 				require.NoError(t, err)
 				return
@@ -88,7 +88,7 @@ func TestTriageOf(t *testing.T) {
 
 func TestPutCreatesOneItemPerAdvisory(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: "GHSA-new", Summary: "Overflow in foo", HTMLURL: "https://x/GHSA-new", State: "triage", CreatedAt: reported}
 
@@ -106,7 +106,7 @@ func TestPutFindsTheItemOfAPreviousRun(t *testing.T) {
 	p := boardtest.New()
 	id := p.Add(map[string]any{"GHSA": "GHSA-new", "Priority": WhenPossible})
 	p.Add(map[string]any{"Priority": WhenPossible})
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "ghsa-NEW", State: "draft"}, LookFirst, &Triage{}, ""))
@@ -119,7 +119,7 @@ func TestPutFindsTheItemOfAPreviousRun(t *testing.T) {
 
 func TestPutReportsAFailedWrite(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 	p.Err = errors.New("HTTP 403")
 
@@ -134,7 +134,7 @@ func TestSyncMirrorsStatesAndDuplicates(t *testing.T) {
 	other := p.Add(map[string]any{"GHSA": "GHSA-other", "State": "triage", "Priority": Duplicate, "Duplicate of": "GHSA-old"})
 	gone := p.Add(map[string]any{"GHSA": "GHSA-gone", "State": "triage", "Priority": WhenPossible})
 	manual := p.Add(map[string]any{"Priority": WhenPossible})
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-old", State: "published"}, {GHSAID: "GHSA-dup", State: "triage"}, {GHSAID: "GHSA-other", State: "closed"}}))
@@ -153,7 +153,7 @@ func TestSyncMirrorsStatesAndDuplicates(t *testing.T) {
 func TestSyncReportsFailedWrites(t *testing.T) {
 	p := boardtest.New()
 	p.Add(map[string]any{"GHSA": "GHSA-old", "State": "triage"})
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 	p.Err = errors.New("HTTP 403")
 
@@ -172,7 +172,7 @@ func values(p *boardtest.Project, id int64) map[string]string {
 func TestHas(t *testing.T) {
 	p := boardtest.New()
 	p.Add(map[string]any{"GHSA": "GHSA-old"})
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
 	require.True(t, b.Has("ghsa-OLD"))
@@ -183,14 +183,14 @@ func TestOpenReportsAFailedRead(t *testing.T) {
 	p := boardtest.New()
 	p.ListErr = errors.New("HTTP 403")
 
-	_, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	_, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 
 	require.ErrorIs(t, err, p.ListErr)
 }
 
 func TestPutReusesTheDraftWhoseFieldsFailed(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}
 	p.UpdateErr = errors.New("HTTP 502")
@@ -207,7 +207,7 @@ func TestSyncReadsBackTheCountsOfAPreviousRun(t *testing.T) {
 	p.Add(map[string]any{"GHSA": "GHSA-old", "State": "triage", "Duplicates": 2, "Original report": "GHSA-old"})
 	p.Add(map[string]any{"GHSA": "GHSA-a", "State": "triage", "Duplicate of": "GHSA-old", "Original report": "GHSA-old"})
 	p.Add(map[string]any{"GHSA": "GHSA-b", "State": "triage", "Duplicate of": "ghsa-OLD", "Original report": "ghsa-OLD"})
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-old", State: "triage"}, {GHSAID: "GHSA-a", State: "triage"}, {GHSAID: "GHSA-b", State: "triage"}}))
@@ -218,7 +218,7 @@ func TestSyncReadsBackTheCountsOfAPreviousRun(t *testing.T) {
 func TestSyncClearsTheCountOfAReportWithoutDuplicates(t *testing.T) {
 	p := boardtest.New()
 	id := p.Add(map[string]any{"GHSA": "GHSA-old", "State": "triage", "Duplicates": 2})
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-old", State: "triage"}}))
@@ -228,7 +228,7 @@ func TestSyncClearsTheCountOfAReportWithoutDuplicates(t *testing.T) {
 
 func TestPutKeepsTheDraftBodyWithoutAComment(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: "GHSA-new", HTMLURL: "https://x/GHSA-new"}
 
@@ -245,7 +245,7 @@ func TestPutUpdatesTheDraftOfAPreviousRun(t *testing.T) {
 	p := boardtest.New()
 	id := p.Add(map[string]any{"GHSA": "GHSA-new"})
 	p.Bodies[id] = "https://x/GHSA-new"
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", HTMLURL: "https://x/GHSA-new"}, LookFirst, &Triage{Severity: "high"}, "the comment"))
@@ -256,7 +256,7 @@ func TestPutUpdatesTheDraftOfAPreviousRun(t *testing.T) {
 func TestPutReportsAFailedDraftUpdate(t *testing.T) {
 	p := boardtest.New()
 	p.Add(map[string]any{"GHSA": "GHSA-new"})
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 	p.Err = errors.New("github: GraphQL request failed")
 
@@ -265,7 +265,7 @@ func TestPutReportsAFailedDraftUpdate(t *testing.T) {
 
 func TestPutClearsTheTriageOfAStatus(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: "GHSA-new", State: "triage"}
 
@@ -285,7 +285,7 @@ func TestSyncRanksEveryTriageAgain(t *testing.T) {
 	excluded := p.Add(map[string]any{"GHSA": "GHSA-c", "State": "triage", "Priority": LookFirst, "Severity": "High", "Policy exclusion": "Yes", "Located": "Yes"})
 	status := p.Add(map[string]any{"GHSA": "GHSA-d", "State": "triage", "Priority": AnalysisFailed})
 	older := p.Add(map[string]any{"GHSA": "GHSA-e", "State": "triage", "Priority": LookFirst, "Severity": "Low"})
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Sync(t.Context(), nil))
@@ -324,7 +324,7 @@ func TestSyncGroupsEveryReportUnderItsOldest(t *testing.T) {
 	alone := p.Add(map[string]any{"GHSA": "GHSA-alone", "State": "triage", "Original report": "GHSA-stale"})
 	loopA := p.Add(map[string]any{"GHSA": "GHSA-loop-a", "State": "triage", "Duplicate of": "GHSA-loop-b"})
 	p.Add(map[string]any{"GHSA": "GHSA-loop-b", "State": "triage", "Duplicate of": "GHSA-loop-a"})
-	b, err := Open(t.Context(), p, "php/16", "", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Sync(t.Context(), nil))
@@ -350,8 +350,9 @@ func TestOpenRefusesAnIssuesRepositoryThatCouldPublishReports(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			p := boardtest.New()
 			p.Repos["php/web-php"] = false
+			p.Reached = append(p.Reached, tc.issues)
 
-			_, err := Open(t.Context(), p, "php/16", tc.issues, "php/php-src")
+			_, err := Open(t.Context(), p, p, "php/16", tc.issues, "php/php-src")
 
 			if tc.err == "" {
 				require.NoError(t, err)
@@ -365,7 +366,7 @@ func TestOpenRefusesAnIssuesRepositoryThatCouldPublishReports(t *testing.T) {
 
 func TestPutCreatesAPrivateIssue(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: "GHSA-new", Summary: "Overflow found by @someone", HTMLURL: "https://x/GHSA-new", State: "triage"}
 
@@ -386,7 +387,7 @@ func TestPutCreatesAPrivateIssue(t *testing.T) {
 
 func TestPutClosesTheIssueOfASettledAdvisory(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "published"}, LookFirst, &Triage{}, ""))
@@ -398,7 +399,7 @@ func TestPutClosesTheIssueOfASettledAdvisory(t *testing.T) {
 
 func TestPutReportsAFailedIssue(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
 	require.NoError(t, err)
 	p.IssueErr = errors.New("HTTP 403")
 
@@ -409,7 +410,7 @@ func TestPutReportsAFailedIssue(t *testing.T) {
 func TestPutKeepsTheDraftsOfAPreviousRun(t *testing.T) {
 	p := boardtest.New()
 	id := p.Add(map[string]any{"GHSA": "GHSA-old"})
-	b, err := Open(t.Context(), p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-old", HTMLURL: "https://x/GHSA-old", State: "triage"}, LookFirst, &Triage{}, "the comment"))
@@ -421,7 +422,7 @@ func TestPutKeepsTheDraftsOfAPreviousRun(t *testing.T) {
 
 func TestSyncMirrorsTheAdvisoryStateOnItsIssue(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
 	require.NoError(t, err)
 	for _, g := range []string{"GHSA-a", "GHSA-b", "GHSA-c"} {
 		require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: g, Summary: g, State: "triage"}, LookFirst, &Triage{}, ""))
@@ -441,7 +442,7 @@ func TestSyncMirrorsTheAdvisoryStateOnItsIssue(t *testing.T) {
 
 func TestSyncNestsEveryDuplicateUnderItsOriginal(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
 	require.NoError(t, err)
 	put := func(g, dup string) {
 		require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: g, Summary: g, State: "triage"}, Duplicate, &Triage{DuplicateOf: dup}, ""))
@@ -474,7 +475,7 @@ func TestPutAttachesTheIssueOfARunThatFailedToAddIt(t *testing.T) {
 	p.Issues[1] = &boardtest.Issue{ID: 1001, Repo: "php/php-src-security", Title: "s", Body: "https://x/" + ghsa + "\n\n<!-- tamis-issue " + ghsa + " -->", State: "open"}
 	p.Issues[2] = &boardtest.Issue{ID: 1002, Repo: "php/php-src-security", Title: "by hand", Body: "no marker", State: "open"}
 
-	b, err := Open(t.Context(), p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
 	require.NoError(t, err)
 	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{}, "the comment"))
 
@@ -488,7 +489,7 @@ func TestPutAttachesTheIssueOfARunThatFailedToAddIt(t *testing.T) {
 func TestPutMarksEveryIssueWithItsAdvisory(t *testing.T) {
 	p := boardtest.New()
 	const ghsa = "GHSA-dddd-eeee-ffff"
-	b, err := Open(t.Context(), p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}
 
@@ -496,4 +497,37 @@ func TestPutMarksEveryIssueWithItsAdvisory(t *testing.T) {
 	require.Contains(t, p.IssueOf(p.Find(ghsa)).Body, "<!-- tamis-issue "+ghsa+" -->")
 	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{}, "the comment"))
 	require.Contains(t, p.IssueOf(p.Find(ghsa)).Body, "<!-- tamis-issue "+ghsa+" -->", "the update dropped the marker")
+}
+
+func TestOpenRefusesAnIssuesTokenThatReachesTheAdvisories(t *testing.T) {
+	for name, tc := range map[string]struct {
+		reached []string
+		err     string
+	}{
+		"issues repository only":  {[]string{"php/php-src-security"}, ""},
+		"advisory repository too": {[]string{"php/php-src-security", "PHP/php-src"}, "the issues token must not reach the repository of the advisories"},
+		"another repository":      {[]string{"php/web-php"}, "the issues token does not reach the issues repository"},
+		"not an app token":        {nil, "listing the repositories of the issues token: github: HTTP 403"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := boardtest.New()
+			p.Reached = tc.reached
+
+			_, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+
+			if tc.err == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.EqualError(t, err, tc.err)
+		})
+	}
+}
+
+func TestOpenRefusesAnIssuesRepositoryWithoutItsToken(t *testing.T) {
+	p := boardtest.New()
+
+	_, err := Open(t.Context(), p, nil, "php/16", "php/php-src-security", "php/php-src")
+
+	require.EqualError(t, err, "the issues repository needs a token of its own")
 }

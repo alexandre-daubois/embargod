@@ -75,6 +75,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if token == "" {
 		return errors.New("GH_TOKEN is required")
 	}
+	if cfg.IssuesRepository != "" {
+		issues := os.Getenv("ISSUES_TOKEN")
+		if issues == "" || issues == token {
+			return errors.New("ISSUES_REPOSITORY needs an ISSUES_TOKEN of its own, which only reaches that repository")
+		}
+		cfg.Issues = github.New(issues)
+	}
 	eng, agent, model, err := newEngine(os.Getenv("ENGINE"), os.Getenv("MODEL"), os.Getenv("LLM_API_KEY"))
 	if err != nil {
 		return err

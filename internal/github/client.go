@@ -215,6 +215,25 @@ type Repository struct {
 	Private bool `json:"private"`
 }
 
+// InstallationRepositories names the repositories a GitHub App installation token reaches. Other tokens get an
+// error.
+func (c *Client) InstallationRepositories(ctx context.Context) ([]string, error) {
+	var out struct {
+		Repositories []struct {
+			FullName string `json:"full_name"`
+		} `json:"repositories"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, c.BaseURL+"/installation/repositories?per_page=100", nil, &out); err != nil {
+		return nil, err
+	}
+	names := make([]string, len(out.Repositories))
+	for i, r := range out.Repositories {
+		names[i] = r.FullName
+	}
+
+	return names, nil
+}
+
 func (c *Client) GetRepository(ctx context.Context, repo string) (Repository, error) {
 	var r Repository
 	_, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/repos/%s", c.BaseURL, repo), nil, &r)

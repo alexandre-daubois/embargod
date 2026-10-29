@@ -139,6 +139,8 @@ func TestIssues(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 		}
 		switch r.Method + " " + r.URL.Path {
+		case "GET /installation/repositories":
+			fmt.Fprint(w, `{"total_count":1,"repositories":[{"full_name":"php/php-src-security"}]}`)
 		case "GET /repos/php/php-src-security":
 			fmt.Fprint(w, `{"private":true}`)
 		case "GET /repos/php/php-src-security/issues":
@@ -162,6 +164,9 @@ func TestIssues(t *testing.T) {
 		}
 	})
 
+	reached, err := c.InstallationRepositories(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"php/php-src-security"}, reached)
 	repo, err := c.GetRepository(context.Background(), "php/php-src-security")
 	require.NoError(t, err)
 	require.True(t, repo.Private)
@@ -188,6 +193,8 @@ func TestProjectErrors(t *testing.T) {
 	_, err := c.CreateDraft(context.Background(), "php", 16, "t", "b")
 	require.Error(t, c.UpdateDraft(context.Background(), "DI_6", "b"))
 	_, err = c.GetRepository(context.Background(), "php/php-src-security")
+	require.Error(t, err)
+	_, err = c.InstallationRepositories(context.Background())
 	require.Error(t, err)
 	_, err = c.CreateIssue(context.Background(), "php/php-src-security", "t", "b")
 	require.Error(t, err)

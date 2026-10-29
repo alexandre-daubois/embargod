@@ -73,8 +73,10 @@ type Config struct {
 	References []string
 	// Project is the private project board kept in sync with the advisories, as "org/number", none when empty.
 	Project string
-	// IssuesRepository makes the new board items issues of that private repository, drafts when empty.
+	// IssuesRepository makes the new board items issues of that private repository, drafts when empty. Issues
+	// writes them with a token that only reaches that repository.
 	IssuesRepository string
+	Issues           board.Issues
 }
 
 // Reader runs the model that sees the untrusted report, sandbox.Reader in production.
@@ -130,7 +132,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	var b *board.Board
 	var boardErr error
 	if cfg.Project != "" {
-		if b, err = board.Open(ctx, gh, cfg.Project, cfg.IssuesRepository, cfg.Repo); err != nil {
+		if b, err = board.Open(ctx, gh, cfg.Issues, cfg.Project, cfg.IssuesRepository, cfg.Repo); err != nil {
 			boardErr = fmt.Errorf("opening the project board: %w", err)
 			log.Error("the project board is left out of this run", "reason", boardErr.Error())
 		}

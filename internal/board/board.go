@@ -67,11 +67,16 @@ type GitHub interface {
 	CreateDraft(ctx context.Context, org string, number int, title, body string) (github.ProjectItem, error)
 	UpdateDraft(ctx context.Context, draft, body string) error
 	UpdateProjectItem(ctx context.Context, org string, number int, item int64, fields []github.FieldValue) error
+	AddProjectIssue(ctx context.Context, org string, number int, issue int64) (github.ProjectItem, error)
+}
+
+// Issues writes the issues of the board with a token of its own, which only reaches the issues repository.
+type Issues interface {
+	InstallationRepositories(ctx context.Context) ([]string, error)
 	GetRepository(ctx context.Context, repo string) (github.Repository, error)
 	ListIssues(ctx context.Context, repo string) ([]github.Issue, error)
 	CreateIssue(ctx context.Context, repo, title, body string) (github.Issue, error)
 	UpdateIssue(ctx context.Context, repo string, number int, fields map[string]string) error
-	AddProjectIssue(ctx context.Context, org string, number int, issue int64) (github.ProjectItem, error)
 	AddSubIssue(ctx context.Context, repo string, parent int, child int64) error
 }
 
@@ -83,8 +88,9 @@ type Board struct {
 	options map[string]map[string]string
 	// items is keyed by lowercase GHSA identifier, items without one were added by hand and stay untouched.
 	items map[string]*item
-	// issues is the private repository new items are issues of, drafts when empty.
+	// issues is the private repository new items are issues of, drafts when empty, written through ig.
 	issues string
+	ig     Issues
 	// unlisted holds the issues of a previous run that never reached the board, by lowercase GHSA identifier.
 	unlisted map[string]github.Issue
 }
@@ -114,8 +120,9 @@ type Triage struct {
 }
 
 // Open loads the fields and items of project, given as "org/number". With issues set, new items are issues of
-// that repository, which must be private and must not be the repository of the advisories.
-func Open(ctx context.Context, gh GitHub, project, issues, advisories string) (*Board, error) {
+// that repository, which must be private and must not be the repository of the advisories. ig writes them, and
+// its token must reach the issues repository and not the repository of the advisories.
+func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories string) (*Board, error) {
 	org, n, _ := strings.Cut(project, "/")
 	number, err := strconv.Atoi(n)
 	if org == "" || err != nil {
@@ -134,7 +141,21 @@ func Open(ctx context.Context, gh GitHub, project, issues, advisories string) (*
 		if strings.EqualFold(issues, advisories) {
 			return nil, errors.New("the issues repository must not be the repository of the advisories")
 		}
-		r, err := gh.GetRepository(ctx, issues)
+		if ig == nil {
+			return nil, errors.New("the issues repository needs a token of its own")
+		}
+		// A token that cannot reach the advisory repository cannot publish there, whatever a bug in tamis does.
+		reached, err := ig.InstallationRepositories(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing the repositories of the issues token: %w", err)
+		}
+		if slices.ContainsFunc(reached, func(r string) bool { return strings.EqualFold(r, advisories) }) {
+			return nil, errors.New("the issues token must not reach the repository of the advisories")
+		}
+		if !slices.ContainsFunc(reached, func(r string) bool { return strings.EqualFold(r, issues) }) {
+			return nil, errors.New("the issues token does not reach the issues repository")
+		}
+		r, err := ig.GetRepository(ctx, issues)
 		if err != nil {
 			return nil, err
 		}
@@ -142,7 +163,7 @@ func Open(ctx context.Context, gh GitHub, project, issues, advisories string) (*
 			return nil, errors.New("the issues repository must be private")
 		}
 	}
-	b := &Board{gh: gh, org: org, number: number, ids: map[string]int64{}, options: map[string]map[string]string{}, items: map[string]*item{}, issues: issues}
+	b := &Board{gh: gh, org: org, number: number, ids: map[string]int64{}, options: map[string]map[string]string{}, items: map[string]*item{}, issues: issues, ig: ig}
 	fields, err := gh.ListProjectFields(ctx, org, number)
 	if err != nil {
 		return nil, err
@@ -226,7 +247,7 @@ func Open(ctx context.Context, gh GitHub, project, issues, advisories string) (*
 		}
 	}
 	if issues != "" {
-		all, err := gh.ListIssues(ctx, issues)
+		all, err := ig.ListIssues(ctx, issues)
 		if err != nil {
 			return nil, err
 		}
@@ -296,13 +317,13 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 		body += fmt.Sprintf("\n\n<!-- tamis-issue %s -->", a.GHSAID)
 		issue, found := b.unlisted[key]
 		if found {
-			if err := b.gh.UpdateIssue(ctx, b.issues, issue.Number, map[string]string{"body": body}); err != nil {
+			if err := b.ig.UpdateIssue(ctx, b.issues, issue.Number, map[string]string{"body": body}); err != nil {
 				return err
 			}
 		} else {
 			// The title is the reporter's summary, and a mention in it would notify whoever it names.
 			var err error
-			if issue, err = b.gh.CreateIssue(ctx, b.issues, strings.ReplaceAll(a.Summary, "@", "@\u200b"), body); err != nil {
+			if issue, err = b.ig.CreateIssue(ctx, b.issues, strings.ReplaceAll(a.Summary, "@", "@\u200b"), body); err != nil {
 				return err
 			}
 			b.unlisted[key] = issue
@@ -312,7 +333,7 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 			return err
 		}
 		if a.State != "triage" && a.State != "draft" {
-			if err := b.gh.UpdateIssue(ctx, b.issues, issue.Number, issueState(a.State)); err != nil {
+			if err := b.ig.UpdateIssue(ctx, b.issues, issue.Number, issueState(a.State)); err != nil {
 				return err
 			}
 		}
@@ -327,7 +348,7 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 		it = &item{id: draft.ID, draft: draft.Content.NodeID, ghsa: a.GHSAID}
 		b.items[key] = it
 	case comment != "" && it.issue != 0:
-		if err := b.gh.UpdateIssue(ctx, b.issues, it.issue, map[string]string{"body": body + fmt.Sprintf("\n\n<!-- tamis-issue %s -->", a.GHSAID)}); err != nil {
+		if err := b.ig.UpdateIssue(ctx, b.issues, it.issue, map[string]string{"body": body + fmt.Sprintf("\n\n<!-- tamis-issue %s -->", a.GHSAID)}); err != nil {
 			return err
 		}
 	case comment != "":
@@ -442,7 +463,7 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 		var values []github.FieldValue
 		if state, ok := states[ghsa]; ok && state != it.state {
 			if it.issue != 0 {
-				if err := b.gh.UpdateIssue(ctx, b.issues, it.issue, issueState(state)); err != nil {
+				if err := b.ig.UpdateIssue(ctx, b.issues, it.issue, issueState(state)); err != nil {
 					errs = append(errs, err)
 					continue
 				}
@@ -467,7 +488,7 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 		}
 		// The group is only written once the sub-issue is linked, so a failed link is tried again next run.
 		if parent := b.items[strings.ToLower(group)]; group != it.group && it.issue != 0 && parent != nil && parent != it && parent.issue != 0 {
-			if err := b.gh.AddSubIssue(ctx, b.issues, parent.issue, it.issueID); err != nil {
+			if err := b.ig.AddSubIssue(ctx, b.issues, parent.issue, it.issueID); err != nil {
 				errs = append(errs, err)
 				group = it.group
 			}

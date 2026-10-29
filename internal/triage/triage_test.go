@@ -543,6 +543,9 @@ func testConfig(t *testing.T, gh *fakeGitHub, cfg Config) Config {
 	if len(cfg.References) == 0 {
 		cfg.References = []string{"HEAD"}
 	}
+	if cfg.IssuesRepository != "" && cfg.Issues == nil {
+		cfg.Issues = gh.Project
+	}
 	if cfg.RepoPath == "" {
 		cfg.RepoPath = gitRepo(t, map[string]string{"ext/foo/foo.c": strings.Repeat("\n", 41) + "void php_foo(void) { foo_encode(); }\n"})
 	}
@@ -1473,7 +1476,9 @@ func TestRunNeverCreatesAnIssueInAPublicRepository(t *testing.T) {
 			gh, eng := newFixture(), &fakeEngine{}
 			gh.Repos["o/r"] = true
 
-			require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16", IssuesRepository: repo}, gh, eng), "opening the project board: the issues repository must")
+			gh.Reached = append(gh.Reached, repo)
+
+			require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16", IssuesRepository: repo}, gh, eng), "opening the project board: the issues")
 
 			require.Empty(t, gh.Issues, "an issue was created in %s", repo)
 			require.Empty(t, gh.Items)
