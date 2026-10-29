@@ -402,8 +402,11 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 		r.CVSS, r.Severity = CVSS{}, ""
 		r.Removed++
 	}
+	if r.CVSS.Vector == "" {
+		r.Severity = ""
+	}
 	// The trailing slash only matches a directory, and cluePath keeps git pathspec magic out.
-	if dir := r.Component; dir != "" && (!cluePath.MatchString(dir) || path.Clean(dir) != dir || strings.HasPrefix(dir, "..") || !c.Code.Exists(dir+"/")) {
+	if dir := r.Component; dir != "" && (!cluePath.MatchString(dir) || path.Clean(dir) != dir || strings.HasPrefix(dir, ".") || !c.Code.Exists(dir+"/")) {
 		r.Component = ""
 	}
 	if r.Severity != "" && !slices.Contains(severities, r.Severity) {

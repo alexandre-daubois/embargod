@@ -86,15 +86,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	comment := false
 	if v := os.Getenv("COMMENT"); v != "" {
-		comment, err := strconv.ParseBool(v)
-		if err != nil {
+		if comment, err = strconv.ParseBool(v); err != nil {
 			return fmt.Errorf("COMMENT: %w", err)
 		}
-		cfg.NoComment = !comment
-	} else {
-		cfg.NoComment = true
 	}
+	cfg.NoComment = !comment
 	daybreak := false
 	if v := os.Getenv("DAYBREAK"); v != "" {
 		if daybreak, err = strconv.ParseBool(v); err != nil {

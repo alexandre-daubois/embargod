@@ -155,6 +155,12 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		}
 		return false, errIncompleteReport
 	}
+	// A backfill publishes on the board only, so its report is kept before a board write that may fail.
+	if backfill {
+		if err := os.WriteFile(base+".md", []byte(private), 0o600); err != nil {
+			return false, err
+		}
+	}
 	// Without its item, the next run triages the advisory again for the board.
 	if b != nil {
 		t := board.TriageOf(r)
@@ -167,9 +173,6 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		}
 	}
 	if backfill {
-		if err := os.WriteFile(base+".md", []byte(private), 0o600); err != nil {
-			return true, err
-		}
 		return true, comparisonErr
 	}
 	if err := os.WriteFile(base+".comment.md", []byte(body), 0o600); err != nil {

@@ -101,7 +101,7 @@ func TestListProjectItemsReadsEveryPageThroughGraphQL(t *testing.T) {
 				{"name":"Look first","optionId":"opt","field":{"databaseId":2}},
 				{}]}}]}}}}}`,
 		"c1": `{"data":{"organization":{"projectV2":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":"c2"},"nodes":[
-			{"databaseId":6,"type":"ISSUE","content":{"databaseId":42,"number":7,"body":"b","repository":{"nameWithOwner":"php/php-src-security"}},"fieldValues":{"nodes":[
+			{"databaseId":6,"type":"ISSUE","content":{"databaseId":42,"number":7,"body":"b","repository":{"nameWithOwner":"php/php-src-security"},"parent":{"databaseId":41}},"fieldValues":{"nodes":[
 				{"number":3,"field":{"databaseId":3}},
 				{"date":"2026-10-20","field":{"databaseId":4}}]}}]}}}}}`,
 	}
@@ -139,7 +139,9 @@ func TestListProjectItemsReadsEveryPageThroughGraphQL(t *testing.T) {
 	require.Equal(t, 7, items[1].Content.Number)
 	require.Equal(t, "b", items[1].Content.Body)
 	require.Equal(t, "php/php-src-security", items[1].Content.Repository)
+	require.Equal(t, int64(41), items[1].Content.Parent)
 	require.Empty(t, items[0].Content.Repository)
+	require.Zero(t, items[0].Content.Parent)
 	require.JSONEq(t, `3`, string(items[1].Fields[0].Value))
 	require.JSONEq(t, `"2026-10-20"`, string(items[1].Fields[1].Value))
 }

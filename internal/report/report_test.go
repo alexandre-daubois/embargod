@@ -577,6 +577,7 @@ func TestVerifyKeepsOnlyAComponentDirectoryOfTheRepository(t *testing.T) {
 		"sapi/cgi":       false,
 		"sapi/fpm/fpm.c": false,
 		"../sapi/fpm":    false,
+		".":              false,
 		"/sapi/fpm":      false,
 		"sapi/./fpm":     false,
 		":(top)sapi":     false,
@@ -606,4 +607,13 @@ func TestVerifyDropsTheSeverityOfAnInvalidVector(t *testing.T) {
 
 	require.Empty(t, r.Severity, "a severity outlived the vector it rates")
 	require.Equal(t, 1, r.Removed, "the dropped severity counted as a second removed suggestion")
+}
+
+func TestVerifyDropsASeverityWithoutVector(t *testing.T) {
+	r := Report{Severity: "critical"}
+
+	require.NoError(t, checker(t).Verify(context.Background(), &r))
+
+	require.Empty(t, r.Severity, "a severity rated no vector")
+	require.Zero(t, r.Removed)
 }

@@ -4,7 +4,7 @@ Each run goes through four stages. Two models take part, and no model sees both 
 
 ## 1. Selection
 
-tamis lists the repository's advisories and keeps those in the `triage` state created after `since`, or only the one given in `advisory`. It skips an advisory when a comment from `bot-login` holds the tamis marker, and ignores a marker posted by any other account. With a [project board](setup.md#5-project-board), an advisory in `triage` that has a tamis comment but no item is triaged once more for the board, without a new comment.
+tamis lists the repository's advisories and keeps those in the `triage` state created after `since`, or only the one given in `advisory`. It skips an advisory when a comment from `bot-login` holds the tamis marker, and ignores a marker posted by any other account. With a [project board](setup.md#5-project-board), an advisory in `triage` that has a tamis comment but no item is triaged once more for the board, without a new comment. With `comment` left at `false`, the item takes the place of the comments: tamis skips an advisory whose item has a priority other than `Analysis failed, retrying`, and counts the failed attempts in `Attempts`.
 
 A failed triage posts a comment that says so, with its own marker, and tamis retries it on the next runs. After three failures, the comment asks a maintainer to review the report and tamis stops retrying. tamis triages an advisory once, so an edit to the report afterwards starts no new triage.
 

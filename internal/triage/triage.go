@@ -184,7 +184,8 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 				continue
 			}
 			priority, n := b.Status(a.GHSAID)
-			done, failures = priority != "" && priority != board.AnalysisRetrying, n
+			// A pending item outlived a run that stopped during its analysis, which counts as a failed attempt.
+			done, failures = priority != "" && priority != board.AnalysisRetrying && priority != board.AnalysisPending, n
 			backfill = !done
 		}
 		if done && !backfill || failures >= maxAttempts {
@@ -213,7 +214,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		// board is not retried, so a report that never completes costs one run only.
 		if backfill {
 			note := fmt.Sprintf("The automated analysis started on %s UTC and has not finished. If this stays after the next run, that run stopped during the analysis.", time.Now().UTC().Format("2006-01-02 at 15:04"))
-			if err := b.PutStatus(advisoryCtx, a, board.AnalysisPending, note, failures); err != nil {
+			if err := b.PutStatus(advisoryCtx, a, board.AnalysisPending, note, failures+1); err != nil {
 				cancel()
 				log.Error("the project board could not be updated", "reason", describe(err))
 				failed++
@@ -223,21 +224,21 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		reporters[strings.ToLower(a.Author.Login)] = true
 		log.Info("triaging", "attempt", failures+1)
 		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
+		// A run without comments retries from the board, a backfill next to a comment gets one attempt.
+		final := failures+1 >= maxAttempts || backfill && !cfg.NoComment
 
-		if published, err := triageRevisions(advisoryCtx, cfg, gh, retrying{reader, log}, eng, b, a, all, comments, backfill, login, revision, failures+1 >= maxAttempts || backfill && !cfg.NoComment, sourceDir, log); err != nil {
+		if published, err := triageRevisions(advisoryCtx, cfg, gh, retrying{reader, log}, eng, b, a, all, comments, backfill, login, revision, final, sourceDir, log); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
 			if keepAgentError(cfg, a.GHSAID, revision, err) != nil {
 				log.Error("the agent error could not be kept in the private reports")
 			}
-			// A run without comments retries from the board, a backfill next to a comment gets one attempt.
-			retry := failures+1 < maxAttempts && (!backfill || cfg.NoComment)
 			if !published && !backfill {
-				_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed(retry))
+				_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed(!final))
 			}
 			if b != nil && !published {
 				priority, note := board.AnalysisFailed, fmt.Sprintf("The automated analysis failed (%s) and will not be retried. A maintainer must triage this report.", describe(err))
-				if retry {
+				if !final {
 					priority, note = board.AnalysisRetrying, fmt.Sprintf("The automated analysis failed (%s) on attempt %d of %d. The next run retries it.", describe(err), failures+1, maxAttempts)
 				}
 				if err := b.PutStatus(ctx, a, priority, note, failures+1); err != nil {

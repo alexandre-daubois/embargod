@@ -74,7 +74,7 @@ tamis can keep a private organisation project in sync with the advisories, one d
 | `Original report` | Text | |
 | `Attempts` | Number | |
 
-Then set `project` to `your-org/NUMBER`. When the project is public, or a field or an option is missing or renamed, tamis leaves the board out of the run, still triages and comments, and fails the run so the error shows.
+Then set `project` to `your-org/NUMBER`. When the project is public, or a field or an option is missing or renamed, tamis leaves the board out of the run, still triages and comments with `comment: true` and skips every advisory without it, and fails the run so the error shows.
 
 The code sets `Priority`:
 

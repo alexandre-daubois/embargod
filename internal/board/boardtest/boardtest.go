@@ -22,8 +22,10 @@ type Project struct {
 	UpdateErr error
 	ListErr   error
 	Writes    int
-	Public    bool
-	next      int64
+	// UpdateHook, when set, fails the field updates it returns an error for.
+	UpdateHook func() error
+	Public     bool
+	next       int64
 	// Repos says which repositories exist and whether they are private. Issues holds their issues by number,
 	// and issueOf the issue of each item that is one.
 	Repos map[string]bool
@@ -143,7 +145,10 @@ func (p *Project) ListProjectItems(_ context.Context, _ string, _ int, fields []
 		item := github.ProjectItem{ID: id, ContentType: "DraftIssue"}
 		item.Content.NodeID = draft(id)
 		if n, ok := p.issueOf[id]; ok {
-			item.ContentType, item.Content.Number, item.Content.ID, item.Content.Body, item.Content.Repository = "Issue", n, p.Issues[n].ID, p.Issues[n].Body, p.Issues[n].Repo
+			item.ContentType, item.Content.NodeID, item.Content.Number, item.Content.ID, item.Content.Body, item.Content.Repository = "Issue", "", n, p.Issues[n].ID, p.Issues[n].Body, p.Issues[n].Repo
+			if parent := p.Issues[n].Parent; parent != 0 {
+				item.Content.Parent = p.Issues[parent].ID
+			}
 		}
 		for _, f := range p.Fields {
 			v, ok := values[f.ID]
@@ -301,6 +306,11 @@ func (p *Project) UpdateProjectItem(_ context.Context, _ string, _ int, item int
 	}
 	if p.UpdateErr != nil {
 		return p.UpdateErr
+	}
+	if p.UpdateHook != nil {
+		if err := p.UpdateHook(); err != nil {
+			return err
+		}
 	}
 	p.Writes++
 	for _, f := range fields {

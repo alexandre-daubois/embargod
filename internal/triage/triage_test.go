@@ -1384,7 +1384,7 @@ func TestRunLooksFirstAtASevereReportOnlyWhenItsFaultyStatementExists(t *testing
 	} {
 		t.Run(name, func(t *testing.T) {
 			gh := newFixture()
-			eng := &fakeEngine{comparator: `{"duplicates":[]}`, reader: `{"summary":"s","location":{` + tc.location + `},"code_references":[{"path":"trigger.py","symbol":"","line":0,"snippet":""}],"severity":"high"}`}
+			eng := &fakeEngine{comparator: `{"duplicates":[]}`, reader: `{"summary":"s","location":{` + tc.location + `},"code_references":[{"path":"trigger.py","symbol":"","line":0,"snippet":""}],"cvss":{"vector":"CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N","reason":"r"},"severity":"high"}`}
 
 			require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
 
@@ -1566,4 +1566,60 @@ func TestRunWithoutCommentsNeedsItsBoard(t *testing.T) {
 	require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}, gh, eng), "opening the project board")
 	require.Empty(t, eng.calls, "a run without its board triaged an advisory nowhere to be recorded")
 	require.Empty(t, gh.posted)
+}
+
+func TestRunTriagesACommentedAdvisoryAgainOnlyWhileItsItemRetries(t *testing.T) {
+	for priority, again := range map[string]bool{"Analysis failed, retrying": true, "Analysis failed": false} {
+		t.Run(priority, func(t *testing.T) {
+			gh, eng := newFixture(), &fakeEngine{}
+			id := gh.Add(map[string]any{"GHSA": "GHSA-done", "State": "triage", "Priority": priority})
+
+			require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+
+			require.Empty(t, gh.posted, "the board triage posted a comment")
+			if !again {
+				require.Empty(t, eng.calls, "an advisory out of attempts was triaged again")
+				return
+			}
+			require.NotEmpty(t, eng.role(""), "the item kept a retry the triage comment already settled")
+			require.Equal(t, "Duplicate", gh.Value(id, "Priority"))
+		})
+	}
+}
+
+func TestRunWithoutCommentsRetriesAnAnalysisAStoppedRunLeftPending(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	id := gh.Add(map[string]any{"GHSA": "GHSA-new", "State": "triage", "Priority": "Analysis pending", "Attempts": 1})
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}, gh, eng))
+
+	require.NotEmpty(t, eng.role(""), "a stopped analysis was never retried")
+	require.Equal(t, "Duplicate", gh.Value(id, "Priority"))
+	require.Empty(t, gh.posted)
+}
+
+func TestRunWithoutCommentsGivesUpOnAnAnalysisThatKeepsStopping(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.Add(map[string]any{"GHSA": "GHSA-new", "State": "triage", "Priority": "Analysis pending", "Attempts": 3})
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}, gh, eng))
+
+	require.Empty(t, eng.calls, "an analysis that stopped three runs was started again")
+}
+
+func TestRunKeepsTheReportOfABoardTriageWhoseBoardWriteFails(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	cfg := testConfig(t, gh, Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true})
+	fail := false
+	eng.onCompare = func() { fail = true }
+	gh.UpdateHook = func() error {
+		if fail {
+			return errors.New("HTTP 502")
+		}
+		return nil
+	}
+
+	require.Error(t, Run(t.Context(), cfg, gh, eng, eng, slog.New(slog.DiscardHandler)))
+
+	require.Contains(t, privateReports(t, gh), "Automated triage", "the model run left no report")
 }

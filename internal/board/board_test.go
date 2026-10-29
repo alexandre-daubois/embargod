@@ -174,12 +174,16 @@ func TestHas(t *testing.T) {
 	p := boardtest.New()
 	p.Add(map[string]any{"GHSA": "GHSA-old", "Priority": "Look first"})
 	p.Add(map[string]any{"GHSA": "GHSA-bare"})
+	p.Add(map[string]any{"GHSA": "GHSA-a", "Priority": "Analysis failed, retrying"})
+	p.Add(map[string]any{"GHSA": "GHSA-b", "Priority": "Analysis failed"})
 	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
 	require.True(t, b.Has("ghsa-OLD"))
 	require.False(t, b.Has("GHSA-new"))
 	require.False(t, b.Has("GHSA-bare"), "an item without priority looks triaged")
+	require.False(t, b.Has("GHSA-a"), "an item still retrying looks triaged")
+	require.True(t, b.Has("GHSA-b"), "an item out of attempts looks retriable")
 }
 
 func TestOpenReportsAFailedRead(t *testing.T) {
@@ -614,4 +618,42 @@ func TestPutReopensTheIssueOfAnAdvisoryBackInTriage(t *testing.T) {
 
 	require.Equal(t, "open", p.IssueOf(id).State, "the issue stayed closed while its advisory is in triage")
 	require.Equal(t, "triage", p.Value(id, "State"))
+}
+
+func TestPutWritesTheFieldsOfAnIssueOfAnotherRepository(t *testing.T) {
+	p := boardtest.New()
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	require.NoError(t, err)
+	a := github.Advisory{GHSAID: "GHSA-a", Summary: "a", HTMLURL: "https://x/GHSA-a", State: "triage"}
+	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{}, "the comment"))
+	id := p.Find("GHSA-a")
+
+	b, err = Open(t.Context(), p, nil, "php/16", "", "php/php-src")
+	require.NoError(t, err)
+	require.NoError(t, b.PutStatus(t.Context(), a, AnalysisRetrying, "failed once", 1), "the issue was written as a draft")
+
+	require.Equal(t, AnalysisRetrying, p.Value(id, "Priority"))
+	require.Equal(t, "https://x/GHSA-a\n\nthe comment\n\n<!-- tamis-issue GHSA-a -->", p.IssueOf(id).Body, "the issue of another repository was written")
+}
+
+func TestSyncNestsADuplicateUnderAnOriginalAddedLater(t *testing.T) {
+	p := boardtest.New()
+	open := func() *Board {
+		b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+		require.NoError(t, err)
+		return b
+	}
+	b := open()
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-dup", Summary: "d", State: "triage"}, Duplicate, &Triage{DuplicateOf: "GHSA-old"}, ""))
+	require.NoError(t, b.Sync(t.Context(), nil))
+	require.Equal(t, "GHSA-old", p.Value(p.Find("GHSA-dup"), "Original report"))
+
+	b = open()
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-old", Summary: "o", State: "triage"}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Sync(t.Context(), nil))
+	original := p.IssueOf(p.Find("GHSA-old"))
+	require.Equal(t, int(original.ID-1000), p.IssueOf(p.Find("GHSA-dup")).Parent, "the duplicate stayed out of its original")
+
+	p.IssueErr = errors.New("HTTP 502")
+	require.NoError(t, open().Sync(t.Context(), nil), "a linked sub-issue was linked again")
 }

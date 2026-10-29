@@ -148,8 +148,10 @@ type ProjectItem struct {
 		ID     int64  `json:"id"`
 		Number int    `json:"number"`
 		Body   string `json:"body"`
-		// Repository is the "owner/name" of an issue, only listed by ListProjectItems.
+		// Repository is the "owner/name" of an issue and Parent the ID of its parent issue, only listed by
+		// ListProjectItems.
 		Repository string `json:"-"`
+		Parent     int64  `json:"-"`
 	} `json:"content"`
 	Fields []struct {
 		ID    int64           `json:"id"`
@@ -181,7 +183,7 @@ const itemsQuery = `query($org: String!, $number: Int!, $after: String) {
     pageInfo { hasNextPage endCursor }
     nodes {
       databaseId type
-      content { ... on DraftIssue { id } ... on Issue { databaseId number body repository { nameWithOwner } } }
+      content { ... on DraftIssue { id } ... on Issue { databaseId number body repository { nameWithOwner } parent { databaseId } } }
       fieldValues(first: 50) { nodes {
         ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { databaseId } } }
         ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { databaseId } } }
@@ -228,6 +230,9 @@ func (c *Client) ListProjectItems(ctx context.Context, org string, number int, f
 									Repository struct {
 										NameWithOwner string `json:"nameWithOwner"`
 									} `json:"repository"`
+									Parent struct {
+										DatabaseID int64 `json:"databaseId"`
+									} `json:"parent"`
 								} `json:"content"`
 								FieldValues struct {
 									Nodes []value `json:"nodes"`
@@ -250,7 +255,7 @@ func (c *Client) ListProjectItems(ctx context.Context, org string, number int, f
 			item := ProjectItem{ID: n.DatabaseID, ContentType: "DraftIssue"}
 			item.Content.NodeID = n.Content.ID
 			if n.Type == "ISSUE" {
-				item.ContentType, item.Content.ID, item.Content.Number, item.Content.Body, item.Content.Repository = "Issue", n.Content.DatabaseID, n.Content.Number, n.Content.Body, n.Content.Repository.NameWithOwner
+				item.ContentType, item.Content.ID, item.Content.Number, item.Content.Body, item.Content.Repository, item.Content.Parent = "Issue", n.Content.DatabaseID, n.Content.Number, n.Content.Body, n.Content.Repository.NameWithOwner, n.Content.Parent.DatabaseID
 			}
 			for _, v := range n.FieldValues.Nodes {
 				if !slices.Contains(fields, v.Field.DatabaseID) {

@@ -118,9 +118,10 @@ type item struct {
 	ghsa, draft, duplicateOf, state string
 	priority, group                 string
 	duplicates, attempts            int
-	// issue and issueID name the issue of an item that is one, zero for a draft.
-	issue   int
-	issueID int64
+	// issue and issueID name the issue of an item that is one, zero for a draft, and parent the ID of its parent
+	// issue, zero without one.
+	issue           int
+	issueID, parent int64
 	// triage is nil for an item without one, whose priority is a status Sync leaves alone.
 	triage *Triage
 }
@@ -211,7 +212,7 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 		entry := &item{id: it.ID, draft: it.Content.NodeID}
 		// The issue number only names an issue of the issues repository, the one ig writes.
 		if it.ContentType == "Issue" && issues != "" && strings.EqualFold(it.Content.Repository, issues) {
-			entry.issue, entry.issueID = it.Content.Number, it.Content.ID
+			entry.issue, entry.issueID, entry.parent = it.Content.Number, it.Content.ID, it.Content.Parent
 		}
 		for _, f := range it.Fields {
 			var text struct {
@@ -283,12 +284,13 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 	return b, nil
 }
 
-// Has says whether ghsa has an item with a priority. An item without one comes from a run that failed before
-// writing its fields, and its advisory still needs a triage for the board.
+// Has says whether ghsa has an item with a priority other than AnalysisRetrying. An item without priority comes
+// from a run that failed before writing its fields, one still retrying next to a triage comment from a run whose
+// triage missed the board, and both advisories still need a triage for the board.
 func (b *Board) Has(ghsa string) bool {
 	it := b.items[strings.ToLower(ghsa)]
 
-	return it != nil && it.priority != ""
+	return it != nil && it.priority != "" && it.priority != AnalysisRetrying
 }
 
 // TriageOf keeps what the board needs of r, with the oldest high-confidence exact duplicate the comment shows.
@@ -395,7 +397,8 @@ func (b *Board) put(ctx context.Context, a github.Advisory, priority string, t *
 		if err := b.ig.UpdateIssue(ctx, b.issues, it.issue, map[string]string{"body": body + marker}); err != nil {
 			return err
 		}
-	case comment != "":
+	// An issue of another repository is no draft, and the issues token cannot write it.
+	case comment != "" && it.draft != "":
 		if err := b.gh.UpdateDraft(ctx, it.draft, body); err != nil {
 			return err
 		}
@@ -549,10 +552,13 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 			group = it.ghsa
 		}
 		// The group is only written once the sub-issue is linked, so a failed link is tried again next run.
-		if parent := b.items[strings.ToLower(group)]; group != it.group && it.issue != 0 && parent != nil && parent != it && parent.issue != 0 {
+		// The group can predate the issue of its original, so the link follows the parent the issue has.
+		if parent := b.items[strings.ToLower(group)]; it.issue != 0 && parent != nil && parent != it && parent.issue != 0 && it.parent != parent.issueID {
 			if err := b.ig.AddSubIssue(ctx, b.issues, parent.issue, it.issueID); err != nil {
 				errs = append(errs, err)
 				group = it.group
+			} else {
+				it.parent = parent.issueID
 			}
 		}
 		if group != it.group {
