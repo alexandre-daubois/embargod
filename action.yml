@@ -7,7 +7,7 @@ branding:
 
 inputs:
   since:
-    description: Only advisories created after this date (2026-10-22 or RFC 3339) are triaged. Required unless `advisory` is set.
+    description: Only advisories created after this date (2026-10-22 or RFC 3339) are triaged. Required with `comment: true` unless `advisory` is set, every advisory in triage otherwise.
     required: false
   advisory:
     description: Triage this GHSA only, whatever its state and creation date.

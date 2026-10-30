@@ -744,3 +744,24 @@ func TestSyncGathersTheDuplicatesOfAClosedOriginalUnderTheOldestOfThem(t *testin
 	require.NoError(t, b.Sync(t.Context(), nil))
 	require.Equal(t, writes, p.Writes, "a nested group was written again")
 }
+
+func TestSyncCountsTheSubIssuesOfEachIssue(t *testing.T) {
+	p := boardtest.New()
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
+	require.NoError(t, err)
+	put := func(g, dup string, day int) {
+		a := github.Advisory{GHSAID: g, Summary: g, State: "triage", CreatedAt: reported.AddDate(0, 0, day)}
+		require.NoError(t, b.Put(t.Context(), a, Duplicate, &Triage{DuplicateOf: dup}, ""))
+	}
+	put("GHSA-root", "", 0)
+	put("GHSA-mid", "GHSA-root", 1)
+	put("GHSA-leaf", "GHSA-mid", 2)
+	put("GHSA-first", "GHSA-closed", 0)
+	put("GHSA-later", "GHSA-closed", 1)
+
+	require.NoError(t, b.Sync(t.Context(), nil))
+
+	for g, want := range map[string]string{"GHSA-root": "2", "GHSA-mid": "", "GHSA-leaf": "", "GHSA-first": "1", "GHSA-later": ""} {
+		require.Equal(t, want, p.Value(p.Find(g), "Duplicates"), "%s does not count its sub-issues", g)
+	}
+}
