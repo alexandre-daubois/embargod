@@ -4,11 +4,13 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestParseSince(t *testing.T) {
@@ -79,4 +81,23 @@ func TestRunValidatesConfiguration(t *testing.T) {
 			require.ErrorContains(t, run(context.Background(), log), tc.want)
 		})
 	}
+}
+
+// GitHub refuses to run an action whose manifest does not parse, with no test of its own to tell.
+func TestActionManifestParses(t *testing.T) {
+	data, err := os.ReadFile("../../action.yml")
+	require.NoError(t, err)
+	var manifest struct {
+		Inputs map[string]struct {
+			Description string `yaml:"description"`
+		} `yaml:"inputs"`
+	}
+
+	require.NoError(t, yaml.Unmarshal(data, &manifest))
+
+	require.NotEmpty(t, manifest.Inputs)
+	for name, input := range manifest.Inputs {
+		require.NotEmpty(t, input.Description, "the %s input lost its description", name)
+	}
+	require.Error(t, yaml.Unmarshal([]byte("inputs:\n  since:\n    description: Required with `comment: true` unless set.\n"), &manifest), "the test would not catch the colon that broke the manifest")
 }
