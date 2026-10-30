@@ -7,7 +7,7 @@
 | `api-key` | | Required. API key of the model provider, or a Codex access token with `engine: openai`. |
 | `github-token` | | Required. Token able to read and comment the repository advisories. |
 | `references` | | Required, at most ten. Whitespace-separated local git references, one per supported branch. tamis analyses the first and locates the cited code on all of them. A missing reference fails the analysis. |
-| `since` | | Triage only advisories created after this date, `2026-10-22` or RFC 3339. Required unless `advisory` is set. |
+| `since` | | Triage only advisories created after this date, `2026-10-22` or RFC 3339. Required with `comment: true` unless `advisory` is set. Without it, every advisory in triage goes on the board. |
 | `advisory` | | Triage this GHSA only, whatever its state and creation date. |
 | `bot-login` | Owner of the token | Login tamis posts as, such as `my-app[bot]`. Required with a GitHub App token. |
 | `repository` | Current repository | Repository owning the advisories. |

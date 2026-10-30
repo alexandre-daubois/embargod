@@ -579,10 +579,16 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 	for _, a := range advisories {
 		states[strings.ToLower(a.GHSAID)] = a.State
 	}
+	// With issues, Duplicates counts the sub-issues an item gets, the whole chain under it included.
 	counts := map[string]int{}
 	for _, it := range b.items {
-		if it.duplicateOf != "" {
+		switch {
+		case b.issues == "" && it.duplicateOf != "":
 			counts[strings.ToLower(it.duplicateOf)]++
+		case b.issues != "" && it.issue != 0:
+			if parent := b.nest(it); parent != nil {
+				counts[strings.ToLower(parent.ghsa)]++
+			}
 		}
 	}
 

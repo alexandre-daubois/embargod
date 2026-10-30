@@ -63,8 +63,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if since.IsZero() && cfg.Advisory == "" {
-		return errors.New("SINCE is required unless ADVISORY is set, so that existing advisories are left alone")
+	comment := false
+	if v := os.Getenv("COMMENT"); v != "" {
+		if comment, err = strconv.ParseBool(v); err != nil {
+			return fmt.Errorf("COMMENT: %w", err)
+		}
+	}
+	cfg.NoComment = !comment
+	// Without comments, triaging the backlog only fills the private board, so every advisory in triage goes.
+	if since.IsZero() && cfg.Advisory == "" && comment {
+		return errors.New("SINCE is required with COMMENT unless ADVISORY is set, so that existing advisories are left alone")
 	}
 	cfg.Since = since
 
@@ -86,13 +94,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	comment := false
-	if v := os.Getenv("COMMENT"); v != "" {
-		if comment, err = strconv.ParseBool(v); err != nil {
-			return fmt.Errorf("COMMENT: %w", err)
-		}
-	}
-	cfg.NoComment = !comment
 	daybreak := false
 	if v := os.Getenv("DAYBREAK"); v != "" {
 		if daybreak, err = strconv.ParseBool(v); err != nil {
