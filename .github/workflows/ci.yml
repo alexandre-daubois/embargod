@@ -31,6 +31,21 @@ jobs:
       - run: go vet ./...
       - run: go tool gotestsum --format github-actions -- -race -count=1 ./...
 
+  # release.yml only runs on tags, so a stale lockfile entry would otherwise break the next release.
+  actions-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - run: gh extension install github/gh-actions-lock --pin v0.4.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: gh actions-lock --verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   fuzz:
     runs-on: ubuntu-latest
     timeout-minutes: 10
