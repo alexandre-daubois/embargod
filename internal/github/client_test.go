@@ -101,7 +101,7 @@ func TestListProjectItemsReadsEveryPageThroughGraphQL(t *testing.T) {
 				{"name":"Look first","optionId":"opt","field":{"databaseId":2}},
 				{}]}}]}}}}}`,
 		"c1": `{"data":{"organization":{"projectV2":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":"c2"},"nodes":[
-			{"databaseId":6,"type":"ISSUE","content":{"databaseId":42,"number":7,"body":"b","repository":{"nameWithOwner":"php/php-src-security"},"parent":{"databaseId":41}},"fieldValues":{"nodes":[
+			{"databaseId":6,"type":"ISSUE","content":{"databaseId":42,"number":7,"body":"b","repository":{"nameWithOwner":"acme/private-issues"},"parent":{"databaseId":41}},"fieldValues":{"nodes":[
 				{"number":3,"field":{"databaseId":3}},
 				{"date":"2026-10-20","field":{"databaseId":4}}]}}]}}}}}`,
 	}
@@ -138,7 +138,7 @@ func TestListProjectItemsReadsEveryPageThroughGraphQL(t *testing.T) {
 	require.Equal(t, int64(42), items[1].Content.ID)
 	require.Equal(t, 7, items[1].Content.Number)
 	require.Equal(t, "b", items[1].Content.Body)
-	require.Equal(t, "php/php-src-security", items[1].Content.Repository)
+	require.Equal(t, "acme/private-issues", items[1].Content.Repository)
 	require.Equal(t, int64(41), items[1].Content.Parent)
 	require.Empty(t, items[0].Content.Repository)
 	require.Zero(t, items[0].Content.Parent)
@@ -195,21 +195,21 @@ func TestIssues(t *testing.T) {
 		}
 		switch r.Method + " " + r.URL.Path {
 		case "GET /installation/repositories":
-			fmt.Fprint(w, `{"total_count":1,"repositories":[{"full_name":"php/php-src-security"}]}`)
-		case "GET /repos/php/php-src-security":
+			fmt.Fprint(w, `{"total_count":1,"repositories":[{"full_name":"acme/private-issues"}]}`)
+		case "GET /repos/acme/private-issues":
 			fmt.Fprint(w, `{"private":true}`)
-		case "GET /repos/php/php-src-security/issues":
+		case "GET /repos/acme/private-issues/issues":
 			assert.Equal(t, "all", r.URL.Query().Get("state"), "closed issues would be created again")
 			fmt.Fprint(w, `[{"id":42,"number":7,"body":"b"}]`)
-		case "POST /repos/php/php-src-security/issues":
+		case "POST /repos/acme/private-issues/issues":
 			assert.Equal(t, map[string]any{"title": "t", "body": "b"}, body)
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{"id":42,"number":7}`)
-		case "PATCH /repos/php/php-src-security/issues/7":
+		case "PATCH /repos/acme/private-issues/issues/7":
 			assert.Equal(t, map[string]any{"state": "closed", "state_reason": "completed"}, body)
-		case "DELETE /repos/php/php-src-security/issues/3/sub_issue":
+		case "DELETE /repos/acme/private-issues/issues/3/sub_issue":
 			assert.Equal(t, map[string]any{"sub_issue_id": float64(42)}, body)
-		case "POST /repos/php/php-src-security/issues/3/sub_issues":
+		case "POST /repos/acme/private-issues/issues/3/sub_issues":
 			assert.Equal(t, map[string]any{"sub_issue_id": float64(42), "replace_parent": true}, body)
 			w.WriteHeader(http.StatusCreated)
 		case "POST /orgs/php/projectsV2/16/items":
@@ -223,20 +223,20 @@ func TestIssues(t *testing.T) {
 
 	reached, err := c.InstallationRepositories(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, []string{"php/php-src-security"}, reached)
-	repo, err := c.GetRepository(context.Background(), "php/php-src-security")
+	require.Equal(t, []string{"acme/private-issues"}, reached)
+	repo, err := c.GetRepository(context.Background(), "acme/private-issues")
 	require.NoError(t, err)
 	require.True(t, repo.Private)
-	issues, err := c.ListIssues(context.Background(), "php/php-src-security")
+	issues, err := c.ListIssues(context.Background(), "acme/private-issues")
 	require.NoError(t, err)
 	require.Equal(t, []Issue{{ID: 42, Number: 7, Body: "b"}}, issues)
-	issue, err := c.CreateIssue(context.Background(), "php/php-src-security", "t", "b")
+	issue, err := c.CreateIssue(context.Background(), "acme/private-issues", "t", "b")
 	require.NoError(t, err)
 	require.Equal(t, int64(42), issue.ID)
 	require.Equal(t, 7, issue.Number)
-	require.NoError(t, c.UpdateIssue(context.Background(), "php/php-src-security", 7, map[string]string{"state": "closed", "state_reason": "completed"}))
-	require.NoError(t, c.AddSubIssue(context.Background(), "php/php-src-security", 3, 42))
-	require.NoError(t, c.RemoveSubIssue(context.Background(), "php/php-src-security", 3, 42))
+	require.NoError(t, c.UpdateIssue(context.Background(), "acme/private-issues", 7, map[string]string{"state": "closed", "state_reason": "completed"}))
+	require.NoError(t, c.AddSubIssue(context.Background(), "acme/private-issues", 3, 42))
+	require.NoError(t, c.RemoveSubIssue(context.Background(), "acme/private-issues", 3, 42))
 	item, err := c.AddProjectIssue(context.Background(), "php", 16, 42)
 	require.NoError(t, err)
 	require.Equal(t, int64(9), item.ID)
@@ -245,7 +245,7 @@ func TestIssues(t *testing.T) {
 
 func TestInstallationRepositoriesRefusesAPartialList(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"total_count":101,"repositories":[{"full_name":"php/php-src-security"}]}`)
+		fmt.Fprint(w, `{"total_count":101,"repositories":[{"full_name":"acme/private-issues"}]}`)
 	})
 
 	_, err := c.InstallationRepositories(context.Background())
@@ -260,13 +260,13 @@ func TestProjectErrors(t *testing.T) {
 
 	_, err := c.CreateDraft(context.Background(), "php", 16, "t", "b")
 	require.Error(t, c.UpdateDraft(context.Background(), "DI_6", "b"))
-	_, err = c.GetRepository(context.Background(), "php/php-src-security")
+	_, err = c.GetRepository(context.Background(), "acme/private-issues")
 	require.Error(t, err)
 	_, err = c.InstallationRepositories(context.Background())
 	require.Error(t, err)
-	_, err = c.CreateIssue(context.Background(), "php/php-src-security", "t", "b")
+	_, err = c.CreateIssue(context.Background(), "acme/private-issues", "t", "b")
 	require.Error(t, err)
-	require.Error(t, c.AddSubIssue(context.Background(), "php/php-src-security", 3, 42))
+	require.Error(t, c.AddSubIssue(context.Background(), "acme/private-issues", 3, 42))
 	var httpErr *HTTPError
 	require.ErrorAs(t, err, &httpErr)
 	require.Equal(t, http.StatusForbidden, httpErr.Status)

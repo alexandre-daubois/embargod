@@ -43,7 +43,7 @@ type Issue struct {
 }
 
 func New() *Project {
-	p := &Project{Items: map[int64]map[int64]any{}, Titles: map[int64]string{}, Bodies: map[int64]string{}, Repos: map[string]bool{"php/php-src-security": true, "php/php-src": false}, Issues: map[int]*Issue{}, issueOf: map[int64]int{}, Reached: []string{"php/php-src-security"}}
+	p := &Project{Items: map[int64]map[int64]any{}, Titles: map[int64]string{}, Bodies: map[int64]string{}, Repos: map[string]bool{"acme/private-issues": true, "php/php-src": false}, Issues: map[int]*Issue{}, issueOf: map[int64]int{}, Reached: []string{"acme/private-issues"}}
 	for i, f := range []struct {
 		name, dataType string
 		options        []string

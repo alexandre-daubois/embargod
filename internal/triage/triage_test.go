@@ -1461,11 +1461,11 @@ func TestRunNeverTriagesAgainWithoutAProject(t *testing.T) {
 func TestRunPutsTheTriageInAPrivateIssue(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
 
-	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16", IssuesRepository: "php/php-src-security"}, gh, eng))
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16", IssuesRepository: "acme/private-issues"}, gh, eng))
 
 	issue := gh.IssueOf(gh.Find("GHSA-done"))
 	require.NotNil(t, issue, "the board triage is not an issue")
-	require.Equal(t, "php/php-src-security", issue.Repo)
+	require.Equal(t, "acme/private-issues", issue.Repo)
 	require.Contains(t, issue.Body, report.Marker, "the issue misses the triage")
 	require.Empty(t, gh.posted, "the board triage posted a comment")
 }

@@ -350,7 +350,7 @@ func TestOpenRefusesAnIssuesRepositoryThatCouldPublishReports(t *testing.T) {
 	for name, tc := range map[string]struct {
 		issues, err string
 	}{
-		"private":             {"php/php-src-security", ""},
+		"private":             {"acme/private-issues", ""},
 		"public":              {"php/php-src", "the issues repository must not be the repository of the advisories"},
 		"public elsewhere":    {"php/web-php", "the issues repository must be private"},
 		"advisory repository": {"PHP/PHP-SRC", "the issues repository must not be the repository of the advisories"},
@@ -375,7 +375,7 @@ func TestOpenRefusesAnIssuesRepositoryThatCouldPublishReports(t *testing.T) {
 
 func TestPutCreatesAPrivateIssue(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: "GHSA-new", Summary: "Overflow found by @someone", HTMLURL: "https://x/GHSA-new", State: "triage"}
 
@@ -386,7 +386,7 @@ func TestPutCreatesAPrivateIssue(t *testing.T) {
 	issue := p.IssueOf(id)
 	require.NotNil(t, issue, "the item is a draft")
 	require.Len(t, p.Issues, 1, "a second put created another issue")
-	require.Equal(t, "php/php-src-security", issue.Repo)
+	require.Equal(t, "acme/private-issues", issue.Repo)
 	require.Equal(t, "Overflow found by @​someone", issue.Title, "a mention in the title would notify")
 	require.Equal(t, "https://x/GHSA-new\n\nthe comment\n\n<!-- tamis-issue GHSA-new -->", issue.Body)
 	require.Equal(t, "open", issue.State)
@@ -396,7 +396,7 @@ func TestPutCreatesAPrivateIssue(t *testing.T) {
 
 func TestPutClosesTheIssueOfASettledAdvisory(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "published"}, LookFirst, &Triage{}, ""))
@@ -408,7 +408,7 @@ func TestPutClosesTheIssueOfASettledAdvisory(t *testing.T) {
 
 func TestPutReportsAFailedIssue(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	p.IssueErr = errors.New("HTTP 403")
 
@@ -419,7 +419,7 @@ func TestPutReportsAFailedIssue(t *testing.T) {
 func TestPutKeepsTheDraftsOfAPreviousRun(t *testing.T) {
 	p := boardtest.New()
 	id := p.Add(map[string]any{"GHSA": "GHSA-old"})
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-old", HTMLURL: "https://x/GHSA-old", State: "triage"}, LookFirst, &Triage{}, "the comment"))
@@ -431,7 +431,7 @@ func TestPutKeepsTheDraftsOfAPreviousRun(t *testing.T) {
 
 func TestSyncMirrorsTheAdvisoryStateOnItsIssue(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	for _, g := range []string{"GHSA-a", "GHSA-b", "GHSA-c"} {
 		require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: g, Summary: g, State: "triage"}, LookFirst, &Triage{}, ""))
@@ -451,7 +451,7 @@ func TestSyncMirrorsTheAdvisoryStateOnItsIssue(t *testing.T) {
 
 func TestSyncNestsEveryDuplicateUnderItsOriginal(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	put := func(g, dup string) {
 		require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: g, Summary: g, State: "triage"}, Duplicate, &Triage{DuplicateOf: dup}, ""))
@@ -481,10 +481,10 @@ func TestPutAttachesTheIssueOfARunThatFailedToAddIt(t *testing.T) {
 	p := boardtest.New()
 	const ghsa = "GHSA-aaaa-bbbb-cccc"
 	a := github.Advisory{GHSAID: ghsa, Summary: "s", HTMLURL: "https://x/" + ghsa, State: "triage"}
-	p.Issues[1] = &boardtest.Issue{ID: 1001, Repo: "php/php-src-security", Title: "s", Body: "https://x/" + ghsa + "\n\n<!-- tamis-issue " + ghsa + " -->", State: "open"}
-	p.Issues[2] = &boardtest.Issue{ID: 1002, Repo: "php/php-src-security", Title: "by hand", Body: "no marker", State: "open"}
+	p.Issues[1] = &boardtest.Issue{ID: 1001, Repo: "acme/private-issues", Title: "s", Body: "https://x/" + ghsa + "\n\n<!-- tamis-issue " + ghsa + " -->", State: "open"}
+	p.Issues[2] = &boardtest.Issue{ID: 1002, Repo: "acme/private-issues", Title: "by hand", Body: "no marker", State: "open"}
 
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{}, "the comment"))
 
@@ -498,7 +498,7 @@ func TestPutAttachesTheIssueOfARunThatFailedToAddIt(t *testing.T) {
 func TestPutMarksEveryIssueWithItsAdvisory(t *testing.T) {
 	p := boardtest.New()
 	const ghsa = "GHSA-dddd-eeee-ffff"
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}
 
@@ -513,8 +513,8 @@ func TestOpenRefusesAnIssuesTokenThatReachesTheAdvisories(t *testing.T) {
 		reached []string
 		err     string
 	}{
-		"issues repository only":  {[]string{"php/php-src-security"}, ""},
-		"advisory repository too": {[]string{"php/php-src-security", "PHP/php-src"}, "the issues token must not reach the repository of the advisories"},
+		"issues repository only":  {[]string{"acme/private-issues"}, ""},
+		"advisory repository too": {[]string{"acme/private-issues", "PHP/php-src"}, "the issues token must not reach the repository of the advisories"},
 		"another repository":      {[]string{"php/web-php"}, "the issues token does not reach the issues repository"},
 		"not an app token":        {nil, "listing the repositories of the issues token: github: HTTP 403"},
 	} {
@@ -522,7 +522,7 @@ func TestOpenRefusesAnIssuesTokenThatReachesTheAdvisories(t *testing.T) {
 			p := boardtest.New()
 			p.Reached = tc.reached
 
-			_, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+			_, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 
 			if tc.err == "" {
 				require.NoError(t, err)
@@ -536,7 +536,7 @@ func TestOpenRefusesAnIssuesTokenThatReachesTheAdvisories(t *testing.T) {
 func TestOpenRefusesAnIssuesRepositoryWithoutItsToken(t *testing.T) {
 	p := boardtest.New()
 
-	_, err := Open(t.Context(), p, nil, "php/16", "php/php-src-security", "php/php-src")
+	_, err := Open(t.Context(), p, nil, "php/16", "acme/private-issues", "php/php-src")
 
 	require.EqualError(t, err, "the issues repository needs a token of its own")
 }
@@ -544,13 +544,13 @@ func TestOpenRefusesAnIssuesRepositoryWithoutItsToken(t *testing.T) {
 func TestOpenFindsTheIssueOfARunWhoseFieldsFailed(t *testing.T) {
 	p := boardtest.New()
 	const ghsa = "GHSA-aaaa-bbbb-cccc"
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	p.UpdateErr = errors.New("HTTP 404")
 	require.Error(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
 	p.UpdateErr = nil
 
-	b, err = Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err = Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	require.False(t, b.Has(ghsa), "an item without fields looks triaged")
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
@@ -562,7 +562,7 @@ func TestOpenFindsTheIssueOfARunWhoseFieldsFailed(t *testing.T) {
 
 func TestSyncLeavesTheIssuesOfAnotherRepositoryAlone(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-a", Summary: "a", State: "triage"}, LookFirst, &Triage{}, ""))
 	id := p.Find("GHSA-a")
@@ -585,11 +585,11 @@ func TestPutIgnoresAMarkerQuotedByTheTriage(t *testing.T) {
 	p := boardtest.New()
 	const own, quoted = "GHSA-aaaa-aaaa-aaaa", "GHSA-bbbb-bbbb-bbbb"
 	body := "https://x/" + own + "\n\n`<!-- tamis-issue " + quoted + " -->`\n\n<!-- tamis-issue " + own + " -->"
-	p.Issues[1] = &boardtest.Issue{ID: 1001, Repo: "php/php-src-security", Title: own, Body: body, State: "open"}
+	p.Issues[1] = &boardtest.Issue{ID: 1001, Repo: "acme/private-issues", Title: own, Body: body, State: "open"}
 	_, err := p.AddProjectIssue(t.Context(), "php", 16, 1001)
 	require.NoError(t, err)
 
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	require.NotNil(t, b.items[strings.ToLower(own)], "the issue lost its own advisory")
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: quoted, Summary: quoted, State: "triage"}, LookFirst, &Triage{}, "the comment"))
@@ -600,12 +600,12 @@ func TestPutIgnoresAMarkerQuotedByTheTriage(t *testing.T) {
 
 func TestPutReopensTheIssueOfAnAdvisoryBackInTriage(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-a", Summary: "a", State: "triage"}, AnalysisRetrying, nil, "failed once"))
 	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-a", State: "closed"}}))
 	id := p.Find("GHSA-a")
-	b, err = Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err = Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	reopened := github.Advisory{GHSAID: "GHSA-a", State: "triage"}
 
@@ -622,7 +622,7 @@ func TestPutReopensTheIssueOfAnAdvisoryBackInTriage(t *testing.T) {
 
 func TestPutWritesTheFieldsOfAnIssueOfAnotherRepository(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: "GHSA-a", Summary: "a", HTMLURL: "https://x/GHSA-a", State: "triage"}
 	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{}, "the comment"))
@@ -639,7 +639,7 @@ func TestPutWritesTheFieldsOfAnIssueOfAnotherRepository(t *testing.T) {
 func TestSyncNestsADuplicateUnderAnOriginalAddedLater(t *testing.T) {
 	p := boardtest.New()
 	open := func() *Board {
-		b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+		b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 		require.NoError(t, err)
 		return b
 	}
@@ -663,8 +663,8 @@ func TestPutReopensAClosedIssueItAttachesAgain(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			p := boardtest.New()
 			const ghsa = "GHSA-aaaa-bbbb-cccc"
-			p.Issues[1] = &boardtest.Issue{ID: 1001, Repo: "php/php-src-security", Title: "s", Body: "<!-- tamis-issue " + ghsa + " -->", State: "closed", StateReason: "not_planned"}
-			b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+			p.Issues[1] = &boardtest.Issue{ID: 1001, Repo: "acme/private-issues", Title: "s", Body: "<!-- tamis-issue " + ghsa + " -->", State: "closed", StateReason: "not_planned"}
+			b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 			require.NoError(t, err)
 
 			require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: state}, LookFirst, &Triage{}, "the comment"))
@@ -678,7 +678,7 @@ func TestPutReopensAClosedIssueItAttachesAgain(t *testing.T) {
 
 func TestSyncNestsUnderTheOldestReportThatHasAnIssue(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	put := func(g, dup string) {
 		require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: g, Summary: g, State: "triage"}, Duplicate, &Triage{DuplicateOf: dup}, ""))
@@ -696,7 +696,7 @@ func TestSyncNestsUnderTheOldestReportThatHasAnIssue(t *testing.T) {
 
 func TestSyncTakesOutAReportThatIsNoLongerADuplicate(t *testing.T) {
 	p := boardtest.New()
-	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-root", Summary: "r", State: "triage"}, LookFirst, &Triage{}, ""))
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-dup", Summary: "d", State: "triage"}, Duplicate, &Triage{DuplicateOf: "GHSA-root"}, ""))
@@ -705,7 +705,7 @@ func TestSyncTakesOutAReportThatIsNoLongerADuplicate(t *testing.T) {
 	require.Equal(t, 1, dup.Parent)
 
 	p.Items[p.Find("GHSA-dup")][p.Fields[2].ID] = nil
-	b, err = Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	b, err = Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	p.IssueErr = errors.New("HTTP 502")
 	require.Error(t, b.Sync(t.Context(), nil))
