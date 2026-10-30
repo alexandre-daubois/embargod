@@ -50,7 +50,7 @@ To bump an agent CLI, update its tag and the sha256 of each architecture's asset
 
 ## Releases
 
-A `vYYYY.MM.DD.N` tag such as `v2026.10.25.1` runs the `Release` workflow. It builds tamis for Linux on amd64 and arm64, attests both binaries and publishes them in a GitHub release.
+A `vYYYY.MM.DD.N` tag such as `v2026.10.25.1` runs the `Release` workflow. It builds tamis for Linux, macOS and Windows on amd64 and arm64, attests the six binaries and publishes them in a GitHub release. The action runs the Linux ones, the others serve local runs.
 
 When the action's pinned commit carries such a tag, the action downloads the binary for the runner and checks its attestation against that commit before running it. For any other commit, the action builds tamis from source.
 
