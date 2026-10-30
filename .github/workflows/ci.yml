@@ -18,10 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
       - name: gofmt
@@ -30,6 +30,21 @@ jobs:
         run: go mod tidy -diff
       - run: go vet ./...
       - run: go tool gotestsum --format github-actions -- -race -count=1 ./...
+
+  # release.yml only runs on tags, so a stale lockfile entry would otherwise break the next release.
+  actions-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - run: gh extension install github/gh-actions-lock --pin v0.4.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: gh actions-lock --verify
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   fuzz:
     runs-on: ubuntu-latest
@@ -42,10 +57,10 @@ jobs:
           - { package: ./internal/report, name: FuzzClues }
           - { package: ./internal/repo, name: FuzzReadFileStaysInTrackedFiles }
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
       - run: go test ${{ matrix.target.package }} -run '^$' -fuzz '^${{ matrix.target.name }}$' -fuzztime 60s
@@ -60,10 +75,10 @@ jobs:
           - claude
           - codex
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
       - run: docker info
