@@ -675,3 +675,43 @@ func TestPutReopensAClosedIssueItAttachesAgain(t *testing.T) {
 		})
 	}
 }
+
+func TestSyncNestsUnderTheOldestReportThatHasAnIssue(t *testing.T) {
+	p := boardtest.New()
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	require.NoError(t, err)
+	put := func(g, dup string) {
+		require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: g, Summary: g, State: "triage"}, Duplicate, &Triage{DuplicateOf: dup}, ""))
+	}
+	put("GHSA-mid", "GHSA-closed")
+	put("GHSA-leaf", "GHSA-mid")
+
+	require.NoError(t, b.Sync(t.Context(), nil))
+
+	mid := p.IssueOf(p.Find("GHSA-mid"))
+	require.Zero(t, mid.Parent, "the oldest report with an issue got a parent")
+	require.Equal(t, 1, p.IssueOf(p.Find("GHSA-leaf")).Parent, "the duplicate of a closed original lost its group")
+	require.Equal(t, "GHSA-closed", p.Value(p.Find("GHSA-leaf"), "Original report"))
+}
+
+func TestSyncTakesOutAReportThatIsNoLongerADuplicate(t *testing.T) {
+	p := boardtest.New()
+	b, err := Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	require.NoError(t, err)
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-root", Summary: "r", State: "triage"}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-dup", Summary: "d", State: "triage"}, Duplicate, &Triage{DuplicateOf: "GHSA-root"}, ""))
+	require.NoError(t, b.Sync(t.Context(), nil))
+	dup := p.IssueOf(p.Find("GHSA-dup"))
+	require.Equal(t, 1, dup.Parent)
+
+	p.Items[p.Find("GHSA-dup")][p.Fields[2].ID] = nil
+	b, err = Open(t.Context(), p, p, "php/16", "php/php-src-security", "php/php-src")
+	require.NoError(t, err)
+	p.IssueErr = errors.New("HTTP 502")
+	require.Error(t, b.Sync(t.Context(), nil))
+	require.Equal(t, 1, dup.Parent, "a failed removal changed the parent")
+
+	p.IssueErr = nil
+	require.NoError(t, b.Sync(t.Context(), nil))
+	require.Zero(t, dup.Parent, "a report cleared by hand stayed nested")
+}

@@ -269,6 +269,19 @@ func (p *Project) AddProjectIssue(_ context.Context, _ string, _ int, issue int6
 	return github.ProjectItem{ID: id, ContentType: "Issue"}, nil
 }
 
+func (p *Project) RemoveSubIssue(_ context.Context, repo string, parent int, child int64) error {
+	if p.Err != nil || p.IssueErr != nil {
+		return errors.Join(p.Err, p.IssueErr)
+	}
+	sub := p.Issues[int(child-1000)]
+	if sub == nil || sub.Repo != repo || sub.Parent != parent {
+		return &github.HTTPError{Status: 404}
+	}
+	sub.Parent = 0
+
+	return nil
+}
+
 func (p *Project) AddSubIssue(_ context.Context, repo string, parent int, child int64) error {
 	if p.Err != nil || p.IssueErr != nil {
 		return errors.Join(p.Err, p.IssueErr)

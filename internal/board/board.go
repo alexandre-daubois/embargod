@@ -79,6 +79,7 @@ type Issues interface {
 	CreateIssue(ctx context.Context, repo, title, body string) (github.Issue, error)
 	UpdateIssue(ctx context.Context, repo string, number int, fields map[string]string) error
 	AddSubIssue(ctx context.Context, repo string, parent int, child int64) error
+	RemoveSubIssue(ctx context.Context, repo string, parent int, child int64) error
 	// AddProjectIssue needs a token that sees the issue, which the token of the advisories does not.
 	AddProjectIssue(ctx context.Context, org string, number int, issue int64) (github.ProjectItem, error)
 }
@@ -501,6 +502,37 @@ func (b *Board) oldest(ghsa string) string {
 	}
 }
 
+// issueItem returns the item of the issue with that ID, nil when the board has none.
+func (b *Board) issueItem(id int64) *item {
+	for _, it := range b.items {
+		if it.issueID == id {
+			return it
+		}
+	}
+
+	return nil
+}
+
+// nest returns the item the issue of it goes under: the oldest report of its Duplicate of chain that has an issue,
+// nil when none has. An original closed before the board has no issue, so its duplicates gather under the next one.
+func (b *Board) nest(it *item) *item {
+	var parent *item
+	seen := map[*item]bool{it: true}
+	for ghsa := it.duplicateOf; ghsa != ""; {
+		next := b.items[strings.ToLower(ghsa)]
+		if next == nil || seen[next] {
+			break
+		}
+		seen[next] = true
+		if next.issue != 0 {
+			parent = next
+		}
+		ghsa = next.duplicateOf
+	}
+
+	return parent
+}
+
 // option sets a single select field, or clears it when the value has no option.
 func (b *Board) option(field, value string) github.FieldValue {
 	v := github.FieldValue{ID: b.ids[field]}
@@ -556,12 +588,21 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 		}
 		// The group is only written once the sub-issue is linked, so a failed link is tried again next run.
 		// The group can predate the issue of its original, so the link follows the parent the issue has.
-		if parent := b.items[strings.ToLower(group)]; it.issue != 0 && parent != nil && parent != it && parent.issue != 0 && it.parent != parent.issueID {
+		if parent := b.nest(it); it.issue != 0 && parent != nil && it.parent != parent.issueID {
 			if err := b.ig.AddSubIssue(ctx, b.issues, parent.issue, it.issueID); err != nil {
 				errs = append(errs, err)
 				group = it.group
 			} else {
 				it.parent = parent.issueID
+			}
+		} else if it.issue != 0 && parent == nil && it.parent != 0 {
+			// A report that is no longer a duplicate leaves the issue it was nested under, when that one is known.
+			if old := b.issueItem(it.parent); old != nil {
+				if err := b.ig.RemoveSubIssue(ctx, b.issues, old.issue, it.issueID); err != nil {
+					errs = append(errs, err)
+				} else {
+					it.parent = 0
+				}
 			}
 		}
 		if group != it.group {

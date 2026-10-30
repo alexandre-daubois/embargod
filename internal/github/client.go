@@ -380,6 +380,13 @@ func (c *Client) AddSubIssue(ctx context.Context, repo string, parent int, child
 	return err
 }
 
+// RemoveSubIssue takes the issue child out of parent.
+func (c *Client) RemoveSubIssue(ctx context.Context, repo string, parent int, child int64) error {
+	_, err := c.do(ctx, http.MethodDelete, fmt.Sprintf("%s/repos/%s/issues/%d/sub_issue", c.BaseURL, repo, parent), map[string]any{"sub_issue_id": child}, nil)
+
+	return err
+}
+
 func (c *Client) AddProjectIssue(ctx context.Context, org string, number int, issue int64) (ProjectItem, error) {
 	var item ProjectItem
 	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/items", c.BaseURL, url.PathEscape(org), number), map[string]any{"type": "Issue", "id": issue}, &item)

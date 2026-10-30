@@ -207,6 +207,8 @@ func TestIssues(t *testing.T) {
 			fmt.Fprint(w, `{"id":42,"number":7}`)
 		case "PATCH /repos/php/php-src-security/issues/7":
 			assert.Equal(t, map[string]any{"state": "closed", "state_reason": "completed"}, body)
+		case "DELETE /repos/php/php-src-security/issues/3/sub_issue":
+			assert.Equal(t, map[string]any{"sub_issue_id": float64(42)}, body)
 		case "POST /repos/php/php-src-security/issues/3/sub_issues":
 			assert.Equal(t, map[string]any{"sub_issue_id": float64(42), "replace_parent": true}, body)
 			w.WriteHeader(http.StatusCreated)
@@ -234,6 +236,7 @@ func TestIssues(t *testing.T) {
 	require.Equal(t, 7, issue.Number)
 	require.NoError(t, c.UpdateIssue(context.Background(), "php/php-src-security", 7, map[string]string{"state": "closed", "state_reason": "completed"}))
 	require.NoError(t, c.AddSubIssue(context.Background(), "php/php-src-security", 3, 42))
+	require.NoError(t, c.RemoveSubIssue(context.Background(), "php/php-src-security", 3, 42))
 	item, err := c.AddProjectIssue(context.Background(), "php", 16, 42)
 	require.NoError(t, err)
 	require.Equal(t, int64(9), item.ID)
