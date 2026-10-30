@@ -32,6 +32,7 @@ var (
 	cvss4 = regexp.MustCompile(`^CVSS:4\.0/AV:[NALP]/AC:[LH]/AT:[NP]/PR:[NLH]/UI:[NPA]/VC:[HLN]/VI:[HLN]/VA:[HLN]/SC:[HLN]/SI:[HLN]/SA:[HLN]$`)
 
 	confidences = []string{"low", "medium", "high"}
+	severities  = []string{"critical", "high", "medium", "low"}
 
 	cluePath   = regexp.MustCompile(`^[A-Za-z0-9_./-]{1,200}$`)
 	clueSymbol = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,100}$`)
@@ -60,6 +61,8 @@ type Report struct {
 	PolicyExclusions []PolicyPoint   `json:"policy_exclusions"`
 	CWE              []CWE           `json:"cwe"`
 	CVSS             CVSS            `json:"cvss"`
+	Severity         string          `json:"severity"`
+	Component        string          `json:"component"`
 
 	// Duplicates come from the comparator, never from the reader.
 	Duplicates []Duplicate `json:"-"`
@@ -82,6 +85,8 @@ type Report struct {
 	Incomplete error `json:"-"`
 	// Elsewhere holds the code references located on the other source references.
 	Elsewhere []Report `json:"-"`
+	// Located says the faulty statement exists on the analysed source, as the duplicate search clues require.
+	Located bool `json:"-"`
 }
 
 type Location struct {
@@ -212,6 +217,8 @@ func ReaderProperties() (map[string]any, []string) {
 			"vector": str("CVSS 4.0 base vector, e.g. CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"),
 			"reason": str("The metrics that drive the score and why, 20 words at most, code identifiers in backticks"),
 		}},
+		"severity":  map[string]any{"type": "string", "enum": severities, "description": "CVSS 4.0 qualitative rating of your vector"},
+		"component": str("Directory of the extension, SAPI or subsystem the bug belongs to, relative to the repository root, e.g. ext/pgsql or sapi/fpm. For code shared by several of them, the one the report targets. Empty when unknown"),
 	}
 	properties["entry_points"].(map[string]any)["maxItems"] = maxEntryPoints
 	properties["related"].(map[string]any)["maxItems"] = maxRelated
@@ -219,12 +226,12 @@ func ReaderProperties() (map[string]any, []string) {
 	properties["policy_exclusions"].(map[string]any)["maxItems"] = maxPolicy
 	properties["cwe"].(map[string]any)["maxItems"] = maxCWE
 
-	return properties, []string{"summary", "location", "entry_points", "related", "code_references", "policy_exclusions", "cwe", "cvss"}
+	return properties, []string{"summary", "location", "entry_points", "related", "code_references", "policy_exclusions", "cwe", "cvss", "severity", "component"}
 }
 
 // ValidateReader bounds every model-controlled collection and string before expensive verification.
 func ValidateReader(r Report) error {
-	if len(r.Summary) > maxText || len(r.Location.Path) > maxText || len(r.Location.Symbol) > maxText || len(r.EntryPoints) > maxEntryPoints || len(r.Related) > maxRelated || len(r.CodeReferences) > maxCodeRefs || len(r.PolicyExclusions) > maxPolicy || len(r.CWE) > maxCWE || len(r.CVSS.Vector) > maxText || len(r.CVSS.Reason) > maxText {
+	if len(r.Summary) > maxText || len(r.Location.Path) > maxText || len(r.Location.Symbol) > maxText || len(r.EntryPoints) > maxEntryPoints || len(r.Related) > maxRelated || len(r.CodeReferences) > maxCodeRefs || len(r.PolicyExclusions) > maxPolicy || len(r.CWE) > maxCWE || len(r.CVSS.Vector) > maxText || len(r.CVSS.Reason) > maxText || len(r.Severity) > maxText || len(r.Component) > maxText {
 		return errors.New("the report exceeds its limits")
 	}
 	for _, text := range r.EntryPoints {
@@ -390,8 +397,20 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 	}
 	r.CWE = cwes
 
+	// The severity rates the vector, so it goes with it.
 	if r.CVSS.Vector != "" && !cvss4.MatchString(r.CVSS.Vector) {
-		r.CVSS = CVSS{}
+		r.CVSS, r.Severity = CVSS{}, ""
+		r.Removed++
+	}
+	if r.CVSS.Vector == "" {
+		r.Severity = ""
+	}
+	// The trailing slash only matches a directory, and cluePath keeps git pathspec magic out.
+	if dir := r.Component; dir != "" && (!cluePath.MatchString(dir) || path.Clean(dir) != dir || strings.HasPrefix(dir, ".") || !c.Code.Exists(dir+"/")) {
+		r.Component = ""
+	}
+	if r.Severity != "" && !slices.Contains(severities, r.Severity) {
+		r.Severity = ""
 		r.Removed++
 	}
 

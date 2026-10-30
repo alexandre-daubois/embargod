@@ -45,10 +45,12 @@ func main() {
 
 func run(ctx context.Context, log *slog.Logger) error {
 	cfg := triage.Config{
-		Repo:     os.Getenv("REPOSITORY"),
-		Advisory: os.Getenv("ADVISORY"),
-		RepoPath: os.Getenv("REPO_PATH"),
-		BotLogin: os.Getenv("BOT_LOGIN"),
+		Repo:             os.Getenv("REPOSITORY"),
+		Advisory:         os.Getenv("ADVISORY"),
+		RepoPath:         os.Getenv("REPO_PATH"),
+		BotLogin:         os.Getenv("BOT_LOGIN"),
+		Project:          os.Getenv("PROJECT"),
+		IssuesRepository: os.Getenv("ISSUES_REPOSITORY"),
 	}
 	if cfg.Repo == "" {
 		cfg.Repo = os.Getenv("GITHUB_REPOSITORY")
@@ -73,10 +75,24 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if token == "" {
 		return errors.New("GH_TOKEN is required")
 	}
+	if cfg.IssuesRepository != "" {
+		issues := os.Getenv("ISSUES_TOKEN")
+		if issues == "" || issues == token {
+			return errors.New("ISSUES_REPOSITORY needs an ISSUES_TOKEN of its own, which only reaches that repository")
+		}
+		cfg.Issues = github.New(issues)
+	}
 	eng, agent, model, err := newEngine(os.Getenv("ENGINE"), os.Getenv("MODEL"), os.Getenv("LLM_API_KEY"))
 	if err != nil {
 		return err
 	}
+	comment := false
+	if v := os.Getenv("COMMENT"); v != "" {
+		if comment, err = strconv.ParseBool(v); err != nil {
+			return fmt.Errorf("COMMENT: %w", err)
+		}
+	}
+	cfg.NoComment = !comment
 	daybreak := false
 	if v := os.Getenv("DAYBREAK"); v != "" {
 		if daybreak, err = strconv.ParseBool(v); err != nil {

@@ -49,8 +49,72 @@ Keep `persist-credentials: false` on the checkout so no token lands in `.git/con
 
 ## 4. First run
 
-Trigger the workflow by hand with the `advisory` input set to a test GHSA. tamis triages that advisory whatever its state and date, and posts the comment on it.
+Trigger the workflow by hand with the `advisory` input set to a test GHSA. tamis triages that advisory whatever its state and date, and puts it on the board, or posts the comment on it with `comment: true`.
 
 Download the private `tamis-reports` artifact and check that the comment names embargoed advisories only as exact duplicates. Then let the schedule take over. Artifact access follows the permissions of the private repository, so grant it to the security team only.
 
 GitHub Actions has no trigger for security advisories, so the schedule polls every 15 minutes. A run with no new advisory neither starts the agent nor calls the model.
+
+## 5. Project board
+
+tamis can keep a private organisation project in sync with the advisories, one draft item each, so the security team sorts them by priority. Give the App the organisation "Projects" permission in read and write, create a private project and add these fields by hand:
+
+| Field | Type | Options, in this order |
+|---|---|---|
+| `GHSA` | Text | |
+| `Duplicate of` | Text | |
+| `Duplicates` | Number | |
+| `Reported` | Date | |
+| `Priority` | Single select | `Look first`, `When possible`, `Duplicate`, `Analysis failed`, `Analysis failed, retrying`, `Analysis pending` |
+| `Severity` | Single select | `Critical`, `High`, `Medium`, `Low` |
+| `State` | Single select | `triage`, `draft`, `published`, `closed`, `withdrawn` |
+| `Policy exclusion` | Single select | `Yes`, `No` |
+| `Located` | Single select | `Yes`, `No` |
+| `Component` | Text | |
+| `Original report` | Text | |
+| `Attempts` | Number | |
+
+Then set `project` to `your-org/NUMBER`. When the project is public, or a field or an option is missing or renamed, tamis leaves the board out of the run, still triages and comments with `comment: true` and skips every advisory without it, and fails the run so the error shows.
+
+The code sets `Priority`:
+
+- `Look first` for a critical or high severity, a faulty statement found in the repository and no policy exclusion,
+- `When possible` otherwise,
+- `Duplicate` behind the oldest high-confidence exact duplicate the comment shows, which `Duplicate of` names,
+- `Analysis pending` while tamis triages again an advisory it commented before the board, `Analysis failed, retrying` after a failed attempt with another to come, and `Analysis failed` once tamis gives up. The draft body then explains the status instead of holding the triage comment.
+
+The model estimates `Severity` from its CVSS vector and ignores the one the reporter claims. `Duplicates` counts the items that name the advisory in `Duplicate of`. `Component` is the directory of the extension, SAPI or subsystem the model names, such as `sapi/fpm` for FastCGI code a report reaches through FPM, once tamis checks the repository has that directory. Without one, tamis takes the directory of the faulty statement two levels deep, and leaves it empty when the statement was not located. `Original report` holds the oldest report of a group of duplicates, on that report and on each of its duplicates, so a view grouped by it shows each original with its duplicates.
+
+At the end of each run, tamis copies the state of every advisory to `State`, recounts `Duplicates` and ranks every triage again from `Severity`, `Policy exclusion`, `Located` and `Duplicate of`, so a new priority rule reaches the board with a release. None of it calls the model. A `Priority` changed by hand comes back at the next run, while a change to one of those four fields lasts. The REST API cannot archive items, so filter the views on `State` instead, for example a table on `State:triage,draft` sorted by `Priority` then `Reported`.
+
+An advisory in the `triage` state that tamis commented but that has no item, for example one triaged before the board existed, is triaged again without a new comment. When that triage fails, the item gets `Analysis failed` and the advisory is not retried. Deleting an item by hand triggers that triage again on the next run.
+
+With `issues-repository` set, for example to `your-org/your-project-security`, new items are issues of that repository instead of drafts, and each duplicate becomes a sub-issue of its `Original report`. tamis closes an issue when its advisory is published, closed or withdrawn. Everyone with access to that repository reads the reports, and each new issue notifies its watchers. tamis refuses a public repository and the repository of the advisories, and then leaves the board out of the run.
+
+tamis writes the issues and adds them to the project with `issues-token`, a second installation token that reaches the issues repository only, and refuses it when it also reaches `repository`. `github-token` updates the fields of the items, so it reads the issues repository too, but keep its "Issues" permission at read, so neither token can open an issue on the project:
+
+```yaml
+- uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+  id: app
+  with:
+    client-id: ${{ vars.TAMIS_CLIENT_ID }}
+    private-key: ${{ secrets.TAMIS_PRIVATE_KEY }}
+    owner: your-org
+    repositories: your-project,your-project-security
+    permission-repository-advisories: write
+    permission-organization-projects: write
+    permission-issues: read
+- uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+  id: issues
+  with:
+    client-id: ${{ vars.TAMIS_CLIENT_ID }}
+    private-key: ${{ secrets.TAMIS_PRIVATE_KEY }}
+    owner: your-org
+    repositories: your-project-security
+    permission-issues: write
+    permission-organization-projects: write
+```
+
+Then pass `issues-token: ${{ steps.issues.outputs.token }}`. The App needs the "Issues" permission in read and write and an installation on the issues repository.
+
+With `comment` left at `false`, tamis posts nothing on the advisories. The item of an advisory says it was triaged, `Attempts` counts its failed attempts in place of the failure comments, and deleting an item triages its advisory again on the next run.

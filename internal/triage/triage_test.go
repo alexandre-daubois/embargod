@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/php/tamis/internal/board/boardtest"
 	"github.com/php/tamis/internal/budget"
 	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
@@ -37,6 +38,7 @@ import (
 var since = time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
 
 type fakeGitHub struct {
+	*boardtest.Project
 	advisories  []github.Advisory
 	comments    map[string][]github.Comment
 	posted      map[string]string
@@ -524,6 +526,7 @@ func newFixture() *fakeGitHub {
 		},
 		comments: map[string][]github.Comment{"GHSA-done": {botComment(report.Marker + "\nprevious run")}},
 		posted:   map[string]string{},
+		Project:  boardtest.New(),
 	}
 	a := f.advisories[2]
 	f.comments[a.GHSAID] = []github.Comment{botComment(report.Marker + "\nprevious run")}
@@ -539,6 +542,9 @@ func testConfig(t *testing.T, gh *fakeGitHub, cfg Config) Config {
 	gh.outputDir = cfg.OutputDir
 	if len(cfg.References) == 0 {
 		cfg.References = []string{"HEAD"}
+	}
+	if cfg.IssuesRepository != "" && cfg.Issues == nil {
+		cfg.Issues = gh.Project
 	}
 	if cfg.RepoPath == "" {
 		cfg.RepoPath = gitRepo(t, map[string]string{"ext/foo/foo.c": strings.Repeat("\n", 41) + "void php_foo(void) { foo_encode(); }\n"})
@@ -1216,4 +1222,404 @@ func TestRunCopiesTheAnalysedSourceOncePerExecution(t *testing.T) {
 	readers := eng.role("")
 	require.Len(t, readers, 2)
 	require.Equal(t, readers[0].repoPath, readers[1].repoPath, "the advisories did not share the analysed source")
+}
+
+func TestRunPutsANewTriageOnTheBoard(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
+
+	id := gh.Find("GHSA-new")
+	require.NotZero(t, id, "the triage is missing from the board")
+	require.Equal(t, "Duplicate", gh.Value(id, "Priority"))
+	require.Equal(t, "GHSA-old", gh.Value(id, "Duplicate of"))
+	require.Equal(t, "triage", gh.Value(id, "State"))
+	require.Contains(t, gh.posted["GHSA-new"], report.Marker)
+	require.Equal(t, "\n\n"+gh.posted["GHSA-new"], gh.Bodies[id], "the draft body is not the link then the posted comment")
+}
+
+func TestRunPostsTheCommentWhenTheBoardFails(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.Err = errors.New("HTTP 403")
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
+
+	require.Contains(t, gh.posted["GHSA-new"], report.Marker, "a board failure blocked the comment")
+	require.Empty(t, gh.Items)
+}
+
+func TestRunTriagesACommentedAdvisoryAgainForTheBoardWithoutANewComment(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+
+	require.NotEmpty(t, eng.role(""), "the advisory was not triaged again")
+	require.Empty(t, gh.posted, "the board triage posted a comment")
+	require.Equal(t, "Duplicate", gh.Value(gh.Find("GHSA-done"), "Priority"))
+	require.Contains(t, gh.Bodies[gh.Find("GHSA-done")], report.Marker, "the draft body misses the new triage")
+
+	eng.calls = nil
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+	require.Empty(t, eng.calls, "an advisory already on the board was triaged again")
+}
+
+func TestRunOnlyTriagesOpenAdvisoriesAgainForTheBoard(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.advisories[2].State = "closed"
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+
+	require.Empty(t, eng.calls, "a closed advisory was triaged again")
+	require.Empty(t, gh.Items)
+}
+
+func TestRunDoesNotTriageAgainWithoutABoard(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done"}, gh, eng))
+
+	require.Empty(t, eng.calls)
+}
+
+func TestRunMarksAFailedBoardTriageAsFailed(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "Leak in bar"}
+	gh.advisories[2].Summary = "Leak in bar"
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+
+	require.Empty(t, gh.posted, "a failed board triage posted a comment")
+	id := gh.Find("GHSA-done")
+	require.Equal(t, "Analysis failed", gh.Value(id, "Priority"), "a failed board triage would be retried on every run")
+	require.Contains(t, gh.Bodies[id], "The automated analysis failed (unexpected error) and will not be retried.")
+}
+
+func TestRunShowsAPendingAnalysisWhileItRuns(t *testing.T) {
+	gh, eng, checked := newFixture(), &fakeEngine{}, false
+	eng.onCompare = func() {
+		checked = true
+		id := gh.Find("GHSA-done")
+		require.Equal(t, "Analysis pending", gh.Value(id, "Priority"))
+		require.Contains(t, gh.Bodies[id], "The automated analysis started on ")
+	}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+
+	require.True(t, checked, "the board was not checked during the analysis")
+	require.Equal(t, "Duplicate", gh.Value(gh.Find("GHSA-done"), "Priority"), "the pending status outlived the analysis")
+}
+
+func TestRunShowsAFailedAttemptThatWillBeRetried(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "Overflow in foo"}
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
+
+	require.Equal(t, report.Failed(true), gh.posted["GHSA-new"])
+	id := gh.Find("GHSA-new")
+	require.Equal(t, "Analysis failed, retrying", gh.Value(id, "Priority"))
+	require.Contains(t, gh.Bodies[id], "on attempt 1 of 3. The next run retries it.")
+
+	eng.fail = ""
+	gh.comments["GHSA-new"] = []github.Comment{botComment(report.Failed(true))}
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
+	require.Equal(t, "Duplicate", gh.Value(id, "Priority"), "a successful retry kept the failed status")
+	require.Contains(t, gh.Bodies[id], report.Marker)
+}
+
+func TestRunKeepsTheBoardTriageForTheNextRunWhenTheBoardFails(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.Err = errors.New("HTTP 403")
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+
+	require.Empty(t, eng.calls, "a board refusing writes cost a model run")
+	require.Empty(t, gh.posted)
+	require.Empty(t, gh.Items)
+}
+
+func TestRunPutsTheLastFailedAttemptOnTheBoard(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "Overflow in foo"}
+	gh.comments["GHSA-new"] = []github.Comment{botComment(report.Failed(true)), botComment(report.Failed(true))}
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
+
+	require.Equal(t, report.Failed(false), gh.posted["GHSA-new"])
+	require.Equal(t, "Analysis failed", gh.Value(gh.Find("GHSA-new"), "Priority"))
+}
+
+func TestRunSyncsTheBoardWithoutTriaging(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	id := gh.Add(map[string]any{"GHSA": "GHSA-done", "State": "triage", "Priority": "When possible"})
+	gh.advisories[2].State = "closed"
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+
+	require.Empty(t, eng.calls)
+	require.Empty(t, gh.posted)
+	require.Equal(t, "closed", gh.Value(id, "State"))
+}
+
+func TestRunTriagesWithoutABoardInAnUnexpectedLayout(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.Fields = gh.Fields[:2]
+
+	require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng), `opening the project board: the project has no text field "Duplicate of"`)
+	require.Contains(t, gh.posted["GHSA-new"], report.Marker, "a broken board blocked the triage")
+	require.Empty(t, gh.Items)
+}
+
+func TestRunDoesNotTriageAgainWithABoardInAnUnexpectedLayout(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.Fields = gh.Fields[:2]
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+	require.Empty(t, eng.calls, "an unreadable board looked empty and caused another triage")
+}
+
+func TestRunLooksFirstAtASevereReportOnlyWhenItsFaultyStatementExists(t *testing.T) {
+	for name, tc := range map[string]struct {
+		location, priority, located, component string
+	}{
+		"located":     {`"path":"ext/foo/foo.c","symbol":"php_foo","line":42`, "Look first", "Yes", "ext/foo"},
+		"not located": {`"path":"ext/foo/missing.c","symbol":"php_foo","line":42`, "When possible", "No", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gh := newFixture()
+			eng := &fakeEngine{comparator: `{"duplicates":[]}`, reader: `{"summary":"s","location":{` + tc.location + `},"code_references":[{"path":"trigger.py","symbol":"","line":0,"snippet":""}],"cvss":{"vector":"CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N","reason":"r"},"severity":"high"}`}
+
+			require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
+
+			id := gh.Find("GHSA-new")
+			require.Equal(t, tc.priority, gh.Value(id, "Priority"))
+			require.Equal(t, tc.located, gh.Value(id, "Located"), "the board cannot rank this triage again")
+			require.Equal(t, "No", gh.Value(id, "Policy exclusion"))
+			require.Equal(t, tc.component, gh.Value(id, "Component"))
+		})
+	}
+}
+
+func TestRunFailsWhenTheBoardSyncFails(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.Add(map[string]any{"GHSA": "GHSA-done", "State": "draft", "Priority": "When possible"})
+	gh.UpdateErr = errors.New("HTTP 502")
+
+	err := run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng)
+
+	require.EqualError(t, err, "syncing the project board: unexpected error", "a board sync failure was counted as a failed advisory")
+	require.Empty(t, eng.calls)
+	require.Empty(t, gh.posted)
+}
+
+func TestRunPostsNothingWhenABoardTriageAndItsBoardFail(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "Leak in bar"}
+	gh.advisories[2].Summary = "Leak in bar"
+	gh.Err = errors.New("HTTP 403")
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+
+	require.Empty(t, gh.posted, "a failed board triage posted a comment")
+	require.Empty(t, gh.Items)
+}
+
+func TestRunStillPostsTheLastFailureWhenTheBoardFails(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "Overflow in foo"}
+	gh.comments["GHSA-new"] = []github.Comment{botComment(report.Failed(true)), botComment(report.Failed(true))}
+	gh.Err = errors.New("HTTP 403")
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
+
+	require.Equal(t, report.Failed(false), gh.posted["GHSA-new"], "a board failure hid the last failure from the maintainers")
+}
+
+func TestRunTriagesWithoutAPublicBoard(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.Public = true
+
+	require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng), "the project must be private")
+	require.Contains(t, gh.posted["GHSA-new"], report.Marker)
+	require.Empty(t, gh.Items, "an embargoed advisory reached a public board")
+}
+
+func TestRunTriagesWithoutTheBoardWhenItCannotBeRead(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.ListErr = errors.New("HTTP 403")
+
+	require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng), "opening the project board")
+	require.Contains(t, gh.posted["GHSA-new"], report.Marker)
+}
+
+func TestRunNeverTriagesAgainWithoutAProject(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.NoError(t, run(t, Config{Since: since}, gh, eng))
+
+	for _, call := range eng.role("") {
+		require.NotContains(t, call.prompt, "as GHSA-done", "GHSA-done was triaged again without a board")
+	}
+	require.NotContains(t, gh.posted, "GHSA-done")
+}
+
+func TestRunPutsTheTriageInAPrivateIssue(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16", IssuesRepository: "acme/private-issues"}, gh, eng))
+
+	issue := gh.IssueOf(gh.Find("GHSA-done"))
+	require.NotNil(t, issue, "the board triage is not an issue")
+	require.Equal(t, "acme/private-issues", issue.Repo)
+	require.Contains(t, issue.Body, report.Marker, "the issue misses the triage")
+	require.Empty(t, gh.posted, "the board triage posted a comment")
+}
+
+func TestRunNeverCreatesAnIssueInAPublicRepository(t *testing.T) {
+	for name, repo := range map[string]string{"public": "php/php-src", "advisory repository": "o/r"} {
+		t.Run(name, func(t *testing.T) {
+			gh, eng := newFixture(), &fakeEngine{}
+			gh.Repos["o/r"] = true
+
+			gh.Reached = append(gh.Reached, repo)
+
+			require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16", IssuesRepository: repo}, gh, eng), "opening the project board: the issues")
+
+			require.Empty(t, gh.Issues, "an issue was created in %s", repo)
+			require.Empty(t, gh.Items)
+			require.Contains(t, gh.posted["GHSA-new"], report.Marker, "the refused board blocked the triage")
+		})
+	}
+}
+
+func TestRunMarksABoardTriageFailedWhenItMissesTheBoard(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	eng.onCompare = func() { gh.UpdateErr = errors.New("HTTP 502") }
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+
+	require.Empty(t, gh.posted, "a board triage posted a comment")
+	require.Contains(t, gh.Bodies[gh.Find("GHSA-done")], "will not be retried", "the item kept the pending status of an analysis that ended")
+}
+
+func TestRunWithoutCommentsPutsEveryTriageOnTheBoardOnly(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	cfg := Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}
+
+	require.NoError(t, run(t, cfg, gh, eng))
+
+	require.Empty(t, gh.posted, "a run without comments posted one")
+	id := gh.Find("GHSA-new")
+	require.Equal(t, "Duplicate", gh.Value(id, "Priority"))
+	require.Contains(t, gh.Bodies[id], report.Marker, "the board misses the triage")
+
+	eng.calls = nil
+	require.NoError(t, run(t, cfg, gh, eng))
+	require.Empty(t, eng.calls, "an advisory already on the board was triaged again")
+}
+
+func TestRunWithoutCommentsCountsTheFailedAttemptsOnTheBoard(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "Overflow in foo"}
+	cfg := Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		require.Error(t, run(t, cfg, gh, eng))
+		id := gh.Find("GHSA-new")
+		require.Equal(t, fmt.Sprint(attempt), gh.Value(id, "Attempts"))
+		want := "Analysis failed, retrying"
+		if attempt == 3 {
+			want = "Analysis failed"
+		}
+		require.Equal(t, want, gh.Value(id, "Priority"), "attempt %d", attempt)
+	}
+	require.Empty(t, gh.posted, "a failure was commented")
+
+	eng.calls = nil
+	require.NoError(t, run(t, cfg, gh, eng))
+	require.Empty(t, eng.calls, "an advisory out of attempts was triaged again")
+}
+
+func TestRunWithoutCommentsClearsTheAttemptsOfASuccessfulRetry(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "Overflow in foo"}
+	cfg := Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}
+	require.Error(t, run(t, cfg, gh, eng))
+
+	eng.fail = ""
+	require.NoError(t, run(t, cfg, gh, eng))
+
+	id := gh.Find("GHSA-new")
+	require.Equal(t, "Duplicate", gh.Value(id, "Priority"))
+	require.Empty(t, gh.Value(id, "Attempts"), "a triaged advisory kept its failed attempts")
+}
+
+func TestRunWithoutCommentsTriagesAnAdvisoryCommentedBefore(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16", NoComment: true}, gh, eng))
+
+	require.NotEmpty(t, eng.role(""))
+	require.Empty(t, gh.posted)
+	require.NotZero(t, gh.Find("GHSA-done"))
+}
+
+func TestRunWithoutCommentsNeedsItsBoard(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", NoComment: true}, gh, eng), "a run without comments needs a project board")
+
+	gh.Fields = gh.Fields[:2]
+	require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}, gh, eng), "opening the project board")
+	require.Empty(t, eng.calls, "a run without its board triaged an advisory nowhere to be recorded")
+	require.Empty(t, gh.posted)
+}
+
+func TestRunTriagesACommentedAdvisoryAgainOnlyWhileItsItemRetries(t *testing.T) {
+	for priority, again := range map[string]bool{"Analysis failed, retrying": true, "Analysis failed": false} {
+		t.Run(priority, func(t *testing.T) {
+			gh, eng := newFixture(), &fakeEngine{}
+			id := gh.Add(map[string]any{"GHSA": "GHSA-done", "State": "triage", "Priority": priority})
+
+			require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
+
+			require.Empty(t, gh.posted, "the board triage posted a comment")
+			if !again {
+				require.Empty(t, eng.calls, "an advisory out of attempts was triaged again")
+				return
+			}
+			require.NotEmpty(t, eng.role(""), "the item kept a retry the triage comment already settled")
+			require.Equal(t, "Duplicate", gh.Value(id, "Priority"))
+		})
+	}
+}
+
+func TestRunWithoutCommentsRetriesAnAnalysisAStoppedRunLeftPending(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	id := gh.Add(map[string]any{"GHSA": "GHSA-new", "State": "triage", "Priority": "Analysis pending", "Attempts": 1})
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}, gh, eng))
+
+	require.NotEmpty(t, eng.role(""), "a stopped analysis was never retried")
+	require.Equal(t, "Duplicate", gh.Value(id, "Priority"))
+	require.Empty(t, gh.posted)
+}
+
+func TestRunWithoutCommentsGivesUpOnAnAnalysisThatKeepsStopping(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	gh.Add(map[string]any{"GHSA": "GHSA-new", "State": "triage", "Priority": "Analysis pending", "Attempts": 3})
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true}, gh, eng))
+
+	require.Empty(t, eng.calls, "an analysis that stopped three runs was started again")
+}
+
+func TestRunKeepsTheReportOfABoardTriageWhoseBoardWriteFails(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	cfg := testConfig(t, gh, Config{Advisory: "GHSA-new", Project: "php/16", NoComment: true})
+	fail := false
+	eng.onCompare = func() { fail = true }
+	gh.UpdateHook = func() error {
+		if fail {
+			return errors.New("HTTP 502")
+		}
+		return nil
+	}
+
+	require.Error(t, Run(t.Context(), cfg, gh, eng, eng, slog.New(slog.DiscardHandler)))
+
+	require.Contains(t, privateReports(t, gh), "Automated triage", "the model run left no report")
 }

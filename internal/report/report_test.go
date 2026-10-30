@@ -40,6 +40,8 @@ func codeRepo(t *testing.T) repo.Repo {
 	t.Helper()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.c"), []byte("void real_func(void) {}\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sapi", "fpm"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sapi", "fpm", "fpm.c"), []byte("int fpm;\n"), 0o644))
 	for _, args := range [][]string{{"init", "-q"}, {"add", "."}} {
 		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
@@ -64,10 +66,12 @@ func TestVerifyKeepsWhatExists(t *testing.T) {
 		CodeReferences: []CodeReference{{Path: "a.c", Symbol: "real_func"}, {Path: "a.c"}},
 		CWE:            []CWE{{ID: "CWE-787"}},
 		CVSS:           CVSS{Vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"},
+		Severity:       "critical",
 	}
 
 	require.NoError(t, checker(t).Verify(context.Background(), &r))
 
+	require.Equal(t, "critical", r.Severity, "nothing should be removed: %+v", r)
 	require.Zero(t, r.Removed, "nothing should be removed: %+v", r)
 	require.Len(t, r.Duplicates, 1, "nothing should be removed: %+v", r)
 	require.Len(t, r.Related, 1, "nothing should be removed: %+v", r)
@@ -88,6 +92,7 @@ func TestVerifyDropsWhatDoesNotExist(t *testing.T) {
 		CodeReferences: []CodeReference{{Path: "a.c", Symbol: "invented_func"}, {Path: "missing.c"}, {Path: "../etc/passwd"}},
 		CWE:            []CWE{{ID: "CWE-0"}, {ID: "buffer overflow"}},
 		CVSS:           CVSS{Vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+		Severity:       "Severe",
 	}
 
 	require.NoError(t, checker(t).Verify(context.Background(), &r))
@@ -96,7 +101,9 @@ func TestVerifyDropsWhatDoesNotExist(t *testing.T) {
 	require.Empty(t, r.Related, "invented claims should be removed: %+v", r)
 	require.Empty(t, r.CWE, "invented claims should be removed: %+v", r)
 	require.Empty(t, r.CVSS.Vector, "invented claims should be removed: %+v", r)
-	// Duplicates are dropped silently, so only related issues, CWEs and the vector count.
+	require.Empty(t, r.Severity, "invented claims should be removed: %+v", r)
+	// Duplicates are dropped silently, and the severity goes with its vector, so only related issues, CWEs and the
+	// vector count.
 	require.Equal(t, 5, r.Removed)
 	require.Len(t, r.CodeReferences, 3, "code references are kept and flagged")
 	for _, ref := range r.CodeReferences {
@@ -431,6 +438,7 @@ func TestValidateReaderBoundsModelOutput(t *testing.T) {
 		"long entry point": {EntryPoints: []string{strings.Repeat("x", maxText+1)}},
 		"long exclusion":   {PolicyExclusions: []PolicyPoint{{Reason: strings.Repeat("x", maxText+1)}}},
 		"long CWE":         {CWE: []CWE{{Reason: strings.Repeat("x", maxText+1)}}},
+		"long severity":    {Severity: strings.Repeat("x", maxText+1)},
 		"too much entry point text": {EntryPoints: []string{
 			strings.Repeat("x", maxText), strings.Repeat("x", maxText), strings.Repeat("x", maxText),
 			strings.Repeat("x", maxText), strings.Repeat("x", maxText), strings.Repeat("x", maxText), "x",
@@ -560,4 +568,52 @@ func TestRenderReferenceWithoutPath(t *testing.T) {
 
 	require.Contains(t, got, "| `urldecode` | Found |")
 	require.NotContains(t, got, "``")
+}
+
+func TestVerifyKeepsOnlyAComponentDirectoryOfTheRepository(t *testing.T) {
+	for component, kept := range map[string]bool{
+		"sapi/fpm":       true,
+		"sapi":           true,
+		"sapi/cgi":       false,
+		"sapi/fpm/fpm.c": false,
+		"../sapi/fpm":    false,
+		".":              false,
+		"/sapi/fpm":      false,
+		"sapi/./fpm":     false,
+		":(top)sapi":     false,
+		"*":              false,
+	} {
+		r := Report{Component: component}
+		require.NoError(t, checker(t).Verify(context.Background(), &r))
+		require.Equal(t, kept, r.Component != "", "%q", component)
+		require.Zero(t, r.Removed, "a dropped component counted as a removed suggestion")
+	}
+}
+
+func TestVerifyDropsAnInvalidSeverityOfAValidVector(t *testing.T) {
+	r := Report{CVSS: CVSS{Vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"}, Severity: "Severe"}
+
+	require.NoError(t, checker(t).Verify(context.Background(), &r))
+
+	require.Empty(t, r.Severity)
+	require.NotEmpty(t, r.CVSS.Vector)
+	require.Equal(t, 1, r.Removed)
+}
+
+func TestVerifyDropsTheSeverityOfAnInvalidVector(t *testing.T) {
+	r := Report{CVSS: CVSS{Vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}, Severity: "critical"}
+
+	require.NoError(t, checker(t).Verify(context.Background(), &r))
+
+	require.Empty(t, r.Severity, "a severity outlived the vector it rates")
+	require.Equal(t, 1, r.Removed, "the dropped severity counted as a second removed suggestion")
+}
+
+func TestVerifyDropsASeverityWithoutVector(t *testing.T) {
+	r := Report{Severity: "critical"}
+
+	require.NoError(t, checker(t).Verify(context.Background(), &r))
+
+	require.Empty(t, r.Severity, "a severity rated no vector")
+	require.Zero(t, r.Removed)
 }

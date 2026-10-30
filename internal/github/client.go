@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -56,8 +57,10 @@ type Advisory struct {
 }
 
 type Issue struct {
+	ID          int64     `json:"id"`
 	Number      int       `json:"number"`
 	Title       string    `json:"title"`
+	Body        string    `json:"body"`
 	State       string    `json:"state"`
 	HTMLURL     string    `json:"html_url"`
 	PullRequest *struct{} `json:"pull_request"`
@@ -116,6 +119,279 @@ func (c *Client) PostComment(ctx context.Context, repo, ghsa, body string) error
 	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/repos/%s/security-advisories/%s/comments", c.BaseURL, repo, url.PathEscape(ghsa)), map[string]string{"body": body}, nil)
 
 	return err
+}
+
+type Project struct {
+	Public bool `json:"public"`
+}
+
+type ProjectField struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	DataType string `json:"data_type"`
+	Options  []struct {
+		ID   string `json:"id"`
+		Name struct {
+			Raw string `json:"raw"`
+		} `json:"name"`
+	} `json:"options"`
+}
+
+// ProjectItem holds the values of the fields it was listed with. A text value is {"raw": ...}, a single select
+// value {"name": {"raw": ...}} and a number a bare number.
+type ProjectItem struct {
+	ID int64 `json:"id"`
+	// ContentType is "DraftIssue" or "Issue". Only GraphQL can edit a draft, by its node ID.
+	ContentType string `json:"content_type"`
+	Content     struct {
+		NodeID string `json:"node_id"`
+		ID     int64  `json:"id"`
+		Number int    `json:"number"`
+		Body   string `json:"body"`
+		// Repository is the "owner/name" of an issue and Parent the ID of its parent issue, only listed by
+		// ListProjectItems.
+		Repository string `json:"-"`
+		Parent     int64  `json:"-"`
+	} `json:"content"`
+	Fields []struct {
+		ID    int64           `json:"id"`
+		Value json.RawMessage `json:"value"`
+	} `json:"fields"`
+}
+
+// FieldValue sets a text, number or date field, or a single select field by its option ID.
+type FieldValue struct {
+	ID    int64 `json:"id"`
+	Value any   `json:"value"`
+}
+
+func (c *Client) GetProject(ctx context.Context, org string, number int) (Project, error) {
+	var p Project
+	_, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/orgs/%s/projectsV2/%d", c.BaseURL, url.PathEscape(org), number), nil, &p)
+
+	return p, err
+}
+
+func (c *Client) ListProjectFields(ctx context.Context, org string, number int) ([]ProjectField, error) {
+	return list[ProjectField](ctx, c, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/fields?per_page=100", c.BaseURL, url.PathEscape(org), number))
+}
+
+// itemsQuery lists the items of a project. The REST listing leaves out, for an App token, the items that are
+// issues of a private repository.
+const itemsQuery = `query($org: String!, $number: Int!, $after: String) {
+  organization(login: $org) { projectV2(number: $number) { items(first: 100, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      databaseId type
+      content { ... on DraftIssue { id } ... on Issue { databaseId number body repository { nameWithOwner } parent { databaseId } } }
+      fieldValues(first: 50) { nodes {
+        ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { databaseId } } }
+        ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { databaseId } } }
+        ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { databaseId } } }
+        ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { databaseId } } }
+      } }
+    }
+  } } }
+}`
+
+// ListProjectItems returns the items of a project with the values of the given fields, in the shape of the REST
+// API: {"raw": ...} for a text, {"id": ..., "name": {"raw": ...}} for a single select, the bare value otherwise.
+func (c *Client) ListProjectItems(ctx context.Context, org string, number int, fields []int64) ([]ProjectItem, error) {
+	type value struct {
+		Text     *string  `json:"text"`
+		Number   *float64 `json:"number"`
+		Date     *string  `json:"date"`
+		Name     *string  `json:"name"`
+		OptionID string   `json:"optionId"`
+		Field    struct {
+			DatabaseID int64 `json:"databaseId"`
+		} `json:"field"`
+	}
+	var items []ProjectItem
+	var after *string
+	for {
+		var out struct {
+			Data struct {
+				Organization struct {
+					ProjectV2 struct {
+						Items struct {
+							PageInfo struct {
+								HasNextPage bool   `json:"hasNextPage"`
+								EndCursor   string `json:"endCursor"`
+							} `json:"pageInfo"`
+							Nodes []struct {
+								DatabaseID int64  `json:"databaseId"`
+								Type       string `json:"type"`
+								Content    struct {
+									ID         string `json:"id"`
+									DatabaseID int64  `json:"databaseId"`
+									Number     int    `json:"number"`
+									Body       string `json:"body"`
+									Repository struct {
+										NameWithOwner string `json:"nameWithOwner"`
+									} `json:"repository"`
+									Parent struct {
+										DatabaseID int64 `json:"databaseId"`
+									} `json:"parent"`
+								} `json:"content"`
+								FieldValues struct {
+									Nodes []value `json:"nodes"`
+								} `json:"fieldValues"`
+							} `json:"nodes"`
+						} `json:"items"`
+					} `json:"projectV2"`
+				} `json:"organization"`
+			} `json:"data"`
+			Errors []json.RawMessage `json:"errors"`
+		}
+		if _, err := c.do(ctx, http.MethodPost, c.BaseURL+"/graphql", map[string]any{"query": itemsQuery, "variables": map[string]any{"org": org, "number": number, "after": after}}, &out); err != nil {
+			return nil, err
+		}
+		if len(out.Errors) > 0 {
+			return nil, errors.New("github: GraphQL request failed")
+		}
+		page := out.Data.Organization.ProjectV2.Items
+		for _, n := range page.Nodes {
+			item := ProjectItem{ID: n.DatabaseID, ContentType: "DraftIssue"}
+			item.Content.NodeID = n.Content.ID
+			if n.Type == "ISSUE" {
+				item.ContentType, item.Content.ID, item.Content.Number, item.Content.Body, item.Content.Repository, item.Content.Parent = "Issue", n.Content.DatabaseID, n.Content.Number, n.Content.Body, n.Content.Repository.NameWithOwner, n.Content.Parent.DatabaseID
+			}
+			for _, v := range n.FieldValues.Nodes {
+				if !slices.Contains(fields, v.Field.DatabaseID) {
+					continue
+				}
+				var raw any
+				switch {
+				case v.Text != nil:
+					raw = map[string]string{"raw": *v.Text}
+				case v.Name != nil:
+					raw = map[string]any{"id": v.OptionID, "name": map[string]string{"raw": *v.Name}}
+				case v.Number != nil:
+					raw = *v.Number
+				case v.Date != nil:
+					raw = *v.Date
+				default:
+					continue
+				}
+				b, _ := json.Marshal(raw)
+				item.Fields = append(item.Fields, struct {
+					ID    int64           `json:"id"`
+					Value json.RawMessage `json:"value"`
+				}{v.Field.DatabaseID, b})
+			}
+			items = append(items, item)
+		}
+		if !page.PageInfo.HasNextPage {
+			return items, nil
+		}
+		after = &page.PageInfo.EndCursor
+	}
+}
+
+func (c *Client) CreateDraft(ctx context.Context, org string, number int, title, body string) (ProjectItem, error) {
+	var item ProjectItem
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/drafts", c.BaseURL, url.PathEscape(org), number), map[string]string{"title": title, "body": body}, &item)
+
+	return item, err
+}
+
+// UpdateDraft replaces the body of a draft issue, which the REST API cannot edit.
+func (c *Client) UpdateDraft(ctx context.Context, draft, body string) error {
+	var out struct {
+		Errors []json.RawMessage `json:"errors"`
+	}
+	_, err := c.do(ctx, http.MethodPost, c.BaseURL+"/graphql", map[string]any{
+		"query":     "mutation($id: ID!, $body: String!) { updateProjectV2DraftIssue(input: {draftIssueId: $id, body: $body}) { clientMutationId } }",
+		"variables": map[string]string{"id": draft, "body": body},
+	}, &out)
+	// GraphQL reports its errors with a 200, and their messages may echo the body.
+	if err == nil && len(out.Errors) > 0 {
+		return errors.New("github: GraphQL request failed")
+	}
+
+	return err
+}
+
+func (c *Client) UpdateProjectItem(ctx context.Context, org string, number int, item int64, fields []FieldValue) error {
+	_, err := c.do(ctx, http.MethodPatch, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/items/%d", c.BaseURL, url.PathEscape(org), number, item), map[string]any{"fields": fields}, nil)
+
+	return err
+}
+
+type Repository struct {
+	Private bool `json:"private"`
+}
+
+// InstallationRepositories names the repositories a GitHub App installation token reaches. Other tokens get an
+// error.
+func (c *Client) InstallationRepositories(ctx context.Context) ([]string, error) {
+	var out struct {
+		TotalCount   int `json:"total_count"`
+		Repositories []struct {
+			FullName string `json:"full_name"`
+		} `json:"repositories"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, c.BaseURL+"/installation/repositories?per_page=100", nil, &out); err != nil {
+		return nil, err
+	}
+	// A repository left on a later page would escape the checks of the caller.
+	if out.TotalCount > len(out.Repositories) {
+		return nil, errors.New("github: the installation reaches more repositories than one page lists")
+	}
+	names := make([]string, len(out.Repositories))
+	for i, r := range out.Repositories {
+		names[i] = r.FullName
+	}
+
+	return names, nil
+}
+
+func (c *Client) GetRepository(ctx context.Context, repo string) (Repository, error) {
+	var r Repository
+	_, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/repos/%s", c.BaseURL, repo), nil, &r)
+
+	return r, err
+}
+
+// ListIssues returns every issue of repo, open or closed, and its pull requests.
+func (c *Client) ListIssues(ctx context.Context, repo string) ([]Issue, error) {
+	return list[Issue](ctx, c, fmt.Sprintf("%s/repos/%s/issues?state=all&per_page=100", c.BaseURL, repo))
+}
+
+func (c *Client) CreateIssue(ctx context.Context, repo, title, body string) (Issue, error) {
+	var i Issue
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/repos/%s/issues", c.BaseURL, repo), map[string]string{"title": title, "body": body}, &i)
+
+	return i, err
+}
+
+// UpdateIssue sets the given fields of an issue, such as "body", "state" or "state_reason".
+func (c *Client) UpdateIssue(ctx context.Context, repo string, number int, fields map[string]string) error {
+	_, err := c.do(ctx, http.MethodPatch, fmt.Sprintf("%s/repos/%s/issues/%d", c.BaseURL, repo, number), fields, nil)
+
+	return err
+}
+
+// AddSubIssue makes the issue child a sub-issue of parent, moving it from any other parent.
+func (c *Client) AddSubIssue(ctx context.Context, repo string, parent int, child int64) error {
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/repos/%s/issues/%d/sub_issues", c.BaseURL, repo, parent), map[string]any{"sub_issue_id": child, "replace_parent": true}, nil)
+
+	return err
+}
+
+// RemoveSubIssue takes the issue child out of parent.
+func (c *Client) RemoveSubIssue(ctx context.Context, repo string, parent int, child int64) error {
+	_, err := c.do(ctx, http.MethodDelete, fmt.Sprintf("%s/repos/%s/issues/%d/sub_issue", c.BaseURL, repo, parent), map[string]any{"sub_issue_id": child}, nil)
+
+	return err
+}
+
+func (c *Client) AddProjectIssue(ctx context.Context, org string, number int, issue int64) (ProjectItem, error) {
+	var item ProjectItem
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/items", c.BaseURL, url.PathEscape(org), number), map[string]any{"type": "Issue", "id": issue}, &item)
+
+	return item, err
 }
 
 func (c *Client) GetIssue(ctx context.Context, repo string, number int) (Issue, error) {

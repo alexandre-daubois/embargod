@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/php/tamis/internal/board"
 	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
 	"github.com/php/tamis/internal/repo"
@@ -48,7 +49,7 @@ func advisoryRevision(a github.Advisory, comments []github.Comment, login string
 	return hex.EncodeToString(sum[:])
 }
 
-func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, sourceDir string, log *slog.Logger) (bool, error) {
+func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, b *board.Board, a github.Advisory, all []github.Advisory, comments []github.Comment, backfill bool, login, revision string, final bool, sourceDir string, log *slog.Logger) (bool, error) {
 	var comparisonErr error
 	var others []github.Advisory
 	byID := map[string]github.Advisory{}
@@ -104,6 +105,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 			return false, err
 		}
 		r.Branch, r.CreatedAt = reference, a.CreatedAt
+		r.Located = verifiedClues(code, r).Location.Path != ""
 		if r.Incomplete != nil {
 			continue
 		}
@@ -152,6 +154,26 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 			return false, err
 		}
 		return false, errIncompleteReport
+	}
+	// A backfill publishes on the board only, so its report is kept before a board write that may fail.
+	if backfill {
+		if err := os.WriteFile(base+".md", []byte(private), 0o600); err != nil {
+			return false, err
+		}
+	}
+	// Without its item, the next run triages the advisory again for the board.
+	if b != nil {
+		t := board.TriageOf(r)
+		if err := b.Put(ctx, a, t.Priority(), &t, body); err != nil {
+			// The board is where a backfill publishes, so the item gets the failed status instead of staying pending.
+			if backfill {
+				return false, err
+			}
+			log.Error("the project board could not be updated", "reason", describe(err))
+		}
+	}
+	if backfill {
+		return true, comparisonErr
 	}
 	if err := os.WriteFile(base+".comment.md", []byte(body), 0o600); err != nil {
 		return false, err
