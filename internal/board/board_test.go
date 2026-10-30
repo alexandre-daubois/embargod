@@ -715,3 +715,32 @@ func TestSyncTakesOutAReportThatIsNoLongerADuplicate(t *testing.T) {
 	require.NoError(t, b.Sync(t.Context(), nil))
 	require.Zero(t, dup.Parent, "a report cleared by hand stayed nested")
 }
+
+func TestSyncGathersTheDuplicatesOfAClosedOriginalUnderTheOldestOfThem(t *testing.T) {
+	p := boardtest.New()
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
+	require.NoError(t, err)
+	put := func(g string, day int) {
+		a := github.Advisory{GHSAID: g, Summary: g, State: "triage", CreatedAt: reported.AddDate(0, 0, day)}
+		require.NoError(t, b.Put(t.Context(), a, Duplicate, &Triage{DuplicateOf: "GHSA-closed"}, ""))
+	}
+	put("GHSA-young", 2)
+	put("GHSA-first", 0)
+	put("GHSA-later", 1)
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-alone", Summary: "a", State: "triage"}, Duplicate, &Triage{DuplicateOf: "GHSA-other"}, ""))
+
+	require.NoError(t, b.Sync(t.Context(), nil))
+
+	first := p.IssueOf(p.Find("GHSA-first"))
+	require.Zero(t, first.Parent, "the oldest duplicate became a sub-issue")
+	for _, g := range []string{"GHSA-young", "GHSA-later"} {
+		require.Equal(t, int(first.ID-1000), p.IssueOf(p.Find(g)).Parent, "%s is not under the oldest duplicate of its group", g)
+	}
+	require.Zero(t, p.IssueOf(p.Find("GHSA-alone")).Parent, "a duplicate alone in its group got a parent")
+
+	b, err = Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
+	require.NoError(t, err)
+	writes := p.Writes
+	require.NoError(t, b.Sync(t.Context(), nil))
+	require.Equal(t, writes, p.Writes, "a nested group was written again")
+}

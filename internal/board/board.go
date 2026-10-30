@@ -119,6 +119,8 @@ type item struct {
 	ghsa, draft, duplicateOf, state string
 	priority, group                 string
 	duplicates, attempts            int
+	// reported is the date the advisory was reported, as YYYY-MM-DD, which orders the reports of a group.
+	reported string
 	// issue and issueID name the issue of an item that is one, zero for a draft, and parent the ID of its parent
 	// issue, zero without one.
 	issue           int
@@ -204,7 +206,7 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 		}
 	}
 
-	items, err := gh.ListProjectItems(ctx, org, number, []int64{b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldDuplicates], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldSeverity], b.ids[fieldExcluded], b.ids[fieldLocated], b.ids[fieldGroup], b.ids[fieldAttempts]})
+	items, err := gh.ListProjectItems(ctx, org, number, []int64{b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldDuplicates], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldSeverity], b.ids[fieldExcluded], b.ids[fieldLocated], b.ids[fieldGroup], b.ids[fieldAttempts], b.ids[fieldReported]})
 	if err != nil {
 		return nil, err
 	}
@@ -229,6 +231,8 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 				err = json.Unmarshal(f.Value, &text)
 			case b.ids[fieldDuplicates], b.ids[fieldAttempts]:
 				err = json.Unmarshal(f.Value, &count)
+			case b.ids[fieldReported]:
+				err = json.Unmarshal(f.Value, &entry.reported)
 			}
 			// An unread GHSA would make the item look added by hand, and its advisory triaged again on every run.
 			if err != nil {
@@ -434,6 +438,7 @@ func (b *Board) put(ctx context.Context, a github.Advisory, priority string, t *
 		return err
 	}
 	it.duplicateOf, it.state, it.priority, it.triage, it.attempts = kept.DuplicateOf, a.State, priority, t, attempts
+	it.reported = a.CreatedAt.UTC().Format(time.DateOnly)
 
 	return nil
 }
@@ -513,9 +518,32 @@ func (b *Board) issueItem(id int64) *item {
 	return nil
 }
 
-// nest returns the item the issue of it goes under: the oldest report of its Duplicate of chain that has an issue,
-// nil when none has. An original closed before the board has no issue, so its duplicates gather under the next one.
+// nest returns the item the issue of it goes under: the oldest report of its Duplicate of chain that has an issue.
+// When none has, as for the duplicates of an original closed before the board, the reports of the group gather
+// under the oldest of them that has an issue, and nil means it is that one.
 func (b *Board) nest(it *item) *item {
+	if parent := b.ancestor(it); parent != nil || it.duplicateOf == "" {
+		return parent
+	}
+	group := strings.ToLower(b.oldest(it.duplicateOf))
+	head := it
+	for _, other := range b.items {
+		if other.issue == 0 || other.duplicateOf == "" || b.ancestor(other) != nil || strings.ToLower(b.oldest(other.duplicateOf)) != group {
+			continue
+		}
+		if other.reported < head.reported || other.reported == head.reported && strings.ToLower(other.ghsa) < strings.ToLower(head.ghsa) {
+			head = other
+		}
+	}
+	if head == it {
+		return nil
+	}
+
+	return head
+}
+
+// ancestor returns the oldest report of the Duplicate of chain of it that has an issue, nil when none has.
+func (b *Board) ancestor(it *item) *item {
 	var parent *item
 	seen := map[*item]bool{it: true}
 	for ghsa := it.duplicateOf; ghsa != ""; {
