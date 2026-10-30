@@ -8,8 +8,8 @@ github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.2 h1:utpeoEeZjd+A8J41zvoLsOOr
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.2/go.mod h1:iptorS+VYKFL2N6PnebpS91dubG35eAOEERnT4PJbQU=
 github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 h1:fhqpLE3UEXi9lPaBRpQ6XuRW0nU7hgg4zlmZZa+a9q4=
 github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0/go.mod h1:7dCRMLwisfRH3dBupKeNCioWYUZ4SS09Z14H+7i8ZoY=
-github.com/alpha-omega-security/harness v0.1.18 h1:99coqkQjuQ13jAX0ivZo7mu5xQyJW6n/QWj19USGMCI=
-github.com/alpha-omega-security/harness v0.1.18/go.mod h1:4JI0CxVRwiWQ9zAtSTnM5p8l0A79bwREtps9BA9oLXY=
+github.com/alexandre-daubois/harness v0.1.12-0.20261030131822-9516cecc03de h1:5zESUDSfhu9yMVFe2logT2JJoj3U6uBqmYOPcLhJ/Rg=
+github.com/alexandre-daubois/harness v0.1.12-0.20261030131822-9516cecc03de/go.mod h1:4JI0CxVRwiWQ9zAtSTnM5p8l0A79bwREtps9BA9oLXY=
 github.com/anthropics/anthropic-sdk-go v1.84.0 h1:mnAhggc5H5A98JYmhQELT+j4J89PYBFKnnSvUTNwNd8=
 github.com/anthropics/anthropic-sdk-go v1.84.0/go.mod h1:GThfYqPJoaQ/6pmibCI98Cr4y5su2FXMUHn3NrSSnIc=
 github.com/aws/aws-sdk-go-v2 v1.47.1 h1:uOIZnp4PK3ZhKI0dNrJrhTEsLxbpXHTAJlwoS1pvAtw=

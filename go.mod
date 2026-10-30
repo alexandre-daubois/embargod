@@ -49,3 +49,5 @@ require (
 )
 
 tool gotest.tools/gotestsum
+
+replace github.com/alpha-omega-security/harness => github.com/alexandre-daubois/harness v0.1.12-0.20261030131822-9516cecc03de

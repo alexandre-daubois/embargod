@@ -219,7 +219,7 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 
 	for attempt := 0; attempt < 2; attempt++ {
 		a.failures = boundedWriter{}
-		err := scope.Run(ctx, job, nil)
+		session, err := harness.RunSession(ctx, scope.Run, job, nil)
 		if err != nil {
 			if failures := strings.TrimSpace(a.failures.String()); failures != "" {
 				err = fmt.Errorf("%w: %s", err, failures)
@@ -233,7 +233,10 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 				return raw, nil
 			}
 		}
-		job.Prompt = fmt.Sprintf("%s\n\nYour previous attempt did not produce valid output: %v. Write /work/%s again, fixed.", req.Prompt, err, outputFile)
+		// Prompt only serves when the agent announced no session or the resume cannot load it.
+		correction := fmt.Sprintf("Your previous attempt did not produce valid output: %v. Write /work/%s again, fixed.", err, outputFile)
+		job.Prompt = req.Prompt + "\n\n" + correction
+		job.ResumeSessionID, job.ResumePrompt = session.ID, correction
 	}
 
 	return nil, ErrNoReport
