@@ -24,7 +24,23 @@ type agent struct {
 // provider's own API.
 func (*agent) EgressHosts() []string { return nil }
 
-func (a *agent) ParseStream(r io.Reader, _ func(harness.Event)) { keepFailures(r, &a.failures) }
+// ParseStream hands only the session event to emit, so that the run can be resumed.
+func (a *agent) ParseStream(r io.Reader, emit func(harness.Event)) {
+	pr, pw := io.Pipe()
+	done := make(chan struct{})
+	go func() {
+		a.Harness.ParseStream(pr, func(e harness.Event) {
+			if e.Kind == harness.KindSession {
+				emit(e)
+			}
+		})
+		_, _ = io.Copy(io.Discard, pr)
+		close(done)
+	}()
+	keepFailures(io.TeeReader(r, pw), &a.failures)
+	_ = pw.Close()
+	<-done
+}
 
 // runner keeps the agent on a network whose only way out is the egress proxy, allowing the model proxy and
 // hosts. harness refuses tunnels to its API port, so a model proxy served over TLS is reached as a separate

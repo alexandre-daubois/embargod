@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -183,24 +184,42 @@ func TestReaderGetsOneCorrectionRound(t *testing.T) {
 		t.Skip("TAMIS_TEST_IMAGE must end in :claude")
 	}
 	t.Run("corrected", func(t *testing.T) {
-		raw, seen, err := readWithCorrection(t, image, `{"ok":true}`)
+		raw, seen, resumed, err := readWithCorrection(t, image, `{"ok":true}`)
 		require.NoError(t, err)
 		require.JSONEq(t, `{"ok":true}`, string(raw))
 		require.Equal(t, []string{"not json", `{"ok":true}`}, seen)
+		require.True(t, resumed, "the correction did not resume the first conversation")
 	})
 	t.Run("still invalid", func(t *testing.T) {
-		_, seen, err := readWithCorrection(t, image, "still not json")
+		_, seen, _, err := readWithCorrection(t, image, "still not json")
 		require.ErrorIs(t, err, ErrNoReport)
 		require.Equal(t, []string{"not json", "still not json"}, seen)
 	})
 }
 
 // readWithCorrection runs Claude Code against a model that writes invalid JSON, then corrected once the
-// prompt carries the validation error, and returns what the validator saw.
-func readWithCorrection(t *testing.T, image, corrected string) (json.RawMessage, []string, error) {
+// prompt carries the validation error, and returns what the validator saw and whether the correction
+// carried the first conversation.
+func readWithCorrection(t *testing.T, image, corrected string) (json.RawMessage, []string, bool, error) {
 	t.Helper()
+	var resumed bool
+	var calls atomic.Int32
 	_, port := testServerHandler(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		var request struct {
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &request)
+		var called bool
+		for _, message := range slices.Backward(request.Messages) {
+			if message.Role == "assistant" {
+				called = bytes.Contains(message.Content, []byte(`"tool_use"`))
+				break
+			}
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		event := func(kind string, data any) {
 			raw, _ := json.Marshal(data)
@@ -208,17 +227,20 @@ func readWithCorrection(t *testing.T, image, corrected string) (json.RawMessage,
 		}
 		event("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_fixture", "type": "message", "role": "assistant", "model": "claude-opus-5-5", "content": []any{}, "stop_reason": nil, "usage": map[string]int{"input_tokens": 1, "output_tokens": 0}}})
 		stop := "end_turn"
-		if bytes.Contains(body, []byte(`"tool_result"`)) {
+		if called {
 			event("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "text", "text": ""}})
 			event("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": "Done."}})
 		} else {
 			output := "not json"
 			if bytes.Contains(body, []byte("did not produce valid output")) {
 				output = corrected
+				resumed = bytes.Contains(body, []byte(`"tool_use_id"`))
 			}
 			command, _ := json.Marshal(map[string]string{"command": "printf '%s' '" + output + "' > /work/" + outputFile})
 			stop = "tool_use"
-			event("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "tool_use", "id": "tool_fixture", "name": "Bash", "input": map[string]any{}}})
+			// A resumed conversation already holds the first run's tool call, so each call needs its own id.
+			id := fmt.Sprintf("tool_fixture_%d", calls.Add(1))
+			event("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{}}})
 			event("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(command)}})
 		}
 		event("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0})
@@ -237,7 +259,7 @@ func readWithCorrection(t *testing.T, image, corrected string) (json.RawMessage,
 	}
 	raw, err := reader.Read(t.Context(), Request{RepoPath: gitRepo(t), Prompt: "Answer", System: "System", Report: "Report", Schema: []byte(`{}`), Validate: validate})
 
-	return raw, seen, err
+	return raw, seen, resumed, err
 }
 
 func testReader(t *testing.T, name, model, image, port string) *Reader {

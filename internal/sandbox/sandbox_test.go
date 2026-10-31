@@ -165,14 +165,28 @@ func TestOnlyDockerCanRunTheAgent(t *testing.T) {
 	require.Error(t, err, "an unsupported runtime must fail closed")
 }
 
-func TestAgentKeepsOnlyTheFailuresOfItsOutput(t *testing.T) {
+func TestAgentKeepsOnlyTheFailuresAndTheSessionOfItsOutput(t *testing.T) {
 	h, err := harness.ByName("codex")
 	require.NoError(t, err)
 	a := &agent{Harness: h}
+	var events []harness.Event
 
-	a.ParseStream(strings.NewReader(`{"type":"item.completed","item":{"type":"agent_message","text":"report content"}}`+"\n"+`{"type":"turn.failed","error":{"message":"usage limit"}}`), nil)
+	a.ParseStream(strings.NewReader(`{"type":"thread.started","thread_id":"thread-1"}`+"\n"+`{"type":"item.completed","item":{"type":"agent_message","text":"report content"}}`+"\n"+`{"type":"turn.failed","error":{"message":"usage limit"}}`), func(e harness.Event) { events = append(events, e) })
 
 	require.Equal(t, `{"type":"turn.failed","error":{"message":"usage limit"}}`, a.failures.String())
+	require.Equal(t, []harness.Event{{Kind: harness.KindSession, SessionID: "thread-1"}}, events)
+}
+
+func TestAgentForwardsNoEventWithoutASession(t *testing.T) {
+	h, err := harness.ByName("claude")
+	require.NoError(t, err)
+	a := &agent{Harness: h}
+	var events []harness.Event
+
+	a.ParseStream(strings.NewReader("No conversation found with session ID: dead\n"), func(e harness.Event) { events = append(events, e) })
+
+	require.Empty(t, events)
+	require.Empty(t, a.failures.String())
 }
 
 func TestReadOutputIsBounded(t *testing.T) {
