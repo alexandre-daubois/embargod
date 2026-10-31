@@ -20,7 +20,7 @@ Ask only for what you cannot find yourself:
 
 The runner repository defaults to `org/tamis-runner` and the App to `org-tamis`. Change them with `-runner` and `-app-name` only if those names are taken or the user asks.
 
-A name can be taken by an earlier install or attempt. `gh repo view org/tamis-runner` and `gh api apps/org-tamis` both succeed then, and `init` only finds out about the App name on the GitHub page. Ask the user whether that leftover is still in use. If it is not, the user deletes it, the App from the organisation settings under "GitHub Apps", rather than adding a second one: an App left installed on the project keeps its write access to the advisories. If it is, pick other names.
+A name can be taken by an earlier install or attempt. `gh repo view org/tamis-runner` and `gh api apps/org-tamis` both succeed then, and `init` stops before creating anything. Ask the user whether that leftover is still in use. If it is not, the user deletes it, the App from the organisation settings under "GitHub Apps", rather than adding a second one: an App left installed on the project keeps its write access to the advisories. If it is, pick other names.
 
 ## 2. Check the prerequisites
 

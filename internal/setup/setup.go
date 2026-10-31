@@ -17,6 +17,7 @@ type GitHub interface {
 	board.Creator
 	GetRepository(ctx context.Context, repo string) (github.Repository, error)
 	LatestRelease(ctx context.Context, repo string) (string, string, error)
+	AppExists(ctx context.Context, slug string) (bool, error)
 	ConvertManifest(ctx context.Context, code string) (github.App, error)
 	CreateRepository(ctx context.Context, org, name string) (github.Repository, error)
 	CreateEnvironment(ctx context.Context, repo, env, branch string) error
@@ -60,6 +61,15 @@ func Run(ctx context.Context, cfg Config, gh GitHub, app AppFlow, out io.Writer)
 		return "", fmt.Errorf("%s already exists", runner)
 	} else if !errors.Is(err, github.ErrNotFound) {
 		return "", fmt.Errorf("reading %s: %w", runner, err)
+	}
+	// GitHub only tells a taken App name on its creation page, once the browser is open. The name is looked up as
+	// the slug, so a name GitHub turns into another slug is still left to that page.
+	taken, err := gh.AppExists(ctx, cfg.AppName)
+	if err != nil {
+		return "", fmt.Errorf("reading the GitHub App %s: %w", cfg.AppName, err)
+	}
+	if taken {
+		return "", fmt.Errorf("the GitHub App %s already exists", cfg.AppName)
 	}
 	tag, sha, err := gh.LatestRelease(ctx, "php/tamis")
 	if err != nil {

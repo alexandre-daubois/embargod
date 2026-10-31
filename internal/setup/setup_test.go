@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -19,6 +21,7 @@ type fakeGitHub struct {
 	*boardtest.Project
 	// repos says which repositories exist and whether they are private.
 	repos     map[string]bool
+	apps      map[string]bool
 	created   []string
 	branch    string
 	variables map[string]string
@@ -41,6 +44,10 @@ func (f *fakeGitHub) GetRepository(_ context.Context, repo string) (github.Repos
 	}
 
 	return github.Repository{Private: private}, nil
+}
+
+func (f *fakeGitHub) AppExists(_ context.Context, slug string) (bool, error) {
+	return f.apps[slug], nil
 }
 
 func (f *fakeGitHub) LatestRelease(context.Context, string) (string, string, error) {
@@ -179,6 +186,7 @@ func TestRunStopsBeforeCreatingAnything(t *testing.T) {
 		"no org":          {func(c *Config, _ *fakeGitHub, _ *flow) { c.Repository = "project" }, `the repository must be given as "org/name"`},
 		"no project":      {func(c *Config, _ *fakeGitHub, _ *flow) { c.Repository = "acme/missing" }, "reading acme/missing: github: HTTP 404"},
 		"private project": {func(_ *Config, gh *fakeGitHub, _ *flow) { gh.repos["acme/project"] = true }, "acme/project is private, and only public repositories have security advisories"},
+		"app exists":      {func(_ *Config, gh *fakeGitHub, _ *flow) { gh.apps = map[string]bool{"acme-tamis": true} }, "the GitHub App acme-tamis already exists"},
 		"runner exists":   {func(_ *Config, gh *fakeGitHub, _ *flow) { gh.repos["acme/tamis-runner"] = true }, "acme/tamis-runner already exists"},
 		"app not created": {func(_ *Config, _ *fakeGitHub, fl *flow) { fl.err = errors.New("the GitHub App was not created") }, "the GitHub App was not created"},
 	} {
@@ -202,4 +210,17 @@ func TestRunReportsAFailedSecret(t *testing.T) {
 
 	require.EqualError(t, err, "setting TAMIS_PRIVATE_KEY: boom")
 	require.Empty(t, gh.files)
+}
+
+// The README workflow and the generated one pin the same actions, which Renovate updates in neither.
+func TestWorkflowPinsTheActionsOfTheREADME(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	require.NoError(t, err)
+	var w strings.Builder
+	require.NoError(t, workflow.Execute(&w, map[string]any{"Engine": "claude"}))
+	pins := regexp.MustCompile(`uses: (actions/\S+ # \S+)`)
+
+	want := pins.FindAllStringSubmatch(string(readme), -1)
+	require.NotEmpty(t, want)
+	require.Equal(t, want, pins.FindAllStringSubmatch(w.String(), -1))
 }

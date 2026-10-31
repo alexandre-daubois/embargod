@@ -526,3 +526,24 @@ func TestSetupEndpointsErrors(t *testing.T) {
 	_, err = forbidden.ConvertManifest(ctx, "c0de")
 	require.Error(t, err)
 }
+
+func TestAppExists(t *testing.T) {
+	for status, want := range map[int]bool{http.StatusOK: true, http.StatusNotFound: false} {
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "GET /apps/acme-tamis", r.Method+" "+r.URL.Path)
+			w.WriteHeader(status)
+			fmt.Fprint(w, `{}`)
+		})
+
+		exists, err := c.AppExists(context.Background(), "acme-tamis")
+
+		require.NoError(t, err, "%d", status)
+		require.Equal(t, want, exists, "%d", status)
+	}
+
+	forbidden := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	})
+	_, err := forbidden.AppExists(context.Background(), "acme-tamis")
+	require.Error(t, err)
+}

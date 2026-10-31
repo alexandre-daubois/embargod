@@ -524,6 +524,16 @@ func (c *Client) LatestRelease(ctx context.Context, repo string) (string, string
 	return release.TagName, commit.SHA, err
 }
 
+// AppExists says whether a GitHub App answers to slug, which GitHub matches whatever its case.
+func (c *Client) AppExists(ctx context.Context, slug string) (bool, error) {
+	_, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/apps/%s", c.BaseURL, url.PathEscape(slug)), nil, nil)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+
+	return err == nil, err
+}
+
 // App holds the credentials of a GitHub App, which GitHub shows only once.
 type App struct {
 	Slug     string `json:"slug"`
