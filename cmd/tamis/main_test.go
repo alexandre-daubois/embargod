@@ -110,6 +110,7 @@ func TestInitValidatesArguments(t *testing.T) {
 		"no repository":  {[]string{"-references", "main"}, "t", "k", "usage: tamis init"},
 		"no org":         {[]string{"-repository", "/project", "-references", "main"}, "t", "k", "usage: tamis init"},
 		"no references":  {[]string{"-repository", "acme/project"}, "t", "k", "usage: tamis init"},
+		"11 references":  {[]string{"-repository", "acme/project", "-references", "a b c d e f g h i j k"}, "t", "k", "-references must list at most ten references"},
 		"unknown engine": {[]string{"-repository", "acme/project", "-references", "main", "-engine", "gemini"}, "t", "k", `unknown engine "gemini"`},
 		"no token":       {[]string{"-repository", "acme/project", "-references", "main"}, "", "k", "GH_TOKEN and LLM_API_KEY are required"},
 		"no key":         {[]string{"-repository", "acme/project", "-references", "main"}, "t", "", "GH_TOKEN and LLM_API_KEY are required"},
@@ -122,6 +123,10 @@ func TestInitValidatesArguments(t *testing.T) {
 			require.ErrorContains(t, initProject(context.Background(), tc.args, io.Discard), tc.want)
 		})
 	}
+}
+
+func TestInitHelpIsNotAnError(t *testing.T) {
+	require.NoError(t, initProject(context.Background(), []string{"-h"}, io.Discard))
 }
 
 // GitHub refuses to run an action whose manifest does not parse, with no test of its own to tell.

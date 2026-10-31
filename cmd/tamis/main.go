@@ -82,18 +82,26 @@ func initProject(ctx context.Context, args []string, out io.Writer) error {
 	repository := fs.String("repository", "", `project whose advisories are triaged, as "org/name"`)
 	runner := fs.String("runner", "tamis-runner", "private repository created in the same organisation to run the workflow")
 	references := fs.String("references", "", "whitespace-separated git references of every supported branch, the analysed one first")
-	engine := fs.String("engine", "claude", "LLM provider, claude or openai")
+	provider := fs.String("engine", "claude", "LLM provider, claude or openai")
 	appName := fs.String("app-name", "", `name of the GitHub App, "<org>-tamis" by default`)
 	withBoard := fs.Bool("board", false, "also create a private project board and fill it instead of commenting")
-	if err := fs.Parse(args); err != nil {
+	err := fs.Parse(args)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
 	org, _, _ := strings.Cut(*repository, "/")
-	if org == "" || len(strings.Fields(*references)) == 0 {
+	refs := strings.Fields(*references)
+	if org == "" || len(refs) == 0 {
 		return errors.New("usage: tamis init -repository org/name -references \"main ...\" [-runner name] [-engine claude|openai] [-app-name name] [-board]")
 	}
-	if *engine != "claude" && *engine != "openai" {
-		return fmt.Errorf("unknown engine %q, expected claude or openai", *engine)
+	if len(refs) > 10 {
+		return errors.New("-references must list at most ten references")
+	}
+	if *provider != "claude" && *provider != "openai" {
+		return fmt.Errorf("unknown engine %q, expected claude or openai", *provider)
 	}
 	token, apiKey := os.Getenv("GH_TOKEN"), os.Getenv("LLM_API_KEY")
 	if token == "" || apiKey == "" {
@@ -102,8 +110,8 @@ func initProject(ctx context.Context, args []string, out io.Writer) error {
 	cfg := setup.Config{
 		Repository: *repository,
 		Runner:     *runner,
-		References: strings.Fields(*references),
-		Engine:     *engine,
+		References: refs,
+		Engine:     *provider,
 		APIKey:     apiKey,
 		AppName:    cmp.Or(*appName, org+"-tamis"),
 		Since:      time.Now().UTC().Format(time.DateOnly),

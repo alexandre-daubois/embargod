@@ -302,19 +302,7 @@ func (c *Client) CreateDraft(ctx context.Context, org string, number int, title,
 
 // UpdateDraft replaces the body of a draft issue, which the REST API cannot edit.
 func (c *Client) UpdateDraft(ctx context.Context, draft, body string) error {
-	var out struct {
-		Errors []json.RawMessage `json:"errors"`
-	}
-	_, err := c.do(ctx, http.MethodPost, c.BaseURL+"/graphql", map[string]any{
-		"query":     "mutation($id: ID!, $body: String!) { updateProjectV2DraftIssue(input: {draftIssueId: $id, body: $body}) { clientMutationId } }",
-		"variables": map[string]string{"id": draft, "body": body},
-	}, &out)
-	// GraphQL reports its errors with a 200, and their messages may echo the body.
-	if err == nil && len(out.Errors) > 0 {
-		return errors.New("github: GraphQL request failed")
-	}
-
-	return err
+	return c.graphql(ctx, "mutation($id: ID!, $body: String!) { updateProjectV2DraftIssue(input: {draftIssueId: $id, body: $body}) { clientMutationId } }", map[string]any{"id": draft, "body": body}, nil)
 }
 
 func (c *Client) UpdateProjectItem(ctx context.Context, org string, number int, item int64, fields []FieldValue) error {

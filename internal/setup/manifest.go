@@ -3,14 +3,15 @@ package setup
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 var manifestPage = template.Must(template.New("manifest").Parse(`<!doctype html>
@@ -29,13 +30,9 @@ func AppCode(ctx context.Context, org string, manifest map[string]any, open func
 		return "", err
 	}
 	defer l.Close()
-	b := make([]byte, 16)
-	rand.Read(b)
-	state, base := hex.EncodeToString(b), "http://"+l.Addr().String()
+	state, base := rand.Text(), "http://"+l.Addr().String()
 	m := map[string]any{"redirect_url": base + "/callback"}
-	for k, v := range manifest {
-		m[k] = v
-	}
+	maps.Copy(m, manifest)
 	data, err := json.Marshal(m)
 	if err != nil {
 		return "", err
@@ -61,7 +58,12 @@ func AppCode(ctx context.Context, org string, manifest map[string]any, open func
 	})
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(l)
-	defer srv.Close()
+	// Close would cut the callback page the browser is still reading, Shutdown lets it finish.
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+	}()
 
 	open(base + "/")
 	select {

@@ -212,6 +212,18 @@ func TestRunReportsAFailedSecret(t *testing.T) {
 	require.Empty(t, gh.files)
 }
 
+func TestRunReportsAFailedBoard(t *testing.T) {
+	gh := newFake()
+	gh.Err = errors.New("boom")
+	cfg := config()
+	cfg.Board = true
+
+	_, err := Run(t.Context(), cfg, gh, (&flow{}).run, io.Discard)
+
+	require.EqualError(t, err, "creating a project of acme: boom")
+	require.Empty(t, gh.files)
+}
+
 // The README workflow and the generated one pin the same actions, which Renovate updates in neither.
 func TestWorkflowPinsTheActionsOfTheREADME(t *testing.T) {
 	readme, err := os.ReadFile("../../README.md")

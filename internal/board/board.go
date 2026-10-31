@@ -84,7 +84,7 @@ type Creator interface {
 func Create(ctx context.Context, gh Creator, org, title string) (string, error) {
 	number, view, err := gh.CreateProject(ctx, org, title)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("creating a project of %s: %w", org, err)
 	}
 	project := fmt.Sprintf("%s/%d", org, number)
 	for _, f := range layout {

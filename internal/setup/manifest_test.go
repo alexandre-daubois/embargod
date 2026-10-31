@@ -28,7 +28,7 @@ func TestAppCodeReturnsTheCodeOfTheRedirect(t *testing.T) {
 	code, err := AppCode(t.Context(), "acme", map[string]any{"name": "acme-tamis"}, func(base string) {
 		status, page := get(t, base)
 		require.Equal(t, http.StatusOK, status)
-		action := regexp.MustCompile(`action="https://github.com/organizations/acme/settings/apps/new\?state=([0-9a-f]{32})"`).FindStringSubmatch(page)
+		action := regexp.MustCompile(`action="https://github.com/organizations/acme/settings/apps/new\?state=([A-Z2-7]{26})"`).FindStringSubmatch(page)
 		require.NotNil(t, action, page)
 		var manifest map[string]any
 		require.NoError(t, json.Unmarshal([]byte(html.UnescapeString(regexp.MustCompile(`name="manifest" value="([^"]*)"`).FindStringSubmatch(page)[1])), &manifest))

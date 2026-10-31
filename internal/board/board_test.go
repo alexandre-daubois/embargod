@@ -790,7 +790,7 @@ func TestCreateReportsAFailure(t *testing.T) {
 		change func(*boardtest.Project)
 		err    string
 	}{
-		"project": {func(p *boardtest.Project) { p.Err = errors.New("boom") }, "boom"},
+		"project": {func(p *boardtest.Project) { p.Err = errors.New("boom") }, "creating a project of acme: boom"},
 		"fields":  {func(p *boardtest.Project) { p.ListErr = errors.New("boom") }, "listing the fields of acme/16: boom"},
 	} {
 		t.Run(name, func(t *testing.T) {
