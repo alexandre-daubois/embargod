@@ -3,7 +3,7 @@ module github.com/php/tamis
 go 1.27.3
 
 require (
-	github.com/alpha-omega-security/harness v0.1.18
+	github.com/alpha-omega-security/harness v0.1.19
 	github.com/anthropics/anthropic-sdk-go v1.84.0
 	github.com/git-pkgs/cwe v0.1.1
 	github.com/openai/openai-go/v3 v3.85.1
@@ -49,5 +49,3 @@ require (
 )
 
 tool gotest.tools/gotestsum
-
-replace github.com/alpha-omega-security/harness => github.com/alexandre-daubois/harness v0.1.12-0.20261030131822-9516cecc03de
