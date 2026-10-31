@@ -765,3 +765,43 @@ func TestSyncCountsTheSubIssuesOfEachIssue(t *testing.T) {
 		require.Equal(t, want, p.Value(p.Find(g), "Duplicates"), "%s does not count its sub-issues", g)
 	}
 }
+
+func TestCreateLaysOutTheProjectOpenExpects(t *testing.T) {
+	p := boardtest.New()
+	p.Fields = p.Fields[:1]
+
+	project, err := Create(t.Context(), p, "acme", "tamis")
+
+	require.NoError(t, err)
+	require.Equal(t, "acme/16", project)
+	_, err = Open(t.Context(), p, p, project, "", "php/php-src")
+	require.NoError(t, err)
+	require.Equal(t, []github.ProjectView{{
+		Name:   "Triage",
+		Filter: "State:triage,draft",
+		Fields: []int64{100, 105, 106, 110, 103, 104},
+		SortBy: []int64{105, 104},
+	}}, p.Views)
+	require.Equal(t, []string{"PVTV_default"}, p.Deleted)
+}
+
+func TestCreateReportsAFailure(t *testing.T) {
+	for name, tc := range map[string]struct {
+		change func(*boardtest.Project)
+		err    string
+	}{
+		"project": {func(p *boardtest.Project) { p.Err = errors.New("boom") }, "boom"},
+		"fields":  {func(p *boardtest.Project) { p.ListErr = errors.New("boom") }, "listing the fields of acme/16: boom"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := boardtest.New()
+			p.Fields = p.Fields[:1]
+			tc.change(p)
+
+			_, err := Create(t.Context(), p, "acme", "tamis")
+
+			require.EqualError(t, err, tc.err)
+			require.Empty(t, p.Views)
+		})
+	}
+}

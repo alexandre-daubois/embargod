@@ -2,6 +2,17 @@
 
 tamis runs as a scheduled GitHub Actions workflow. You need a GitHub App, a private repository and a model provider key.
 
+## Setup in one command
+
+The tamis binary of a [release](https://github.com/php/tamis/releases) does steps 1 to 3, and step 5 with `-board`, as an organisation owner:
+
+```bash
+gh auth refresh -s project,workflow
+GH_TOKEN=$(gh auth token) LLM_API_KEY=sk-... tamis init -repository your-org/your-project -references "master origin/release-branch"
+```
+
+It opens your browser to confirm the GitHub App, then creates the private `your-org/tamis-runner` repository with its `tamis` environment, the App credentials and the provider key as secrets, and the workflow pinned to the latest release. `-runner` names another repository, `-engine openai` takes an OpenAI key, `-app-name` replaces the `your-org-tamis` App name and `-board` creates the project board instead of posting comments. Install the App from the address it prints, then go on with [the first run](#4-first-run). The sections below do the same by hand.
+
 ## 1. Create the GitHub App
 
 Open this address with `YOUR-ORG` replaced by your organisation name. The form comes pre-filled with the only permission tamis needs, "Repository security advisories" in read and write, and no webhook.
@@ -57,7 +68,14 @@ GitHub Actions has no trigger for security advisories, so the schedule polls eve
 
 ## 5. Project board
 
-tamis can keep a private organisation project in sync with the advisories, one draft item each, so the security team sorts them by priority. Give the App the organisation "Projects" permission in read and write, create a private project and add these fields by hand:
+tamis can keep a private organisation project in sync with the advisories, one draft item each, so the security team sorts them by priority. Give the App the organisation "Projects" permission in read and write, then create the project with the tamis binary of a [release](https://github.com/php/tamis/releases), as an organisation member allowed to create projects:
+
+```bash
+gh auth refresh -s project
+GH_TOKEN=$(gh auth token) tamis create-board your-org
+```
+
+The command prints the project as `your-org/NUMBER`. It creates a private project named `tamis` with the fields below and a single `Triage` view of the advisories in `triage` or `draft`, sorted by `Priority` then `Reported`. To lay out a project by hand instead, add these fields:
 
 | Field | Type | Options, in this order |
 |---|---|---|

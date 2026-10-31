@@ -26,6 +26,9 @@ type Project struct {
 	UpdateHook func() error
 	Public     bool
 	next       int64
+	// Views holds the views Create added, Deleted the node IDs of the views it removed.
+	Views   []github.ProjectView
+	Deleted []string
 	// Repos says which repositories exist and whether they are private. Issues holds their issues by number,
 	// and issueOf the issue of each item that is one.
 	Repos map[string]bool
@@ -44,7 +47,7 @@ type Issue struct {
 
 func New() *Project {
 	p := &Project{Items: map[int64]map[int64]any{}, Titles: map[int64]string{}, Bodies: map[int64]string{}, Repos: map[string]bool{"acme/private-issues": true, "php/php-src": false}, Issues: map[int]*Issue{}, issueOf: map[int64]int{}, Reached: []string{"acme/private-issues"}}
-	for i, f := range []struct {
+	for _, f := range []struct {
 		name, dataType string
 		options        []string
 	}{
@@ -62,21 +65,25 @@ func New() *Project {
 		{"Original report", "text", nil},
 		{"Attempts", "number", nil},
 	} {
-		field := github.ProjectField{ID: int64(100 + i), Name: f.name, DataType: f.dataType}
-		for _, o := range f.options {
-			option := struct {
-				ID   string `json:"id"`
-				Name struct {
-					Raw string `json:"raw"`
-				} `json:"name"`
-			}{ID: "opt-" + o}
-			option.Name.Raw = o
-			field.Options = append(field.Options, option)
-		}
-		p.Fields = append(p.Fields, field)
+		p.addField(f.name, f.dataType, f.options)
 	}
 
 	return p
+}
+
+func (p *Project) addField(name, dataType string, options []string) {
+	field := github.ProjectField{ID: int64(100 + len(p.Fields)), Name: name, DataType: dataType}
+	for _, o := range options {
+		option := struct {
+			ID   string `json:"id"`
+			Name struct {
+				Raw string `json:"raw"`
+			} `json:"name"`
+		}{ID: "opt-" + o}
+		option.Name.Raw = o
+		field.Options = append(field.Options, option)
+	}
+	p.Fields = append(p.Fields, field)
 }
 
 func (p *Project) field(name string) github.ProjectField {
@@ -129,6 +136,32 @@ func (p *Project) Add(values map[string]any) int64 {
 
 func (p *Project) GetProject(context.Context, string, int) (github.Project, error) {
 	return github.Project{Public: p.Public}, p.ListErr
+}
+
+// CreateProject numbers the project 16 and names its default view "PVTV_default".
+func (p *Project) CreateProject(context.Context, string, string) (int, string, error) {
+	return 16, "PVTV_default", p.Err
+}
+
+func (p *Project) CreateProjectField(_ context.Context, _ string, _ int, name, dataType string, options []string) error {
+	if p.Err != nil {
+		return p.Err
+	}
+	p.addField(name, dataType, options)
+
+	return nil
+}
+
+func (p *Project) CreateProjectView(_ context.Context, _ string, _ int, view github.ProjectView) error {
+	p.Views = append(p.Views, view)
+
+	return p.Err
+}
+
+func (p *Project) DeleteProjectView(_ context.Context, view string) error {
+	p.Deleted = append(p.Deleted, view)
+
+	return p.Err
 }
 
 func (p *Project) ListProjectFields(context.Context, string, int) ([]github.ProjectField, error) {

@@ -4,6 +4,8 @@ package github
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/nacl/box"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -319,8 +323,103 @@ func (c *Client) UpdateProjectItem(ctx context.Context, org string, number int, 
 	return err
 }
 
+// CreateProject creates a project of org, private by default, and returns its number and the node ID of the
+// view GitHub adds to it. Only GraphQL creates a project.
+func (c *Client) CreateProject(ctx context.Context, org, title string) (int, string, error) {
+	var owner struct {
+		Organization struct {
+			ID string `json:"id"`
+		} `json:"organization"`
+	}
+	if err := c.graphql(ctx, "query($org: String!) { organization(login: $org) { id } }", map[string]any{"org": org}, &owner); err != nil {
+		return 0, "", err
+	}
+	var out struct {
+		CreateProjectV2 struct {
+			ProjectV2 struct {
+				Number int `json:"number"`
+				Views  struct {
+					Nodes []struct {
+						ID string `json:"id"`
+					} `json:"nodes"`
+				} `json:"views"`
+			} `json:"projectV2"`
+		} `json:"createProjectV2"`
+	}
+	if err := c.graphql(ctx, "mutation($owner: ID!, $title: String!) { createProjectV2(input: {ownerId: $owner, title: $title}) { projectV2 { number views(first: 1) { nodes { id } } } } }", map[string]any{"owner": owner.Organization.ID, "title": title}, &out); err != nil {
+		return 0, "", err
+	}
+	p := out.CreateProjectV2.ProjectV2
+	if len(p.Views.Nodes) == 0 {
+		return p.Number, "", nil
+	}
+
+	return p.Number, p.Views.Nodes[0].ID, nil
+}
+
+// CreateProjectField adds a field of the REST data type, with the options of a single select field in order.
+func (c *Client) CreateProjectField(ctx context.Context, org string, number int, name, dataType string, options []string) error {
+	body := map[string]any{"name": name, "data_type": dataType}
+	if options != nil {
+		opts := make([]map[string]string, len(options))
+		for i, o := range options {
+			opts[i] = map[string]string{"name": o, "color": "GRAY", "description": ""}
+		}
+		body["single_select_options"] = opts
+	}
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/fields", c.BaseURL, url.PathEscape(org), number), body, nil)
+
+	return err
+}
+
+// ProjectView is a table view sorted in ascending order on the SortBy fields. GitHub shows the Fields in the
+// order of the project's fields, whatever their order here.
+type ProjectView struct {
+	Name, Filter   string
+	Fields, SortBy []int64
+}
+
+// CreateProjectView adds a table view. Only the REST API sets the sort of a view, and only when creating it.
+func (c *Client) CreateProjectView(ctx context.Context, org string, number int, view ProjectView) error {
+	sort := make([][]any, len(view.SortBy))
+	for i, id := range view.SortBy {
+		sort[i] = []any{id, "asc"}
+	}
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/orgs/%s/projectsV2/%d/views", c.BaseURL, url.PathEscape(org), number), map[string]any{"name": view.Name, "layout": "table", "filter": view.Filter, "visible_fields": view.Fields, "sort_by": sort}, nil)
+
+	return err
+}
+
+func (c *Client) DeleteProjectView(ctx context.Context, view string) error {
+	return c.graphql(ctx, "mutation($id: ID!) { deleteProjectV2View(input: {viewId: $id}) { clientMutationId } }", map[string]any{"id": view}, nil)
+}
+
+// graphql decodes the data of a GraphQL answer into out. GraphQL reports its errors with a 200, and their
+// messages may echo content, so they are left out.
+func (c *Client) graphql(ctx context.Context, query string, variables map[string]any, out any) error {
+	var resp struct {
+		Data   json.RawMessage   `json:"data"`
+		Errors []json.RawMessage `json:"errors"`
+	}
+	if _, err := c.do(ctx, http.MethodPost, c.BaseURL+"/graphql", map[string]any{"query": query, "variables": variables}, &resp); err != nil {
+		return err
+	}
+	if len(resp.Errors) > 0 {
+		return errors.New("github: GraphQL request failed")
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(resp.Data, out); err != nil {
+		return errors.New("github: invalid response")
+	}
+
+	return nil
+}
+
 type Repository struct {
-	Private bool `json:"private"`
+	Private       bool   `json:"private"`
+	DefaultBranch string `json:"default_branch"`
 }
 
 // InstallationRepositories names the repositories a GitHub App installation token reaches. Other tokens get an
@@ -352,6 +451,92 @@ func (c *Client) GetRepository(ctx context.Context, repo string) (Repository, er
 	_, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/repos/%s", c.BaseURL, repo), nil, &r)
 
 	return r, err
+}
+
+// CreateRepository creates a private repository of org with a first commit on its default branch.
+func (c *Client) CreateRepository(ctx context.Context, org, name string) (Repository, error) {
+	var r Repository
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/orgs/%s/repos", c.BaseURL, url.PathEscape(org)), map[string]any{"name": name, "private": true, "auto_init": true}, &r)
+
+	return r, err
+}
+
+// CreateEnvironment creates an environment whose secrets only workflows of branch can read.
+func (c *Client) CreateEnvironment(ctx context.Context, repo, env, branch string) error {
+	u := fmt.Sprintf("%s/repos/%s/environments/%s", c.BaseURL, repo, url.PathEscape(env))
+	if _, err := c.do(ctx, http.MethodPut, u, map[string]any{"deployment_branch_policy": map[string]bool{"protected_branches": false, "custom_branch_policies": true}}, nil); err != nil {
+		return err
+	}
+	_, err := c.do(ctx, http.MethodPost, u+"/deployment-branch-policies", map[string]string{"name": branch, "type": "branch"}, nil)
+
+	return err
+}
+
+func (c *Client) SetEnvironmentVariable(ctx context.Context, repo, env, name, value string) error {
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/repos/%s/environments/%s/variables", c.BaseURL, repo, url.PathEscape(env)), map[string]string{"name": name, "value": value}, nil)
+
+	return err
+}
+
+// SetEnvironmentSecret seals value with the public key of the environment, as GitHub requires.
+func (c *Client) SetEnvironmentSecret(ctx context.Context, repo, env, name, value string) error {
+	u := fmt.Sprintf("%s/repos/%s/environments/%s/secrets", c.BaseURL, repo, url.PathEscape(env))
+	var key struct {
+		KeyID string `json:"key_id"`
+		Key   string `json:"key"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, u+"/public-key", nil, &key); err != nil {
+		return err
+	}
+	raw, err := base64.StdEncoding.DecodeString(key.Key)
+	if err != nil || len(raw) != 32 {
+		return errors.New("github: invalid environment public key")
+	}
+	sealed, err := box.SealAnonymous(nil, []byte(value), (*[32]byte)(raw), rand.Reader)
+	if err != nil {
+		return err
+	}
+	_, err = c.do(ctx, http.MethodPut, u+"/"+url.PathEscape(name), map[string]string{"encrypted_value": base64.StdEncoding.EncodeToString(sealed), "key_id": key.KeyID}, nil)
+
+	return err
+}
+
+// CreateFile commits a new file on the default branch.
+func (c *Client) CreateFile(ctx context.Context, repo, path, message string, content []byte) error {
+	_, err := c.do(ctx, http.MethodPut, fmt.Sprintf("%s/repos/%s/contents/%s", c.BaseURL, repo, path), map[string]string{"message": message, "content": base64.StdEncoding.EncodeToString(content)}, nil)
+
+	return err
+}
+
+// LatestRelease returns the tag of the latest release of repo and the commit it points at.
+func (c *Client) LatestRelease(ctx context.Context, repo string) (string, string, error) {
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/repos/%s/releases/latest", c.BaseURL, repo), nil, &release); err != nil {
+		return "", "", err
+	}
+	var commit struct {
+		SHA string `json:"sha"`
+	}
+	_, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/repos/%s/commits/%s", c.BaseURL, repo, url.PathEscape(release.TagName)), nil, &commit)
+
+	return release.TagName, commit.SHA, err
+}
+
+// App holds the credentials of a GitHub App, which GitHub shows only once.
+type App struct {
+	Slug     string `json:"slug"`
+	ClientID string `json:"client_id"`
+	PEM      string `json:"pem"`
+}
+
+// ConvertManifest exchanges the code GitHub returns at the end of the manifest flow for the App it created.
+func (c *Client) ConvertManifest(ctx context.Context, code string) (App, error) {
+	var a App
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/app-manifests/%s/conversions", c.BaseURL, url.PathEscape(code)), nil, &a)
+
+	return a, err
 }
 
 // ListIssues returns every issue of repo, open or closed, and its pull requests.

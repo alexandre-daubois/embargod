@@ -40,6 +40,8 @@ GitHub cannot post confidential advisory comments yet, so with `comment: true` t
 
 ## Quick start
 
+`tamis init` runs these three steps for you, as [the setup guide](docs/setup.md#setup-in-one-command) shows. By hand:
+
 1. Create a GitHub App for your organisation with the "Repository security advisories" permission in read and write. Install it on the project repository only.
 2. In a private repository, store the App's client ID and private key, and an Anthropic or OpenAI API key or a [Codex access token](docs/configuration.md#codex-access-token).
 3. Add this workflow to the private repository:

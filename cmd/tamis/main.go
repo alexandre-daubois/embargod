@@ -4,17 +4,23 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/php/tamis/internal/board"
 	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
 	"github.com/php/tamis/internal/sandbox"
+	"github.com/php/tamis/internal/setup"
 	"github.com/php/tamis/internal/triage"
 )
 
@@ -37,9 +43,98 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if err := run(ctx, log); err != nil {
+	var err error
+	switch {
+	case len(os.Args) > 1 && os.Args[1] == "create-board":
+		err = createBoard(ctx, os.Args[2:])
+	case len(os.Args) > 1 && os.Args[1] == "init":
+		err = initProject(ctx, os.Args[2:], os.Stdout)
+	default:
+		err = run(ctx, log)
+	}
+	if err != nil {
 		log.Error(err.Error())
 		os.Exit(1)
+	}
+}
+
+// createBoard creates the project board of an organisation and prints the value of the project input.
+func createBoard(ctx context.Context, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: tamis create-board ORG")
+	}
+	token := os.Getenv("GH_TOKEN")
+	if token == "" {
+		return errors.New("GH_TOKEN is required")
+	}
+	project, err := board.Create(ctx, github.New(token), args[0], "tamis")
+	if err != nil {
+		return err
+	}
+	fmt.Println(project)
+
+	return nil
+}
+
+// initProject installs tamis for a project, then prints what is left to do by hand.
+func initProject(ctx context.Context, args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	repository := fs.String("repository", "", `project whose advisories are triaged, as "org/name"`)
+	runner := fs.String("runner", "tamis-runner", "private repository created in the same organisation to run the workflow")
+	references := fs.String("references", "", "whitespace-separated git references of every supported branch, the analysed one first")
+	engine := fs.String("engine", "claude", "LLM provider, claude or openai")
+	appName := fs.String("app-name", "", `name of the GitHub App, "<org>-tamis" by default`)
+	withBoard := fs.Bool("board", false, "also create a private project board and fill it instead of commenting")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	org, _, _ := strings.Cut(*repository, "/")
+	if org == "" || len(strings.Fields(*references)) == 0 {
+		return errors.New("usage: tamis init -repository org/name -references \"main ...\" [-runner name] [-engine claude|openai] [-app-name name] [-board]")
+	}
+	if *engine != "claude" && *engine != "openai" {
+		return fmt.Errorf("unknown engine %q, expected claude or openai", *engine)
+	}
+	token, apiKey := os.Getenv("GH_TOKEN"), os.Getenv("LLM_API_KEY")
+	if token == "" || apiKey == "" {
+		return errors.New("GH_TOKEN and LLM_API_KEY are required")
+	}
+	cfg := setup.Config{
+		Repository: *repository,
+		Runner:     *runner,
+		References: strings.Fields(*references),
+		Engine:     *engine,
+		APIKey:     apiKey,
+		AppName:    cmp.Or(*appName, org+"-tamis"),
+		Since:      time.Now().UTC().Format(time.DateOnly),
+		Board:      *withBoard,
+	}
+	app := func(ctx context.Context, org string, manifest map[string]any) (string, error) {
+		return setup.AppCode(ctx, org, manifest, func(u string) {
+			fmt.Fprintf(out, "Confirm the GitHub App in your browser, or open %s\n", u)
+			openBrowser(u)
+		})
+	}
+	install, err := setup.Run(ctx, cfg, github.New(token), app, out)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "\nInstall the App on %s only, with \"Only select repositories\": %s\n", *repository, install)
+	fmt.Fprintf(out, "Then trigger a first run on a test advisory: gh workflow run tamis.yml -R %s/%s -f advisory=GHSA-xxxx-xxxx-xxxx\n", org, *runner)
+	openBrowser(install)
+
+	return nil
+}
+
+// openBrowser does its best, the address is printed anyway.
+func openBrowser(u string) {
+	switch runtime.GOOS {
+	case "darwin":
+		exec.Command("open", u).Start()
+	case "windows":
+		exec.Command("rundll32", "url.dll,FileProtocolHandler", u).Start()
+	default:
+		exec.Command("xdg-open", u).Start()
 	}
 }
 
