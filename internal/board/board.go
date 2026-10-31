@@ -43,7 +43,7 @@ const (
 	fieldAttempts    = "Attempts"
 )
 
-// layout lists the fields the project must have, created by hand as docs/setup.md describes.
+// layout lists the fields the project must have, created by Create or by hand as docs/setup.md describes.
 var layout = []struct {
 	name, dataType string
 	options        []string
@@ -69,6 +69,52 @@ type GitHub interface {
 	CreateDraft(ctx context.Context, org string, number int, title, body string) (github.ProjectItem, error)
 	UpdateDraft(ctx context.Context, draft, body string) error
 	UpdateProjectItem(ctx context.Context, org string, number int, item int64, fields []github.FieldValue) error
+}
+
+type Creator interface {
+	CreateProject(ctx context.Context, org, title string) (int, string, error)
+	CreateProjectField(ctx context.Context, org string, number int, name, dataType string, options []string) error
+	ListProjectFields(ctx context.Context, org string, number int) ([]github.ProjectField, error)
+	CreateProjectView(ctx context.Context, org string, number int, view github.ProjectView) error
+	DeleteProjectView(ctx context.Context, view string) error
+}
+
+// Create makes a project of org laid out as Open expects, with one view of the advisories still in triage sorted
+// by priority, and returns it as "org/number".
+func Create(ctx context.Context, gh Creator, org, title string) (string, error) {
+	number, view, err := gh.CreateProject(ctx, org, title)
+	if err != nil {
+		return "", fmt.Errorf("creating a project of %s: %w", org, err)
+	}
+	project := fmt.Sprintf("%s/%d", org, number)
+	for _, f := range layout {
+		if err := gh.CreateProjectField(ctx, org, number, f.name, f.dataType, f.options); err != nil {
+			return "", fmt.Errorf("creating the %q field of %s: %w", f.name, project, err)
+		}
+	}
+	fields, err := gh.ListProjectFields(ctx, org, number)
+	if err != nil {
+		return "", fmt.Errorf("listing the fields of %s: %w", project, err)
+	}
+	ids := map[string]int64{}
+	for _, f := range fields {
+		ids[f.Name] = f.ID
+	}
+	triage := github.ProjectView{
+		Name:   "Triage",
+		Filter: "State:triage,draft",
+		Fields: []int64{ids["Title"], ids[fieldPriority], ids[fieldSeverity], ids[fieldComponent], ids[fieldDuplicates], ids[fieldReported]},
+		SortBy: []int64{ids[fieldPriority], ids[fieldReported]},
+	}
+	if err := gh.CreateProjectView(ctx, org, number, triage); err != nil {
+		return "", fmt.Errorf("creating the view of %s: %w", project, err)
+	}
+	// The view GitHub adds lists every item unsorted, and a view gets its sort only when created.
+	if err := gh.DeleteProjectView(ctx, view); err != nil {
+		return "", fmt.Errorf("deleting the default view of %s: %w", project, err)
+	}
+
+	return project, nil
 }
 
 // Issues writes the issues of the board with a token of its own, which only reaches the issues repository.

@@ -2,14 +2,18 @@ package github
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/nacl/box"
 )
 
 func newTestClient(t *testing.T, h http.HandlerFunc) *Client {
@@ -367,4 +371,179 @@ func TestHTTPErrorUnwrapsOnlyNotFoundAndGone(t *testing.T) {
 	require.ErrorIs(t, &HTTPError{Status: 410}, ErrNotFound, "only a 404 or a 410 is ErrNotFound")
 	require.NotErrorIs(t, &HTTPError{Status: 403}, ErrNotFound, "only a 404 or a 410 is ErrNotFound")
 	require.NotErrorIs(t, &HTTPError{}, ErrNotFound, "only a 404 or a 410 is ErrNotFound")
+}
+
+func TestCreateProjectBoard(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		switch r.Method + " " + r.URL.Path {
+		case "POST /graphql":
+			query, vars := body["query"].(string), body["variables"].(map[string]any)
+			switch {
+			case strings.Contains(query, "organization(login: $org)"):
+				assert.Equal(t, map[string]any{"org": "acme"}, vars)
+				fmt.Fprint(w, `{"data":{"organization":{"id":"O_1"}}}`)
+			case strings.Contains(query, "createProjectV2("):
+				assert.Equal(t, map[string]any{"owner": "O_1", "title": "tamis"}, vars)
+				fmt.Fprint(w, `{"data":{"createProjectV2":{"projectV2":{"number":16,"views":{"nodes":[{"id":"PVTV_1"}]}}}}}`)
+			case strings.Contains(query, "deleteProjectV2View("):
+				assert.Equal(t, map[string]any{"id": "PVTV_1"}, vars)
+				fmt.Fprint(w, `{"data":{"deleteProjectV2View":{"clientMutationId":null}}}`)
+			default:
+				t.Errorf("unexpected query %s", query)
+			}
+		case "POST /orgs/acme/projectsV2/16/fields":
+			if body["name"] == "Severity" {
+				assert.Equal(t, map[string]any{"name": "Severity", "data_type": "single_select", "single_select_options": []any{
+					map[string]any{"name": "High", "color": "GRAY", "description": ""},
+					map[string]any{"name": "Low", "color": "GRAY", "description": ""},
+				}}, body)
+			} else {
+				assert.Equal(t, map[string]any{"name": "GHSA", "data_type": "text"}, body)
+			}
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case "POST /orgs/acme/projectsV2/16/views":
+			assert.Equal(t, map[string]any{"name": "Triage", "layout": "table", "filter": "State:triage", "visible_fields": []any{float64(1), float64(2)}, "sort_by": []any{[]any{float64(2), "asc"}}}, body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":2}`)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+	ctx := context.Background()
+
+	number, view, err := c.CreateProject(ctx, "acme", "tamis")
+	require.NoError(t, err)
+	require.Equal(t, 16, number)
+	require.Equal(t, "PVTV_1", view)
+	require.NoError(t, c.CreateProjectField(ctx, "acme", 16, "GHSA", "text", nil))
+	require.NoError(t, c.CreateProjectField(ctx, "acme", 16, "Severity", "single_select", []string{"High", "Low"}))
+	require.NoError(t, c.CreateProjectView(ctx, "acme", 16, ProjectView{Name: "Triage", Filter: "State:triage", Fields: []int64{1, 2}, SortBy: []int64{2}}))
+	require.NoError(t, c.DeleteProjectView(ctx, "PVTV_1"))
+}
+
+func TestCreateProjectBoardErrors(t *testing.T) {
+	graphQL := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"errors":[{"message":"SECRET-PAYLOAD"}]}`)
+	})
+	_, _, err := graphQL.CreateProject(context.Background(), "acme", "tamis")
+	require.EqualError(t, err, "github: GraphQL request failed")
+	require.EqualError(t, graphQL.DeleteProjectView(context.Background(), "PVTV_1"), "github: GraphQL request failed")
+
+	forbidden := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	})
+	_, _, err = forbidden.CreateProject(context.Background(), "acme", "tamis")
+	require.Error(t, err)
+	require.Error(t, forbidden.CreateProjectField(context.Background(), "acme", 16, "GHSA", "text", nil))
+	require.Error(t, forbidden.CreateProjectView(context.Background(), "acme", 16, ProjectView{}))
+}
+
+func TestSetupEndpoints(t *testing.T) {
+	pub, priv, err := box.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	var secret string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if r.ContentLength > 0 {
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		}
+		switch r.Method + " " + r.URL.Path {
+		case "POST /orgs/acme/repos":
+			assert.Equal(t, map[string]any{"name": "tamis-runner", "private": true, "auto_init": true}, body)
+			fmt.Fprint(w, `{"private":true,"default_branch":"main"}`)
+		case "PUT /repos/acme/tamis-runner/environments/tamis":
+			assert.Equal(t, map[string]any{"deployment_branch_policy": map[string]any{"protected_branches": false, "custom_branch_policies": true}}, body)
+		case "POST /repos/acme/tamis-runner/environments/tamis/deployment-branch-policies":
+			assert.Equal(t, map[string]any{"name": "main", "type": "branch"}, body)
+		case "POST /repos/acme/tamis-runner/environments/tamis/variables":
+			assert.Equal(t, map[string]any{"name": "TAMIS_CLIENT_ID", "value": "Iv1"}, body)
+		case "GET /repos/acme/tamis-runner/environments/tamis/secrets/public-key":
+			fmt.Fprintf(w, `{"key_id":"k1","key":%q}`, base64.StdEncoding.EncodeToString(pub[:]))
+		case "PUT /repos/acme/tamis-runner/environments/tamis/secrets/TAMIS_PRIVATE_KEY":
+			assert.Equal(t, "k1", body["key_id"])
+			sealed, err := base64.StdEncoding.DecodeString(body["encrypted_value"].(string))
+			assert.NoError(t, err)
+			plain, ok := box.OpenAnonymous(nil, sealed, pub, priv)
+			assert.True(t, ok)
+			secret = string(plain)
+		case "PUT /repos/acme/tamis-runner/contents/.github/workflows/tamis.yml":
+			assert.Equal(t, map[string]any{"message": "m", "content": base64.StdEncoding.EncodeToString([]byte("name: tamis\n"))}, body)
+			w.WriteHeader(http.StatusCreated)
+		case "GET /repos/php/tamis/releases/latest":
+			fmt.Fprint(w, `{"tag_name":"v2026.10.30.1"}`)
+		case "GET /repos/php/tamis/commits/v2026.10.30.1":
+			fmt.Fprint(w, `{"sha":"0123456789abcdef0123456789abcdef01234567"}`)
+		case "POST /app-manifests/c0de/conversions":
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1,"slug":"acme-tamis","client_id":"Iv1","pem":"PEM","client_secret":"s"}`)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+	ctx := context.Background()
+
+	repo, err := c.CreateRepository(ctx, "acme", "tamis-runner")
+	require.NoError(t, err)
+	require.Equal(t, Repository{Private: true, DefaultBranch: "main"}, repo)
+	require.NoError(t, c.CreateEnvironment(ctx, "acme/tamis-runner", "tamis", "main"))
+	require.NoError(t, c.SetEnvironmentVariable(ctx, "acme/tamis-runner", "tamis", "TAMIS_CLIENT_ID", "Iv1"))
+	require.NoError(t, c.SetEnvironmentSecret(ctx, "acme/tamis-runner", "tamis", "TAMIS_PRIVATE_KEY", "PEM"))
+	require.Equal(t, "PEM", secret)
+	require.NoError(t, c.CreateFile(ctx, "acme/tamis-runner", ".github/workflows/tamis.yml", "m", []byte("name: tamis\n")))
+	tag, sha, err := c.LatestRelease(ctx, "php/tamis")
+	require.NoError(t, err)
+	require.Equal(t, "v2026.10.30.1", tag)
+	require.Equal(t, "0123456789abcdef0123456789abcdef01234567", sha)
+	app, err := c.ConvertManifest(ctx, "c0de")
+	require.NoError(t, err)
+	require.Equal(t, App{Slug: "acme-tamis", ClientID: "Iv1", PEM: "PEM"}, app)
+}
+
+func TestSetupEndpointsErrors(t *testing.T) {
+	badKey := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			t.Error("a secret sealed with an invalid key must not be sent")
+		}
+		fmt.Fprint(w, `{"key_id":"k1","key":"c2hvcnQ="}`)
+	})
+	require.EqualError(t, badKey.SetEnvironmentSecret(context.Background(), "acme/tamis-runner", "tamis", "S", "v"), "github: invalid environment public key")
+
+	forbidden := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	})
+	ctx := context.Background()
+	_, err := forbidden.CreateRepository(ctx, "acme", "tamis-runner")
+	require.Error(t, err)
+	require.Error(t, forbidden.CreateEnvironment(ctx, "acme/tamis-runner", "tamis", "main"))
+	require.Error(t, forbidden.SetEnvironmentVariable(ctx, "acme/tamis-runner", "tamis", "V", "v"))
+	require.Error(t, forbidden.SetEnvironmentSecret(ctx, "acme/tamis-runner", "tamis", "S", "v"))
+	require.Error(t, forbidden.CreateFile(ctx, "acme/tamis-runner", "f", "m", nil))
+	_, _, err = forbidden.LatestRelease(ctx, "php/tamis")
+	require.Error(t, err)
+	_, err = forbidden.ConvertManifest(ctx, "c0de")
+	require.Error(t, err)
+}
+
+func TestAppExists(t *testing.T) {
+	for status, want := range map[int]bool{http.StatusOK: true, http.StatusNotFound: false} {
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "GET /apps/acme-tamis", r.Method+" "+r.URL.Path)
+			w.WriteHeader(status)
+			fmt.Fprint(w, `{}`)
+		})
+
+		exists, err := c.AppExists(context.Background(), "acme-tamis")
+
+		require.NoError(t, err, "%d", status)
+		require.Equal(t, want, exists, "%d", status)
+	}
+
+	forbidden := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	})
+	_, err := forbidden.AppExists(context.Background(), "acme-tamis")
+	require.Error(t, err)
 }
